@@ -1,4 +1,4 @@
-package pt.isep.psoft.aisafe.application.DTO;
+package pt.isep.psoft.aisafe.flight_operations.application;
 
 public record ScheduledFlightViewDTO(
         Long id,
