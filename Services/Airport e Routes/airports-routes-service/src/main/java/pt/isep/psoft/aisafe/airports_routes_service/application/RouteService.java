@@ -16,6 +16,7 @@ import pt.isep.psoft.aisafe.airports_routes_service.repositories.RouteHistoryRep
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.ResourceAccessException;
@@ -40,7 +41,9 @@ public class RouteService {
     private final RouteSearchStrategy routeSearchStrategy; // <-- A Estratégia adicionada aqui
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
-    private final String peerUrl;
+    private final List<String> peerUrls;
+    private static final String HOPS_HEADER = "X-P2P-Hops";
+    private final int maxForwardingHops;
 
     public RouteService(RouteRepository routeRepository,
                         AirportRepository airportRepository,
@@ -48,14 +51,16 @@ public class RouteService {
                         RouteSearchStrategy routeSearchStrategy,
                         RestTemplate restTemplate,
                         ObjectMapper objectMapper,
-                        @Value("${peer.url:http://localhost:8092}") String peerUrl) { // <-- E aqui no construtor
+                        @Value("${peer.urls:${peer.url:http://localhost:8092}}") List<String> peerUrls,
+                        @Value("${peer.forwarding.max-hops:1}") int maxForwardingHops) {
         this.routeRepository = routeRepository;
         this.airportRepository = airportRepository;
         this.routeHistoryRepository = routeHistoryRepository;
         this.routeSearchStrategy = routeSearchStrategy;
         this.restTemplate = restTemplate;
         this.objectMapper = objectMapper;
-        this.peerUrl = peerUrl;
+        this.peerUrls = peerUrls.stream().map(String::trim).filter(url -> !url.isBlank()).toList();
+        this.maxForwardingHops = maxForwardingHops;
     }
 
     // --- US110: Criar uma Rota ---
@@ -112,36 +117,50 @@ public class RouteService {
 
     // --- US113: Ver Detalhes de uma Rota Específica ---
     public RouteViewDTO getRoute(String id) {
+        return getRoute(id, 0);
+    }
+
+    public RouteViewDTO getRoute(String id, int hops) {
         RouteId routeId = new RouteId(id);
         Optional<Route> localRoute = routeRepository.findByRouteId(routeId);
         if (localRoute.isPresent()) {
             return convertToDTO(localRoute.get());
         }
 
-        String url = UriComponentsBuilder.fromUriString(peerUrl)
-                .pathSegment("api", "routes", id)
-                .toUriString();
-        try {
-            ResponseEntity<JsonNode> response = restTemplate.getForEntity(url, JsonNode.class);
-            JsonNode body = response.getBody();
-            if (body == null || body.isNull()) {
-                throw routeNotFound(id);
-            }
-
-            JsonNode dtoNode = body.has("content") ? body.get("content") : body;
-            return objectMapper.treeToValue(dtoNode, RouteViewDTO.class);
-        } catch (HttpClientErrorException.NotFound exception) {
+        if (hops >= maxForwardingHops) {
             throw routeNotFound(id);
-        } catch (HttpClientErrorException exception) {
-            throw new IllegalStateException("Peer route lookup failed with status "
-                    + exception.getStatusCode(), exception);
-        } catch (JsonProcessingException exception) {
-            throw new IllegalStateException("Invalid route response from peer", exception);
         }
+
+        for (String peerUrl : peerUrls) {
+            String url = UriComponentsBuilder.fromUriString(peerUrl)
+                    .pathSegment("api", "routes", id).toUriString();
+            try {
+                ResponseEntity<JsonNode> response = restTemplate.exchange(
+                        url, HttpMethod.GET, p2pEntity(hops + 1), JsonNode.class);
+                JsonNode body = response.getBody();
+                if (body == null || body.isNull()) {
+                    continue;
+                }
+                JsonNode dtoNode = body.has("content") ? body.get("content") : body;
+                return objectMapper.treeToValue(dtoNode, RouteViewDTO.class);
+            } catch (HttpClientErrorException.NotFound | ResourceAccessException exception) {
+                log.debug("Peer route lookup failed for {}", peerUrl, exception);
+            } catch (HttpClientErrorException exception) {
+                log.warn("Peer route lookup failed with status {} for {}",
+                        exception.getStatusCode(), peerUrl);
+            } catch (JsonProcessingException exception) {
+                throw new IllegalStateException("Invalid route response from peer", exception);
+            }
+        }
+        throw routeNotFound(id);
     }
 
     // --- US113 e US114: Pesquisar Rotas  ---
     public Page<RouteViewDTO> searchRoutes(String origin, String destination, Pageable pageable) {
+        return searchRoutes(origin, destination, pageable, 0);
+    }
+
+    public Page<RouteViewDTO> searchRoutes(String origin, String destination, Pageable pageable, int hops) {
         Page<Route> results;
 
         if (origin != null && destination != null) {
@@ -158,7 +177,7 @@ public class RouteService {
             return results.map(this::convertToDTO);
         }
 
-        return searchRoutesOnPeer(origin, destination, pageable);
+        return searchRoutesOnPeer(origin, destination, pageable, hops);
     }
 
     // --- US111: Ver Histórico da Rota ---
@@ -176,42 +195,66 @@ public class RouteService {
 
     //US209
     public Page<RouteViewDTO> getRoutesByAirport(String iataCode, Pageable pageable) {
+        return getRoutesByAirport(iataCode, pageable, 0);
+    }
+
+    public Page<RouteViewDTO> getRoutesByAirport(String iataCode, Pageable pageable, int hops) {
         String code = iataCode.toUpperCase();
         Page<Route> routes = routeRepository.findRoutesByAirport(code, pageable);
         if (routes.isEmpty()) {
-            return searchRoutesOnPeer(code, pageable);
+            return searchRoutesOnPeer(code, pageable, hops);
         }
         return routes.map(this::convertToDTO);
     }
 
-    private Page<RouteViewDTO> searchRoutesOnPeer(String iataCode, Pageable pageable) {
-        UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(peerUrl)
-                .pathSegment("api", "routes", "involving", iataCode)
-                .queryParam("page", pageable.getPageNumber())
-                .queryParam("size", pageable.getPageSize());
-        return fetchPeerRoutes(builder, iataCode, pageable);
+    private Page<RouteViewDTO> searchRoutesOnPeer(String iataCode, Pageable pageable, int hops) {
+        if (hops >= maxForwardingHops) {
+            return Page.empty(pageable);
+        }
+        for (String peerUrl : peerUrls) {
+            UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(peerUrl)
+                    .pathSegment("api", "routes", "involving", iataCode)
+                    .queryParam("page", pageable.getPageNumber())
+                    .queryParam("size", pageable.getPageSize());
+            Page<RouteViewDTO> result = fetchPeerRoutes(builder, iataCode, pageable, hops);
+            if (!result.isEmpty()) {
+                return result;
+            }
+        }
+        return Page.empty(pageable);
     }
 
-    private Page<RouteViewDTO> searchRoutesOnPeer(String origin, String destination, Pageable pageable) {
-        UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(peerUrl)
-                .path("api/routes")
-                .queryParam("page", pageable.getPageNumber())
-                .queryParam("size", pageable.getPageSize());
-        if (origin != null) {
-            builder.queryParam("origin", origin);
+    private Page<RouteViewDTO> searchRoutesOnPeer(String origin, String destination, Pageable pageable, int hops) {
+        if (hops >= maxForwardingHops) {
+            return Page.empty(pageable);
         }
-        if (destination != null) {
-            builder.queryParam("destination", destination);
+        for (String peerUrl : peerUrls) {
+            UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(peerUrl)
+                    .path("api/routes")
+                    .queryParam("page", pageable.getPageNumber())
+                    .queryParam("size", pageable.getPageSize());
+            if (origin != null) {
+                builder.queryParam("origin", origin);
+            }
+            if (destination != null) {
+                builder.queryParam("destination", destination);
+            }
+            Page<RouteViewDTO> result = fetchPeerRoutes(builder,
+                    origin != null ? origin : destination, pageable, hops);
+            if (!result.isEmpty()) {
+                return result;
+            }
         }
-
-        return fetchPeerRoutes(builder, origin != null ? origin : destination, pageable);
+        return Page.empty(pageable);
     }
 
     private Page<RouteViewDTO> fetchPeerRoutes(UriComponentsBuilder builder,
                                                String routeIdentifier,
-                                               Pageable pageable) {
+                                               Pageable pageable,
+                                               int hops) {
         try {
-            ResponseEntity<JsonNode> response = restTemplate.getForEntity(builder.toUriString(), JsonNode.class);
+            ResponseEntity<JsonNode> response = restTemplate.exchange(
+                    builder.toUriString(), HttpMethod.GET, p2pEntity(hops + 1), JsonNode.class);
             JsonNode body = response.getBody();
             if (body == null || body.isNull()) {
                 return Page.empty(pageable);
@@ -232,11 +275,13 @@ public class RouteService {
 
             long totalElements = body.path("page").path("totalElements").asLong(routes.size());
             return new PageImpl<>(routes, pageable, totalElements);
-        } catch (HttpClientErrorException.NotFound exception) {
-            throw routeNotFound(routeIdentifier);
+        } catch (HttpClientErrorException.NotFound | ResourceAccessException exception) {
+            log.debug("Peer route search failed for {}", builder, exception);
+            return Page.empty(pageable);
         } catch (HttpClientErrorException exception) {
-            throw new IllegalStateException("Peer route search failed with status "
-                    + exception.getStatusCode(), exception);
+            log.warn("Peer route search failed with status {} for {}",
+                    exception.getStatusCode(), builder);
+            return Page.empty(pageable);
         } catch (JsonProcessingException exception) {
             throw new IllegalStateException("Invalid route search response from peer", exception);
         }
@@ -299,11 +344,13 @@ public class RouteService {
     }
 
     private void replicateCreate(CreateRouteDTO dto) {
-        String url = UriComponentsBuilder.fromUriString(peerUrl).pathSegment("api", "routes").toUriString();
-        try {
-            restTemplate.postForEntity(url, replicationEntity(dto), Void.class);
-        } catch (ResourceAccessException exception) {
-            log.warn("Falha ao replicar para o peer", exception);
+        for (String peerUrl : peerUrls) {
+            String url = UriComponentsBuilder.fromUriString(peerUrl).pathSegment("api", "routes").toUriString();
+            try {
+                restTemplate.postForEntity(url, replicationEntity(dto), Void.class);
+            } catch (ResourceAccessException exception) {
+                log.warn("Falha ao replicar para o peer {}", peerUrl, exception);
+            }
         }
     }
 
@@ -316,15 +363,22 @@ public class RouteService {
     }
 
     private void replicatePatch(String path, Object body) {
-        String url = UriComponentsBuilder.fromUriString(peerUrl)
-                .pathSegment("api", "routes")
-                .path("/" + path)
-                .toUriString();
-        try {
-            restTemplate.patchForObject(url, replicationEntity(body), Void.class);
-        } catch (ResourceAccessException exception) {
-            log.warn("Falha ao replicar para o peer", exception);
+        for (String peerUrl : peerUrls) {
+            String url = UriComponentsBuilder.fromUriString(peerUrl)
+                    .pathSegment("api", "routes")
+                    .path("/" + path).toUriString();
+            try {
+                restTemplate.patchForObject(url, replicationEntity(body), Void.class);
+            } catch (ResourceAccessException exception) {
+                log.warn("Falha ao replicar para o peer {}", peerUrl, exception);
+            }
         }
+    }
+
+    private <T> HttpEntity<T> p2pEntity(int hops) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.set(HOPS_HEADER, String.valueOf(hops));
+        return new HttpEntity<>(headers);
     }
 
     private <T> HttpEntity<T> replicationEntity(T body) {

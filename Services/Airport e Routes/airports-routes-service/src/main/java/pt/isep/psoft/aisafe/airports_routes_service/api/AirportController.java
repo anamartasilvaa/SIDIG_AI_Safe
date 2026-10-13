@@ -38,14 +38,20 @@ public class AirportController {
     }
 
     @GetMapping("/{iataCode}")
-    public ResponseEntity<EntityModel<AirportViewDTO>> getAirport(@PathVariable String iataCode) {
-        AirportViewDTO airport = service.getAirportByIataCode(iataCode.toUpperCase());
+    public ResponseEntity<EntityModel<AirportViewDTO>> getAirport(
+            @PathVariable String iataCode,
+            @RequestHeader(value = "X-P2P-Hops", defaultValue = "0") int hops) {
+        AirportViewDTO airport = service.getAirportByIataCode(iataCode.toUpperCase(), hops);
 
         EntityModel<AirportViewDTO> resource = EntityModel.of(airport);
 
         resource.add(WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(AirportController.class).getAirport(iataCode)).withSelfRel());
 
         return ResponseEntity.ok(resource);
+    }
+
+    public ResponseEntity<EntityModel<AirportViewDTO>> getAirport(String iataCode) {
+        return getAirport(iataCode, 0);
     }
 
     @GetMapping("/search")

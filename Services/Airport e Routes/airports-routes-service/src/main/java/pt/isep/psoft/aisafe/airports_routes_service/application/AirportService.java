@@ -6,6 +6,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.ResourceAccessException;
@@ -30,16 +31,20 @@ public class AirportService {
     private final AirportRepository airportRepository;
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
-    private final String peerUrl;
+    private final List<String> peerUrls;
+    private static final String HOPS_HEADER = "X-P2P-Hops";
+    private final int maxForwardingHops;
 
     public AirportService(AirportRepository airportRepository,
                           RestTemplate restTemplate,
                           ObjectMapper objectMapper,
-                          @Value("${peer.url:http://localhost:8092}") String peerUrl) {
+                          @Value("${peer.urls:${peer.url:http://localhost:8092}}") List<String> peerUrls,
+                          @Value("${peer.forwarding.max-hops:1}") int maxForwardingHops) {
         this.airportRepository = airportRepository;
         this.restTemplate = restTemplate;
         this.objectMapper = objectMapper;
-        this.peerUrl = peerUrl;
+        this.peerUrls = peerUrls.stream().map(String::trim).filter(url -> !url.isBlank()).toList();
+        this.maxForwardingHops = maxForwardingHops;
     }
 
     @Transactional
@@ -80,33 +85,43 @@ public class AirportService {
 
     @Transactional(readOnly = true)
     public AirportViewDTO getAirportByIataCode(String iataCode) {
+        return getAirportByIataCode(iataCode, 0);
+    }
+
+    public AirportViewDTO getAirportByIataCode(String iataCode, int hops) {
         String cleanCode = iataCode.trim().toUpperCase();
         Optional<Airport> localAirport = airportRepository.findByIataCodeString(cleanCode);
         if (localAirport.isPresent()) {
             return mapToDTO(localAirport.get());
         }
 
-        String url = UriComponentsBuilder.fromUriString(peerUrl)
-                .pathSegment("api", "airports", cleanCode)
-                .toUriString();
-        try {
-            ResponseEntity<JsonNode> response = restTemplate.getForEntity(url, JsonNode.class);
-            JsonNode body = response.getBody();
-            if (body == null || body.isNull()) {
-                throw airportNotFound(cleanCode);
-            }
-
-            // The peer endpoint returns an EntityModel, whose DTO is under "content".
-            JsonNode dtoNode = body.has("content") ? body.get("content") : body;
-            return objectMapper.treeToValue(dtoNode, AirportViewDTO.class);
-        } catch (HttpClientErrorException.NotFound exception) {
+        if (hops >= maxForwardingHops) {
             throw airportNotFound(cleanCode);
-        } catch (HttpClientErrorException exception) {
-            throw new IllegalStateException("Peer airport lookup failed with status "
-                    + exception.getStatusCode(), exception);
-        } catch (JsonProcessingException exception) {
-            throw new IllegalStateException("Invalid airport response from peer", exception);
         }
+
+        for (String peerUrl : peerUrls) {
+            String url = UriComponentsBuilder.fromUriString(peerUrl)
+                    .pathSegment("api", "airports", cleanCode)
+                    .toUriString();
+            try {
+                ResponseEntity<JsonNode> response = restTemplate.exchange(
+                        url, HttpMethod.GET, p2pEntity(hops + 1), JsonNode.class);
+                JsonNode body = response.getBody();
+                if (body == null || body.isNull()) {
+                    continue;
+                }
+                JsonNode dtoNode = body.has("content") ? body.get("content") : body;
+                return objectMapper.treeToValue(dtoNode, AirportViewDTO.class);
+            } catch (HttpClientErrorException.NotFound | ResourceAccessException exception) {
+                log.debug("Peer airport lookup failed for {}", peerUrl, exception);
+            } catch (HttpClientErrorException exception) {
+                log.warn("Peer airport lookup failed with status {} for {}",
+                        exception.getStatusCode(), peerUrl);
+            } catch (JsonProcessingException exception) {
+                throw new IllegalStateException("Invalid airport response from peer", exception);
+            }
+        }
+        throw airportNotFound(cleanCode);
     }
 
     private IllegalArgumentException airportNotFound(String iataCode) {
@@ -219,36 +234,45 @@ public class AirportService {
     }
 
     private void replicateCreate(RegisterAirportDTO dto) {
-        String url = UriComponentsBuilder.fromUriString(peerUrl)
-                .pathSegment("api", "airports")
-                .toUriString();
-        try {
-            restTemplate.postForEntity(url, replicationEntity(dto), Void.class);
-        } catch (ResourceAccessException exception) {
-            log.warn("Falha ao replicar para o peer", exception);
+        for (String peerUrl : peerUrls) {
+            String url = UriComponentsBuilder.fromUriString(peerUrl)
+                    .pathSegment("api", "airports").toUriString();
+            try {
+                restTemplate.postForEntity(url, replicationEntity(dto), Void.class);
+            } catch (ResourceAccessException exception) {
+                log.warn("Falha ao replicar para o peer {}", peerUrl, exception);
+            }
         }
     }
 
     private void replicateUpdateDetails(String iataCode, UpdateAirportDetailsDTO dto) {
-        String url = UriComponentsBuilder.fromUriString(peerUrl)
-                .pathSegment("api", "airports", iataCode.toUpperCase(), "details")
-                .toUriString();
-        try {
-            restTemplate.patchForObject(url, replicationEntity(dto), Void.class);
-        } catch (ResourceAccessException exception) {
-            log.warn("Falha ao replicar para o peer", exception);
+        for (String peerUrl : peerUrls) {
+            String url = UriComponentsBuilder.fromUriString(peerUrl)
+                    .pathSegment("api", "airports", iataCode.toUpperCase(), "details").toUriString();
+            try {
+                restTemplate.patchForObject(url, replicationEntity(dto), Void.class);
+            } catch (ResourceAccessException exception) {
+                log.warn("Falha ao replicar para o peer {}", peerUrl, exception);
+            }
         }
     }
 
     private void replicateStatus(String iataCode, String status) {
-        String url = UriComponentsBuilder.fromUriString(peerUrl)
-                .pathSegment("api", "airports", iataCode.toUpperCase(), "status")
-                .toUriString();
-        try {
-            restTemplate.patchForObject(url, replicationEntity(status), Void.class);
-        } catch (ResourceAccessException exception) {
-            log.warn("Falha ao replicar para o peer", exception);
+        for (String peerUrl : peerUrls) {
+            String url = UriComponentsBuilder.fromUriString(peerUrl)
+                    .pathSegment("api", "airports", iataCode.toUpperCase(), "status").toUriString();
+            try {
+                restTemplate.patchForObject(url, replicationEntity(status), Void.class);
+            } catch (ResourceAccessException exception) {
+                log.warn("Falha ao replicar para o peer {}", peerUrl, exception);
+            }
         }
+    }
+
+    private <T> HttpEntity<T> p2pEntity(int hops) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.set(HOPS_HEADER, String.valueOf(hops));
+        return new HttpEntity<>(headers);
     }
 
     private <T> HttpEntity<T> replicationEntity(T body) {

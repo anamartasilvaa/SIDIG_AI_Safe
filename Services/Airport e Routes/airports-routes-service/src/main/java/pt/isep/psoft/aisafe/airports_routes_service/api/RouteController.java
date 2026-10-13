@@ -102,13 +102,19 @@ public class RouteController {
     // --- US113: Ver detalhes de uma rota pelo ID ---
     @GetMapping("/{id}")
     @Operation(summary = "Get route details by ID")
-    public ResponseEntity<EntityModel<RouteViewDTO>> getRouteById(@PathVariable String id) {
-        RouteViewDTO route = routeService.getRoute(id);
+    public ResponseEntity<EntityModel<RouteViewDTO>> getRouteById(
+            @PathVariable String id,
+            @RequestHeader(value = "X-P2P-Hops", defaultValue = "0") int hops) {
+        RouteViewDTO route = routeService.getRoute(id, hops);
         EntityModel<RouteViewDTO> resource = EntityModel.of(route);
         resource.add(WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(RouteController.class).getRouteById(id)).withSelfRel());
         resource.add(WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(RouteController.class).updateRoute(id, null, false)).withRel("update-route"));
         resource.add(WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(RouteController.class).getRouteHistory(id)).withRel("route-history"));
         return ResponseEntity.ok(resource);
+    }
+
+    public ResponseEntity<EntityModel<RouteViewDTO>> getRouteById(String id) {
+        return getRouteById(id, 0);
     }
 
     // --- US111: Ver histórico de uma rota ---
@@ -132,9 +138,10 @@ public class RouteController {
     public ResponseEntity<PagedModel<EntityModel<RouteViewDTO>>> searchRoutesByAirport(
             @PathVariable String iata,
             @PageableDefault(size = 10) Pageable pageable,
-            PagedResourcesAssembler<RouteViewDTO> assembler) {
+            PagedResourcesAssembler<RouteViewDTO> assembler,
+            @RequestHeader(value = "X-P2P-Hops", defaultValue = "0") int hops) {
 
-        Page<RouteViewDTO> page = routeService.searchRoutes(iata, null, pageable);
+        Page<RouteViewDTO> page = routeService.searchRoutes(iata, null, pageable, hops);
         PagedModel<EntityModel<RouteViewDTO>> pagedModel = assembler.toModel(page, this::addLinksToRoute);
 
         return ResponseEntity.ok(pagedModel);
@@ -147,9 +154,10 @@ public class RouteController {
             @RequestParam(required = false) String origin,
             @RequestParam(required = false) String destination,
             @PageableDefault(size = 10) Pageable pageable,
-            PagedResourcesAssembler<RouteViewDTO> assembler) {
+            PagedResourcesAssembler<RouteViewDTO> assembler,
+            @RequestHeader(value = "X-P2P-Hops", defaultValue = "0") int hops) {
 
-        Page<RouteViewDTO> page = routeService.searchRoutes(origin, destination, pageable);
+        Page<RouteViewDTO> page = routeService.searchRoutes(origin, destination, pageable, hops);
         PagedModel<EntityModel<RouteViewDTO>> pagedModel = assembler.toModel(page, this::addLinksToRoute);
 
         return ResponseEntity.ok(pagedModel);
@@ -169,8 +177,9 @@ public class RouteController {
     public ResponseEntity<PagedModel<EntityModel<RouteViewDTO>>> getRoutesInvolvingAirport(
             @PathVariable String iataCode,
             @PageableDefault(size = 10) Pageable pageable,
-            PagedResourcesAssembler<RouteViewDTO> assembler) {
-        Page<RouteViewDTO> page = routeService.getRoutesByAirport(iataCode, pageable);
+            PagedResourcesAssembler<RouteViewDTO> assembler,
+            @RequestHeader(value = "X-P2P-Hops", defaultValue = "0") int hops) {
+        Page<RouteViewDTO> page = routeService.getRoutesByAirport(iataCode, pageable, hops);
         PagedModel<EntityModel<RouteViewDTO>> pagedModel = assembler.toModel(page, this::addLinksToRoute);
 
         return ResponseEntity.ok(pagedModel);
