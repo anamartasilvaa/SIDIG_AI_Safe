@@ -5,7 +5,6 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 import pt.isep.psoft.aisafe.domain.Airport;
-import pt.isep.psoft.aisafe.domain.IATACode;
 
 import java.util.List;
 import java.util.Optional;

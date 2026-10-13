@@ -9,7 +9,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
-import pt.isep.psoft.aisafe.application.DTO.RouteViewDTO;
 import pt.isep.psoft.aisafe.application.RouteService;
 import pt.isep.psoft.aisafe.repositories.RouteRepository;
 

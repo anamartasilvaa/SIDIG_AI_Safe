@@ -2,7 +2,6 @@ package pt.isep.psoft.aisafe.domain;
 
 import jakarta.persistence.*;
 import org.springframework.util.Assert;
-import java.util.Objects;
 
 @Entity
 public class Route {
