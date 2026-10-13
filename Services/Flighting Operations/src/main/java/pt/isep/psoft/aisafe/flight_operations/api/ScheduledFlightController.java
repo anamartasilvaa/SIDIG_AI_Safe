@@ -68,4 +68,18 @@ public class ScheduledFlightController {
 
         return ResponseEntity.ok(report);
     }
+
+    @GetMapping("/{id}")
+    public ResponseEntity<EntityModel<ScheduledFlightViewDTO>> getScheduledFlightById(@PathVariable Long id) {
+        ScheduledFlightViewDTO flight = service.getScheduledFlightById(id);
+
+        if (flight == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        EntityModel<ScheduledFlightViewDTO> resource = EntityModel.of(flight);
+        resource.add(linkTo(methodOn(ScheduledFlightController.class).getScheduledFlightById(id)).withSelfRel());
+
+        return ResponseEntity.ok(resource);
+    }
 }

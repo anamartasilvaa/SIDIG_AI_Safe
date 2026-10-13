@@ -1,5 +1,7 @@
 package pt.isep.psoft.aisafe.flight_operations.application;
 
+import jakarta.validation.Valid;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import pt.isep.psoft.aisafe.flight_operations.application.DTO.CreateScheduledFlightDTO;
@@ -17,34 +19,48 @@ public class ScheduledFlightService {
 
     private final ScheduledFlightRepository flightRepository;
 
-    // Removemos RouteRepository e AircraftRepository, pois cada serviço tem a sua base de dados isolada.
-    // Mais tarde, se precisares de validar dados de aviões ou rotas, farás pedidos HTTP aos teus colegas.
     public ScheduledFlightService(ScheduledFlightRepository flightRepository) {
         this.flightRepository = flightRepository;
     }
 
-    @Transactional
-    public ScheduledFlightViewDTO scheduleFlight(CreateScheduledFlightDTO dto) {
-        // Numa fase inicial isolada, criamos o voo diretamente com os IDs recebidos no DTO.
-        // As validações cruzadas (capacidade, estado do aeroporto, etc.) serão feitas via REST client futuramente.
+    @org.springframework.beans.factory.annotation.Value("${server.port:8080}")
+    private String serverPort;
 
-        LocalDateTime dateTime = LocalDateTime.parse(dto.scheduledDateTime());
+    @Transactional(readOnly = true)
+    public ScheduledFlightViewDTO getScheduledFlightById(Long id) {
+        var flight = flightRepository.findById(id);
+        if (flight.isPresent()) {
+            ScheduledFlight f = flight.get();
+            return new ScheduledFlightViewDTO(
+                    f.getPk(),
+                    f.getRouteId(),
+                    f.getAircraftRegistration(),
+                    f.getScheduledDateTime().toString(),
+                    f.getStatus().name()
+            );
+        }
 
-        ScheduledFlight flight = new ScheduledFlight(
-                dto.routeId(),
-                dto.registrationNumber(),
-                dateTime
-        );
+        List<String> allPossiblePorts = List.of("8080", "8081", "8082");
 
-        ScheduledFlight savedFlight = flightRepository.save(flight);
+        org.springframework.web.client.RestTemplate restTemplate = new org.springframework.web.client.RestTemplate();
 
-        return new ScheduledFlightViewDTO(
-                savedFlight.getPk(),
-                savedFlight.getRouteId(),
-                savedFlight.getAircraftRegistration(),
-                savedFlight.getScheduledDateTime().toString(),
-                savedFlight.getStatus().name()
-        );
+        for (String port : allPossiblePorts) {
+            if (port.equals(serverPort)) {
+                continue;
+            }
+
+            try {
+                String url = "http://localhost:" + port + "/api/scheduled-flights/" + id;
+                ResponseEntity<ScheduledFlightViewDTO> response = restTemplate.getForEntity(url, ScheduledFlightViewDTO.class);
+
+                if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                    return response.getBody(); // Encontrou na réplica vizinha!
+                }
+            } catch (Exception e) {
+            }
+        }
+
+        return null;
     }
 
     @Transactional(readOnly = true)
@@ -65,5 +81,23 @@ public class ScheduledFlightService {
         return flightRepository.countFlightsGroupedByRoute().stream()
                 .map(obj -> new RouteUtilizationDTO((String) obj[0], (Long) obj[1]))
                 .collect(Collectors.toList());
+    }
+
+    public ScheduledFlightViewDTO scheduleFlight(@Valid CreateScheduledFlightDTO dto) {
+        ScheduledFlight flight = new ScheduledFlight(
+                dto.routeId(),
+                dto.registrationNumber().trim().toUpperCase(),
+                LocalDateTime.parse(dto.scheduledDateTime())
+        );
+
+        flightRepository.save(flight);
+
+        return new ScheduledFlightViewDTO(
+                flight.getPk(),
+                flight.getRouteId(),
+                flight.getAircraftRegistration(),
+                flight.getScheduledDateTime().toString(),
+                flight.getStatus().name()
+        );
     }
 }

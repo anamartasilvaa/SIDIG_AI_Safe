@@ -24,17 +24,15 @@ public class ScheduledFlight {
     @Column(nullable = false)
     private FlightStatus status;
 
-    // DDD: Referência externa para o serviço Airports & Routes
     @Column(nullable = false)
     private String routeId;
 
-    // DDD: Referência externa para o serviço Aircraft & Maintenance
     @Column(nullable = false)
     private String aircraftRegistration;
 
     protected ScheduledFlight() {}
 
-    // Construtor recebe apenas as referências em texto
+
     public ScheduledFlight(String routeId, String aircraftRegistration, LocalDateTime scheduledDateTime) {
         Assert.hasText(routeId, "A route ID is required to schedule a flight.");
         Assert.hasText(aircraftRegistration, "An aircraft registration is required to schedule a flight.");
