@@ -2,21 +2,22 @@ package pt.isep.psoft.aisafe.flight_operations.infrastructure;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestClientException;
 import pt.isep.psoft.aisafe.flight_operations.application.DTO.AggregatedResult;
+import pt.isep.psoft.aisafe.flight_operations.domain.SchedulingRuleViolation;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.*;
 
-/**
- * PASSO 4 - Comunicacao peer-to-peer entre replicas do Flight Operations.
- *
- * Chama SEMPRE os endpoints /internal/** dos peers, que so respondem com dados locais
- * e nunca reencaminham. E isto que elimina o forwarding circular (A -> B -> A -> ...).
- */
 @Component
 public class PeerClient {
 
@@ -24,44 +25,107 @@ public class PeerClient {
 
     private final RemoteCaller caller;
     private final List<String> peers;
+    private final ExecutorService executor;
 
-    public PeerClient(RemoteCaller caller, @Value("${app.peers}") List<String> peers) {
+    public PeerClient(RemoteCaller caller,
+                      @Value("${app.peers}") List<String> peers,
+                      @Qualifier("peerExecutor") ExecutorService executor) {
         this.caller = caller;
         this.peers = peers.stream().map(String::trim).filter(p -> !p.isBlank()).toList();
+        this.executor = executor;
         log.info("Peers configurados: {}", this.peers);
     }
 
-    /** Pergunta peer a peer e devolve o primeiro que tiver o recurso. */
     public <T> Optional<T> findFirst(String internalPath, Class<T> type) {
-        for (String peer : peers) {
-            try {
-                log.info("FORWARD GET {}{}", peer, internalPath);
-                Optional<T> found = caller.get(peer + internalPath, type);
-                if (found.isPresent()) {
-                    log.info("FOUND em {}", peer);
-                    return found;
-                }
-                log.info("NOT FOUND em {}", peer);
-            } catch (RemoteUnavailableException e) {
-                log.warn("Peer {} indisponivel, a tentar o seguinte", peer);
-            }
-        }
-        return Optional.empty();
+        return firstPresent("GET " + internalPath, peer -> caller.get(peer + internalPath, type));
     }
 
-    /** Pergunta a TODOS os peers e junta as respostas (agregacao). */
+    public <T> Optional<T> forwardPut(String internalPath, Object body, Class<T> type) {
+        return firstPresent("PUT " + internalPath, peer -> {
+            try {
+                return caller.put(peer + internalPath, body, type);
+            } catch (HttpClientErrorException e) {
+                if (e.getStatusCode().isSameCodeAs(HttpStatus.CONFLICT)) {
+                    throw new SchedulingRuleViolation("Rejected by owning replica " + peer
+                            + ": invalid status transition.");
+                }
+                throw e;
+            }
+        });
+    }
     public <T> AggregatedResult<T> collectAll(String internalPath, ParameterizedTypeReference<List<T>> type) {
+        Map<String, Future<List<T>>> futures = new java.util.LinkedHashMap<>();
+        for (String peer : peers) {
+            log.info("AGGREGATE GET {}{}", peer, internalPath);
+            futures.put(peer, executor.submit(() -> caller.get(peer + internalPath, type).orElse(List.of())));
+        }
+
         List<T> items = new ArrayList<>();
         List<String> unreachable = new ArrayList<>();
-        for (String peer : peers) {
+        futures.forEach((peer, future) -> {
             try {
-                log.info("AGGREGATE GET {}{}", peer, internalPath);
-                caller.get(peer + internalPath, type).ifPresent(items::addAll);
-            } catch (RemoteUnavailableException e) {
-                log.warn("Peer {} indisponivel, resposta sera parcial", peer);
+                items.addAll(future.get());
+            } catch (ExecutionException e) {
+                log.warn("Peer {} falhou ({}), resposta sera parcial", peer, describe(e.getCause()));
+                unreachable.add(peer);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
                 unreachable.add(peer);
             }
-        }
+        });
         return new AggregatedResult<>(items, unreachable);
+    }
+
+    private <T> Optional<T> firstPresent(String operation, PeerCall<T> call) {
+        if (peers.isEmpty()) {
+            return Optional.empty();
+        }
+        CompletionService<Optional<T>> completion = new ExecutorCompletionService<>(executor);
+        Map<Future<Optional<T>>, String> owners = new ConcurrentHashMap<>();
+        for (String peer : peers) {
+            log.info("FORWARD {} -> {}", operation, peer);
+            owners.put(completion.submit(() -> call.apply(peer)), peer);
+        }
+
+        try {
+            for (int i = 0; i < peers.size(); i++) {
+                Future<Optional<T>> done = completion.take();
+                String peer = owners.get(done);
+                try {
+                    Optional<T> result = done.get();
+                    if (result.isPresent()) {
+                        log.info("FOUND em {}", peer);
+                        return result;
+                    }
+                    log.info("NOT FOUND em {}", peer);
+                } catch (ExecutionException e) {
+                    if (e.getCause() instanceof SchedulingRuleViolation violation) {
+                        throw violation;
+                    }
+                    log.warn("Peer {} falhou ({}), a ignorar", peer, describe(e.getCause()));
+                }
+            }
+            return Optional.empty();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Optional.empty();
+        } finally {
+            owners.keySet().forEach(f -> f.cancel(true));
+        }
+    }
+
+    private static String describe(Throwable t) {
+        if (t instanceof HttpClientErrorException http) {
+            return "respondeu " + http.getStatusCode().value();
+        }
+        if (t instanceof RemoteUnavailableException || t instanceof RestClientException) {
+            return t.getMessage();
+        }
+        return t == null ? "erro desconhecido" : t.toString();
+    }
+
+    @FunctionalInterface
+    private interface PeerCall<T> {
+        Optional<T> apply(String peer) throws Exception;
     }
 }

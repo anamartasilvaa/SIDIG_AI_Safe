@@ -7,11 +7,6 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * PASSO 6 - Cliente para OUTRO servico que tambem esta replicado.
- * Round-robin para distribuir carga; se a replica escolhida falhar, tenta as restantes (failover).
- * Se nenhuma responder -> DependencyUnavailableException (vira 503 no handler).
- */
 public class ReplicatedServiceClient {
 
     private static final Logger log = LoggerFactory.getLogger(ReplicatedServiceClient.class);
@@ -28,16 +23,19 @@ public class ReplicatedServiceClient {
     }
 
     public <T> Optional<T> get(String path, Class<T> type) {
-        int start = Math.floorMod(next.getAndIncrement(), Math.max(1, replicas.size()));
+        if (replicas.isEmpty()) {
+            throw new DependencyUnavailableException("Service " + serviceName + " has no replicas configured.");
+        }
+        int start = Math.floorMod(next.getAndIncrement(), replicas.size());
         for (int i = 0; i < replicas.size(); i++) {
             String replica = replicas.get((start + i) % replicas.size());
             try {
                 log.debug("{} -> GET {}{}", serviceName, replica, path);
                 return caller.get(replica + path, type);
             } catch (RemoteUnavailableException e) {
-                log.warn("{} replica {} indisponivel, failover", serviceName, replica);
+                log.warn("{}: replica {} indisponivel ({}), failover", serviceName, replica, e.getMessage());
             }
         }
-        throw new DependencyUnavailableException(serviceName);
+        throw new DependencyUnavailableException("Service " + serviceName + " unavailable (all replicas down).");
     }
 }

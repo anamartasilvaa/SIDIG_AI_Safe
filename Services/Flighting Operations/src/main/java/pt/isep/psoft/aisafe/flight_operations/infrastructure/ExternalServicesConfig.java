@@ -18,6 +18,6 @@ public class ExternalServicesConfig {
     @Bean
     public ReplicatedServiceClient aircraftClient(@Value("${app.services.aircraft.urls}") List<String> urls,
                                                   RemoteCaller caller) {
-        return new ReplicatedServiceClient("aircraft-maintenance", urls, caller);
+        return new ReplicatedServiceClient("aircraft", urls, caller);
     }
 }
