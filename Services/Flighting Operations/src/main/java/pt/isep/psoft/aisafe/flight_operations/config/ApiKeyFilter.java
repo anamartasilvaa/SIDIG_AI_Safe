@@ -14,11 +14,6 @@ import java.io.IOException;
 import java.security.MessageDigest;
 import java.nio.charset.StandardCharsets;
 
-/**
- * PASSO 9 - Autenticacao entre servicos.
- * Os endpoints /internal/** so podem ser chamados por outras replicas,
- * que se identificam com o header X-API-Key. Cada acesso fica registado (audit log).
- */
 @Component
 public class ApiKeyFilter extends OncePerRequestFilter {
 

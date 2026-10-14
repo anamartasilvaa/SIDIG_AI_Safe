@@ -8,6 +8,9 @@ import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestTemplate;
 
 import java.time.Duration;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Configuration
 public class HttpClientConfig {
@@ -32,5 +35,15 @@ public class HttpClientConfig {
         restTemplate.getInterceptors().add(authHeaders);
 
         return restTemplate;
+    }
+
+    @Bean(name = "peerExecutor", destroyMethod = "shutdownNow")
+    public ExecutorService peerExecutor(@Value("${app.http.peer-threads}") int threads) {
+        AtomicInteger counter = new AtomicInteger();
+        return Executors.newFixedThreadPool(Math.max(2, threads), runnable -> {
+            Thread t = new Thread(runnable, "peer-call-" + counter.incrementAndGet());
+            t.setDaemon(true);
+            return t;
+        });
     }
 }
