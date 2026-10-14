@@ -1,26 +1,28 @@
 package pt.isep.psoft.aisafe.flight_operations.domain;
 
 import jakarta.persistence.*;
-import org.springframework.util.Assert;
 
 import java.time.LocalDateTime;
-import java.util.UUID;
 
 @Entity
+@Table(name = "scheduled_flight")
 public class ScheduledFlight {
 
-    /*
-     * PASSO 2 - ID globalmente unico.
-     * Com IDENTITY cada instancia comecava em 1, por isso o voo 1 da replica A
-     * e o voo 1 da replica B eram voos diferentes com o mesmo id.
-     * Um UUID gerado no dominio e unico em todas as replicas, sem coordenacao.
-     */
     @Id
-    @Column(length = 36, nullable = false, updatable = false)
-    private String id;
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long pk;
 
     @Version
     private Long version;
+
+    @Embedded
+    private FlightId flightId;
+
+    @Embedded
+    private RouteId routeId;
+
+    @Embedded
+    private RegistrationNumber aircraft;
 
     @Column(nullable = false)
     private LocalDateTime scheduledDateTime;
@@ -32,40 +34,43 @@ public class ScheduledFlight {
     @Column(nullable = false)
     private FlightStatus status;
 
-    @Column(nullable = false)
-    private String routeId;
-
-    @Column(nullable = false)
-    private String aircraftRegistration;
-
     protected ScheduledFlight() {}
+    public ScheduledFlight(RouteId routeId, RegistrationNumber aircraft, LocalDateTime scheduledDateTime,
+                           LocalDateTime now) {
+        if (routeId == null) throw new IllegalArgumentException("A route ID is required to schedule a flight.");
+        if (aircraft == null) throw new IllegalArgumentException("An aircraft registration is required to schedule a flight.");
+        if (scheduledDateTime == null) throw new IllegalArgumentException("The scheduled date and time are required.");
+        if (!scheduledDateTime.isAfter(now)) throw new IllegalArgumentException("Cannot schedule a flight in the past.");
 
-    public ScheduledFlight(String routeId, String aircraftRegistration, LocalDateTime scheduledDateTime) {
-        Assert.hasText(routeId, "A route ID is required to schedule a flight.");
-        Assert.hasText(aircraftRegistration, "An aircraft registration is required to schedule a flight.");
-        Assert.notNull(scheduledDateTime, "The scheduled date and time are required.");
-        Assert.isTrue(scheduledDateTime.isAfter(LocalDateTime.now()), "Cannot schedule a flight in the past.");
-
-        this.id = UUID.randomUUID().toString();
+        this.flightId = FlightId.newId();
         this.routeId = routeId;
-        this.aircraftRegistration = aircraftRegistration;
+        this.aircraft = aircraft;
         this.scheduledDateTime = scheduledDateTime;
         this.status = FlightStatus.SCHEDULED;
     }
 
-    public void updateStatus(FlightStatus newStatus) {
-        Assert.notNull(newStatus, "Status cannot be null.");
+    public void changeStatus(FlightStatus newStatus, LocalDateTime now) {
+        if (newStatus == null) throw new IllegalArgumentException("Status cannot be null.");
+        if (newStatus == status) return;
+        if (!status.canTransitionTo(newStatus)) {
+            throw new SchedulingRuleViolation("Flight " + flightId + " cannot change from " + status
+                    + " to " + newStatus + ". Allowed: " + status.allowedNext());
+        }
+        if (newStatus == FlightStatus.IN_FLIGHT) this.actualDepartureDateTime = now;
+        if (newStatus == FlightStatus.COMPLETED) this.actualArrivalDateTime = now;
         this.status = newStatus;
     }
 
-    public void changeAircraft(String newAircraftRegistration) {
-        Assert.hasText(newAircraftRegistration, "Replacement aircraft registration cannot be empty.");
-        this.aircraftRegistration = newAircraftRegistration;
+    public FlightSlot toSlot() {
+        return new FlightSlot(flightId.value(), scheduledDateTime, status);
     }
 
-    public String getId() { return id; }
-    public String getRouteId() { return routeId; }
-    public String getAircraftRegistration() { return aircraftRegistration; }
+    public Long getPk() { return pk; }
+    public FlightId getFlightId() { return flightId; }
+    public RouteId getRouteId() { return routeId; }
+    public RegistrationNumber getAircraft() { return aircraft; }
     public LocalDateTime getScheduledDateTime() { return scheduledDateTime; }
+    public LocalDateTime getActualDepartureDateTime() { return actualDepartureDateTime; }
+    public LocalDateTime getActualArrivalDateTime() { return actualArrivalDateTime; }
     public FlightStatus getStatus() { return status; }
 }
