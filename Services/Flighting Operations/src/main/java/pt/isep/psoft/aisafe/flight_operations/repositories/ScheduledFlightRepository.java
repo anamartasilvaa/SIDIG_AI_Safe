@@ -6,13 +6,16 @@ import org.springframework.stereotype.Repository;
 import pt.isep.psoft.aisafe.flight_operations.domain.ScheduledFlight;
 
 import java.util.List;
+import java.util.Optional;
 
 @Repository
-public interface ScheduledFlightRepository extends JpaRepository<ScheduledFlight, String> {
+public interface ScheduledFlightRepository extends JpaRepository<ScheduledFlight, Long> {
 
-    List<ScheduledFlight> findByAircraftRegistration(String aircraftRegistration);
+    Optional<ScheduledFlight> findByFlightId_Uuid(String flightId);
 
-    // US229: Rotas mais frequentes (apenas dados LOCAIS; a agregacao e feita no service)
-    @Query("SELECT f.routeId, COUNT(f) FROM ScheduledFlight f GROUP BY f.routeId ORDER BY COUNT(f) DESC")
+    List<ScheduledFlight> findByAircraft_Number(String registrationNumber);
+
+    // US229: rotas mais frequentes (contagem local; a soma entre replicas e feita no service)
+    @Query("SELECT f.routeId.code, COUNT(f) FROM ScheduledFlight f GROUP BY f.routeId.code ORDER BY COUNT(f) DESC")
     List<Object[]> countFlightsGroupedByRoute();
 }
