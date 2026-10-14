@@ -1,18 +1,16 @@
 package pt.isep.psoft.aisafe.flight_operations.api;
 
+import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import pt.isep.psoft.aisafe.flight_operations.application.DTO.ChangeFlightStatusDTO;
 import pt.isep.psoft.aisafe.flight_operations.application.DTO.RouteUtilizationDTO;
 import pt.isep.psoft.aisafe.flight_operations.application.DTO.ScheduledFlightViewDTO;
 import pt.isep.psoft.aisafe.flight_operations.application.ScheduledFlightService;
+import pt.isep.psoft.aisafe.flight_operations.domain.FlightStatus;
 
 import java.util.List;
 
-/**
- * PASSO 4 - API INTERNA: so chamada por peers (protegida pelo ApiKeyFilter).
- * Responde APENAS com os dados desta instancia e NUNCA reencaminha -> sem loops.
- * Devolve JSON simples (sem HATEOAS) para ser facil de desserializar.
- */
 @RestController
 @RequestMapping("/internal/scheduled-flights")
 public class InternalScheduledFlightController {
@@ -26,6 +24,14 @@ public class InternalScheduledFlightController {
     @GetMapping("/{id}")
     public ResponseEntity<ScheduledFlightViewDTO> getLocal(@PathVariable String id) {
         return service.findLocalById(id)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    @PutMapping("/{id}/status")
+    public ResponseEntity<ScheduledFlightViewDTO> changeLocalStatus(@PathVariable String id,
+                                                                    @Valid @RequestBody ChangeFlightStatusDTO dto) {
+        return service.changeLocalStatus(id, FlightStatus.parse(dto.status()))
                 .map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }

@@ -5,59 +5,47 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import pt.isep.psoft.aisafe.flight_operations.application.DTO.AircraftInfo;
 import pt.isep.psoft.aisafe.flight_operations.application.DTO.RouteInfo;
+import pt.isep.psoft.aisafe.flight_operations.domain.*;
 import pt.isep.psoft.aisafe.flight_operations.infrastructure.ReplicatedServiceClient;
 
-/**
- * PASSO 6 - "Aircraft-to-route assignment under range and capacity constraints".
- * Consulta os outros dois servicos (por HTTP) antes de aceitar um voo.
- */
+import java.util.Optional;
+
 @Component
 public class FlightAssignmentValidator {
 
     private final ReplicatedServiceClient routesClient;
     private final ReplicatedServiceClient aircraftClient;
+    private final FlightSchedulingPolicy policy;
     private final String routePath;
     private final String aircraftPath;
 
     public FlightAssignmentValidator(@Qualifier("routesClient") ReplicatedServiceClient routesClient,
                                      @Qualifier("aircraftClient") ReplicatedServiceClient aircraftClient,
+                                     FlightSchedulingPolicy policy,
                                      @Value("${app.services.routes.path}") String routePath,
                                      @Value("${app.services.aircraft.path}") String aircraftPath) {
         this.routesClient = routesClient;
         this.aircraftClient = aircraftClient;
+        this.policy = policy;
         this.routePath = routePath;
         this.aircraftPath = aircraftPath;
     }
 
-    public void validate(String routeId, String registration) {
-        RouteInfo route = routesClient
-                .get(routePath.replace("{id}", routeId), RouteInfo.class)
-                .orElseThrow(() -> new BusinessRuleException("Route " + routeId + " does not exist."));
+    public void validate(RouteId routeId, RegistrationNumber registration) {
+        RouteRequirements route = findRoute(routeId)
+                .orElseThrow(() -> new SchedulingRuleViolation("Route " + routeId + " does not exist."));
+        AircraftCapabilities aircraft = findAircraft(registration)
+                .orElseThrow(() -> new SchedulingRuleViolation("Aircraft " + registration + " does not exist."));
+        policy.checkAssignment(route, aircraft);
+    }
 
-        if (Boolean.FALSE.equals(route.active())) {
-            throw new BusinessRuleException("Route " + routeId + " is not active.");
-        }
+    public Optional<RouteRequirements> findRoute(RouteId routeId) {
+        return routesClient.get(routePath.replace("{id}", routeId.value()), RouteInfo.class)
+                .map(info -> info.toRequirements(routeId.value()));
+    }
 
-        AircraftInfo aircraft = aircraftClient
-                .get(aircraftPath.replace("{registration}", registration), AircraftInfo.class)
-                .orElseThrow(() -> new BusinessRuleException("Aircraft " + registration + " does not exist."));
-
-        if (aircraft.status() != null && !"ACTIVE".equalsIgnoreCase(aircraft.status())) {
-            throw new BusinessRuleException("Aircraft " + registration + " is " + aircraft.status() + ".");
-        }
-
-        if (route.distanceKm() != null && aircraft.rangeKm() != null
-                && aircraft.rangeKm() < route.distanceKm()) {
-            throw new BusinessRuleException(String.format(
-                    "Aircraft range (%.0f km) is shorter than route distance (%.0f km).",
-                    aircraft.rangeKm(), route.distanceKm()));
-        }
-
-        if (route.minCapacity() != null && aircraft.capacity() != null
-                && aircraft.capacity() < route.minCapacity()) {
-            throw new BusinessRuleException(String.format(
-                    "Aircraft capacity (%d) is below route minimum (%d).",
-                    aircraft.capacity(), route.minCapacity()));
-        }
+    public Optional<AircraftCapabilities> findAircraft(RegistrationNumber registration) {
+        return aircraftClient.get(aircraftPath.replace("{registration}", registration.value()), AircraftInfo.class)
+                .map(info -> info.toCapabilities(registration.value()));
     }
 }
