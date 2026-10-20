@@ -3,9 +3,12 @@ package pt.isep.psoft.aisafe.flight_operations.config;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.client.ClientHttpRequestInterceptor;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.time.Duration;
 import java.util.concurrent.ExecutorService;
@@ -30,6 +33,13 @@ public class HttpClientConfig {
         ClientHttpRequestInterceptor authHeaders = (request, body, execution) -> {
             request.getHeaders().set(ApiKeyFilter.HEADER, apiKey);
             request.getHeaders().set("X-Origin-Instance", instanceId);
+
+            if (RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attrs) {
+                String authorization = attrs.getRequest().getHeader(HttpHeaders.AUTHORIZATION);
+                if (authorization != null && authorization.startsWith("Bearer ")) {
+                    request.getHeaders().set(HttpHeaders.AUTHORIZATION, authorization);
+                }
+            }
             return execution.execute(request, body);
         };
         restTemplate.getInterceptors().add(authHeaders);
