@@ -224,9 +224,10 @@ public class RouteController {
     public ResponseEntity<PagedModel<EntityModel<RouteViewDTO>>> getActiveRoutesSorted(
             @RequestParam(defaultValue = "distance") String sortBy,
             @PageableDefault(size = 10) Pageable pageable,
-            PagedResourcesAssembler<RouteViewDTO> assembler) {
+            PagedResourcesAssembler<RouteViewDTO> assembler,
+            @RequestHeader(value = "X-P2P-Hops", defaultValue = "0") int hops) {
 
-        Page<RouteViewDTO> page = routeService.getActiveRoutesSorted(sortBy, pageable);
+        Page<RouteViewDTO> page = routeService.getActiveRoutesSorted(sortBy, pageable, hops);
         PagedModel<EntityModel<RouteViewDTO>> pagedModel = assembler.toModel(page, this::addLinksToRoute);
 
         return ResponseEntity.ok(pagedModel);

@@ -58,9 +58,10 @@ public class AirportController {
     public ResponseEntity<CollectionModel<EntityModel<AirportViewDTO>>> searchAirports(
             @RequestParam(required = false) String name,
             @RequestParam(required = false) String city,
-            @RequestParam(required = false) String country) {
+            @RequestParam(required = false) String country,
+            @RequestHeader(value = "X-P2P-Hops", defaultValue = "0") int hops) {
 
-        List<AirportViewDTO> airports = service.searchAirports(name, city, country);
+        List<AirportViewDTO> airports = service.searchAirports(name, city, country, hops);
 
         List<EntityModel<AirportViewDTO>> airportResources = airports.stream()
                 .map(dto -> EntityModel.of(dto,
@@ -69,6 +70,11 @@ public class AirportController {
 
         return ResponseEntity.ok(CollectionModel.of(airportResources,
                 WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(AirportController.class).searchAirports(name, city, country)).withSelfRel()));
+    }
+
+    public ResponseEntity<CollectionModel<EntityModel<AirportViewDTO>>> searchAirports(
+            String name, String city, String country) {
+        return searchAirports(name, city, country, 0);
     }
     @PatchMapping("/{iataCode}/status")
     public ResponseEntity<EntityModel<AirportViewDTO>> updateStatus(
@@ -122,9 +128,10 @@ public class AirportController {
     /* US211 - View airports grouped by region, country, or both */
     @GetMapping("/grouped")
     public ResponseEntity<Object> getAirportsGrouped(
-            @RequestParam(defaultValue = "country") String by) {
+            @RequestParam(defaultValue = "country") String by,
+            @RequestHeader(value = "X-P2P-Hops", defaultValue = "0") int hops) {
 
-        Object groupedAirports = service.getAirportsGrouped(by);
+        Object groupedAirports = service.getAirportsGrouped(by, hops);
 
         if (((java.util.Map<?, ?>) groupedAirports).isEmpty()) {
             return ResponseEntity.noContent().build();

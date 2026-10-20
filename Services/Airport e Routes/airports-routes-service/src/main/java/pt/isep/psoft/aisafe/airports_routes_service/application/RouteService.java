@@ -20,16 +20,22 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 @Service
 public class RouteService {
@@ -65,6 +71,7 @@ public class RouteService {
 
     // --- US110: Criar uma Rota ---
     public RouteViewDTO createRoute(CreateRouteDTO dto, boolean isReplication) {
+        audit("CREATE", dto.routeId());
         Airport origin = airportRepository.findByIataCodeString(dto.originIata())
                 .orElseThrow(() -> new IllegalArgumentException("Origin Airport not found: " + dto.originIata()));
 
@@ -85,6 +92,7 @@ public class RouteService {
 
     // --- US112: Desativar uma rota ---
     public RouteViewDTO deactivateRoute(String id, boolean isReplication) {
+        audit("DEACTIVATE", id);
         RouteId routeId = new RouteId(id);
         Route route = routeRepository.findByRouteId(routeId)
                 .orElseThrow(() -> new IllegalArgumentException("Route not found: " + id));
@@ -101,6 +109,7 @@ public class RouteService {
 
     // --- US112: Atualizar uma rota ---
     public RouteViewDTO updateRoute(String id, UpdateRouteDTO dto, boolean isReplication) {
+        audit("UPDATE", id);
         RouteId routeId = new RouteId(id);
         Route route = routeRepository.findByRouteId(routeId)
                 .orElseThrow(() -> new IllegalArgumentException("Route not found: " + id));
@@ -161,23 +170,25 @@ public class RouteService {
     }
 
     public Page<RouteViewDTO> searchRoutes(String origin, String destination, Pageable pageable, int hops) {
-        Page<Route> results;
+        List<RouteViewDTO> routes = new ArrayList<>();
 
         if (origin != null && destination != null) {
-            results = routeRepository.findByOrigin_IataCode_CodeAndDestination_IataCode_Code(origin, destination, pageable);
+            routeRepository.findByOrigin_IataCode_CodeAndDestination_IataCode_Code(origin, destination, Pageable.unpaged())
+                    .map(this::convertToDTO).forEach(routes::add);
         } else if (origin != null) {
-            results = routeRepository.findByOrigin_IataCode_Code(origin, pageable);
+            routeRepository.findByOrigin_IataCode_Code(origin, Pageable.unpaged())
+                    .map(this::convertToDTO).forEach(routes::add);
         } else if (destination != null) {
-            results = routeRepository.findByDestination_IataCode_Code(destination, pageable);
+            routeRepository.findByDestination_IataCode_Code(destination, Pageable.unpaged())
+                    .map(this::convertToDTO).forEach(routes::add);
         } else {
-            results = routeRepository.findAll(pageable);
+            routeRepository.findAll(Pageable.unpaged()).map(this::convertToDTO).forEach(routes::add);
         }
 
-        if (!results.isEmpty()) {
-            return results.map(this::convertToDTO);
+        if (hops < maxForwardingHops) {
+            routes.addAll(searchRoutesOnPeers(origin, destination, pageable, hops));
         }
-
-        return searchRoutesOnPeer(origin, destination, pageable, hops);
+        return pageRoutes(deduplicateRoutes(routes), pageable);
     }
 
     // --- US111: Ver Histórico da Rota ---
@@ -200,91 +211,109 @@ public class RouteService {
 
     public Page<RouteViewDTO> getRoutesByAirport(String iataCode, Pageable pageable, int hops) {
         String code = iataCode.toUpperCase();
-        Page<Route> routes = routeRepository.findRoutesByAirport(code, pageable);
-        if (routes.isEmpty()) {
-            return searchRoutesOnPeer(code, pageable, hops);
+        List<RouteViewDTO> routes = routeRepository.findRoutesByAirport(code, Pageable.unpaged())
+                .map(this::convertToDTO).getContent();
+        if (hops < maxForwardingHops) {
+            routes.addAll(searchRoutesOnPeers(code, pageable, hops));
         }
-        return routes.map(this::convertToDTO);
+        return pageRoutes(deduplicateRoutes(routes), pageable);
     }
 
-    private Page<RouteViewDTO> searchRoutesOnPeer(String iataCode, Pageable pageable, int hops) {
-        if (hops >= maxForwardingHops) {
-            return Page.empty(pageable);
-        }
+    private List<RouteViewDTO> searchRoutesOnPeers(String iataCode, Pageable pageable, int hops) {
+        List<RouteViewDTO> result = new ArrayList<>();
         for (String peerUrl : peerUrls) {
             UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(peerUrl)
-                    .pathSegment("api", "routes", "involving", iataCode)
-                    .queryParam("page", pageable.getPageNumber())
-                    .queryParam("size", pageable.getPageSize());
-            Page<RouteViewDTO> result = fetchPeerRoutes(builder, iataCode, pageable, hops);
-            if (!result.isEmpty()) {
-                return result;
-            }
+                    .pathSegment("api", "routes", "involving", iataCode);
+            result.addAll(fetchPeerRoutes(builder, pageable, hops));
         }
-        return Page.empty(pageable);
+        return result;
     }
 
-    private Page<RouteViewDTO> searchRoutesOnPeer(String origin, String destination, Pageable pageable, int hops) {
-        if (hops >= maxForwardingHops) {
-            return Page.empty(pageable);
-        }
+    private List<RouteViewDTO> searchRoutesOnPeers(String origin, String destination, Pageable pageable, int hops) {
+        List<RouteViewDTO> result = new ArrayList<>();
         for (String peerUrl : peerUrls) {
             UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(peerUrl)
-                    .path("api/routes")
-                    .queryParam("page", pageable.getPageNumber())
-                    .queryParam("size", pageable.getPageSize());
-            if (origin != null) {
-                builder.queryParam("origin", origin);
-            }
-            if (destination != null) {
-                builder.queryParam("destination", destination);
-            }
-            Page<RouteViewDTO> result = fetchPeerRoutes(builder,
-                    origin != null ? origin : destination, pageable, hops);
-            if (!result.isEmpty()) {
-                return result;
-            }
+                    .path("api/routes");
+            if (origin != null) builder.queryParam("origin", origin);
+            if (destination != null) builder.queryParam("destination", destination);
+            result.addAll(fetchPeerRoutes(builder, pageable, hops));
         }
-        return Page.empty(pageable);
+        return result;
     }
 
-    private Page<RouteViewDTO> fetchPeerRoutes(UriComponentsBuilder builder,
-                                               String routeIdentifier,
-                                               Pageable pageable,
-                                               int hops) {
+    private List<RouteViewDTO> fetchPeerRoutes(UriComponentsBuilder builder, Pageable pageable, int hops) {
+        if (hops >= maxForwardingHops) {
+            return List.of();
+        }
         try {
-            ResponseEntity<JsonNode> response = restTemplate.exchange(
-                    builder.toUriString(), HttpMethod.GET, p2pEntity(hops + 1), JsonNode.class);
-            JsonNode body = response.getBody();
-            if (body == null || body.isNull()) {
-                return Page.empty(pageable);
-            }
-
-            JsonNode embedded = body.path("_embedded");
-            JsonNode routesNode = embedded.path("routeViewDTO");
-            if (!routesNode.isArray()) {
-                routesNode = embedded.path("routes");
-            }
-
             List<RouteViewDTO> routes = new ArrayList<>();
-            if (routesNode.isArray()) {
-                for (JsonNode routeNode : routesNode) {
-                    routes.add(objectMapper.treeToValue(routeNode, RouteViewDTO.class));
+            int page = 0;
+            int totalPages = 1;
+            do {
+                UriComponentsBuilder pageBuilder = builder.cloneBuilder()
+                        .replaceQueryParam("page", page)
+                        .replaceQueryParam("size", 2000);
+                ResponseEntity<JsonNode> response = restTemplate.exchange(
+                        pageBuilder.toUriString(), HttpMethod.GET, p2pEntity(hops + 1), JsonNode.class);
+                JsonNode body = response.getBody();
+                if (body == null || body.isNull()) break;
+                JsonNode embedded = body.path("_embedded");
+                JsonNode routesNode = embedded.path("routeViewDTO");
+                if (!routesNode.isArray()) routesNode = embedded.path("routes");
+                if (routesNode.isArray()) {
+                    for (JsonNode routeNode : routesNode) {
+                        routes.add(objectMapper.treeToValue(routeNode, RouteViewDTO.class));
+                    }
                 }
-            }
-
-            long totalElements = body.path("page").path("totalElements").asLong(routes.size());
-            return new PageImpl<>(routes, pageable, totalElements);
+                totalPages = Math.max(1, body.path("page").path("totalPages").asInt(1));
+                page++;
+            } while (page < totalPages);
+            return routes;
         } catch (HttpClientErrorException.NotFound | ResourceAccessException exception) {
             log.debug("Peer route search failed for {}", builder, exception);
-            return Page.empty(pageable);
+            return List.of();
         } catch (HttpClientErrorException exception) {
             log.warn("Peer route search failed with status {} for {}",
                     exception.getStatusCode(), builder);
-            return Page.empty(pageable);
-        } catch (JsonProcessingException exception) {
-            throw new IllegalStateException("Invalid route search response from peer", exception);
+            return List.of();
+        } catch (JsonProcessingException | RestClientException exception) {
+            log.warn("Invalid or unavailable route response from peer {}", builder, exception);
+            return List.of();
         }
+    }
+
+    private List<RouteViewDTO> deduplicateRoutes(List<RouteViewDTO> routes) {
+        Map<String, RouteViewDTO> unique = new LinkedHashMap<>();
+        routes.forEach(route -> unique.putIfAbsent(route.routeId(), route));
+        return new ArrayList<>(unique.values());
+    }
+
+    private Page<RouteViewDTO> pageRoutes(List<RouteViewDTO> routes, Pageable pageable) {
+        if (pageable.getSort().isSorted()) {
+            Comparator<RouteViewDTO> comparator = null;
+            for (org.springframework.data.domain.Sort.Order order : pageable.getSort()) {
+                Comparator<RouteViewDTO> field = Comparator.comparing(
+                        route -> routeSortValue(route, order.getProperty()),
+                        Comparator.nullsFirst(String::compareTo));
+                if (order.isDescending()) field = field.reversed();
+                comparator = comparator == null ? field : comparator.thenComparing(field);
+            }
+            if (comparator != null) routes.sort(comparator);
+        }
+        if (pageable.isUnpaged()) return new PageImpl<>(routes);
+        int from = (int) Math.min((long) pageable.getOffset(), routes.size());
+        int to = Math.min(from + pageable.getPageSize(), routes.size());
+        return new PageImpl<>(routes.subList(from, to), pageable, routes.size());
+    }
+
+    private String routeSortValue(RouteViewDTO route, String property) {
+        return switch (property) {
+            case "origin", "originIata" -> route.originIata();
+            case "destination", "destinationIata" -> route.destinationIata();
+            case "status" -> route.status();
+            case "minimumCapacity", "capacity" -> String.valueOf(route.minimumCapacity());
+            default -> route.routeId();
+        };
     }
 
     private IllegalArgumentException routeNotFound(String id) {
@@ -313,17 +342,30 @@ public class RouteService {
 
     // --- US214: Listar rotas ativas ordenadas por popularidade ou distância ---
     public Page<RouteViewDTO> getActiveRoutesSorted(String sortBy, Pageable pageable) {
+        return getActiveRoutesSorted(sortBy, pageable, 0);
+    }
+
+    public Page<RouteViewDTO> getActiveRoutesSorted(String sortBy, Pageable pageable, int hops) {
         Page<Route> routes;
 
         // Decide a ordenação baseada no parâmetro recebido
         if ("popularity".equalsIgnoreCase(sortBy)) {
-            routes = routeRepository.findAllActiveRoutesSortedByPopularity(pageable);
+            routes = routeRepository.findAllActiveRoutesSortedByPopularity(Pageable.unpaged());
         } else {
-            routes = routeRepository.findAllActiveRoutesSortedByDistance(pageable);
+            routes = routeRepository.findAllActiveRoutesSortedByDistance(Pageable.unpaged());
         }
 
         // Usa o teu próprio método convertToDTO em vez de criar um DTO novo à mão!
-        return routes.map(this::convertToDTO);
+        List<RouteViewDTO> allRoutes = routes.map(this::convertToDTO).getContent();
+        if (hops < maxForwardingHops) {
+            for (String peerUrl : peerUrls) {
+                UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(peerUrl)
+                        .pathSegment("api", "routes", "active", "sorted")
+                        .queryParam("sortBy", sortBy);
+                allRoutes.addAll(fetchPeerRoutes(builder, pageable, hops));
+            }
+        }
+        return pageRoutes(deduplicateRoutes(allRoutes), pageable);
     }
 
     // --- US216: Procurar rotas alternativas ---
@@ -440,5 +482,15 @@ public class RouteService {
         sb.append("}\n");
 
         return sb.toString();
+    }
+
+    private void audit(String action, Object id) {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        Object principal = authentication == null ? null : authentication.getPrincipal();
+        String username = principal instanceof org.springframework.security.core.userdetails.UserDetails
+                ? ((org.springframework.security.core.userdetails.UserDetails) principal).getUsername()
+                : principal instanceof String ? (String) principal : null;
+        if (username == null || username.isBlank()) username = "SYSTEM";
+        log.info("AUDIT - User: {} - Action: {} - Target ID: {}", username, action, id);
     }
 }

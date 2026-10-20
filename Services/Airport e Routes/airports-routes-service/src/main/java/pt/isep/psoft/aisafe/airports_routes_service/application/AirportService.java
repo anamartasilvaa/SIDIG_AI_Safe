@@ -14,15 +14,21 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.util.UriComponentsBuilder;
 import pt.isep.psoft.aisafe.airports_routes_service.application.DTO.*;
 import pt.isep.psoft.aisafe.airports_routes_service.domain.*;
 import pt.isep.psoft.aisafe.airports_routes_service.repositories.AirportRepository;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 @Service
 public class AirportService {
@@ -49,6 +55,7 @@ public class AirportService {
 
     @Transactional
     public AirportViewDTO registerAirport(RegisterAirportDTO dto, boolean isReplication) {
+        audit("CREATE", dto.iataCode());
         Airport airport = new Airport(
                 new IATACode(dto.iataCode()),
                 dto.name(),
@@ -130,6 +137,10 @@ public class AirportService {
 
     @Transactional(readOnly = true)
     public List<AirportViewDTO> searchAirports(String name, String city, String country) {
+        return searchAirports(name, city, country, 0);
+    }
+
+    public List<AirportViewDTO> searchAirports(String name, String city, String country, int hops) {
         List<Airport> airports;
 
         if (name != null && !name.isBlank()) {
@@ -142,14 +153,28 @@ public class AirportService {
             airports = airportRepository.findAll();
         }
 
-        return airports.stream()
+        List<AirportViewDTO> results = airports.stream()
                 .map(this::mapToDTO)
                 .collect(Collectors.toList());
+        if (hops < maxForwardingHops) {
+            for (String peerUrl : peerUrls) {
+                UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(peerUrl)
+                        .pathSegment("api", "airports", "search");
+                if (name != null) builder.queryParam("name", name);
+                if (city != null) builder.queryParam("city", city);
+                if (country != null) builder.queryParam("country", country);
+                results.addAll(fetchPeerAirports(builder, hops));
+            }
+        }
+        Map<String, AirportViewDTO> unique = new LinkedHashMap<>();
+        results.forEach(airport -> unique.putIfAbsent(airport.iataCode(), airport));
+        return new ArrayList<>(unique.values());
     }
 
     // US109 - Update Status
     @Transactional
     public AirportViewDTO updateAirportStatus(String iataCode, String status, boolean isReplication) {
+        audit("UPDATE", iataCode);
         Airport airport = airportRepository.findByIataCodeString(iataCode.toUpperCase())
                 .orElseThrow(() -> new IllegalArgumentException("Airport not found"));
 
@@ -169,6 +194,7 @@ public class AirportService {
     @Transactional
     public AirportViewDTO updateAirportImage(String iataCode, org.springframework.web.multipart.MultipartFile file,
                                              boolean isReplication) {
+        audit("UPDATE", iataCode);
 
         Airport airport = airportRepository.findByIataCodeString(iataCode.toUpperCase())
                 .orElseThrow(() -> new IllegalArgumentException("Airport not found: " + iataCode));
@@ -221,6 +247,7 @@ public class AirportService {
 
     @Transactional
     public AirportViewDTO updateAirportDetails(String iataCode, UpdateAirportDetailsDTO dto, boolean isReplication) {
+        audit("UPDATE", iataCode);
         Airport airport = airportRepository.findByIataCodeString(iataCode.toUpperCase())
                 .orElseThrow(() -> new IllegalArgumentException("Airport not found: " + iataCode));
 
@@ -285,11 +312,14 @@ public class AirportService {
     //  US211: View airports grouped by region or country
     @Transactional(readOnly = true)
     public Object getAirportsGrouped(String groupBy) {
-        List<Airport> airports = airportRepository.findAll();
+        return getAirportsGrouped(groupBy, 0);
+    }
+
+    public Object getAirportsGrouped(String groupBy, int hops) {
+        List<AirportViewDTO> airports = searchAirports(null, null, null, hops);
 
         if ("both".equalsIgnoreCase(groupBy)) {
             return airports.stream()
-                    .map(this::mapToDTO)
                     .collect(Collectors.groupingBy(
                             this::extractRegion,
                             Collectors.groupingBy(dto -> dto.country() != null ? dto.country() : "Unknown Country")
@@ -297,14 +327,36 @@ public class AirportService {
         }
 
         if ("region".equalsIgnoreCase(groupBy)) {
-            return airports.stream()
-                    .map(this::mapToDTO)
-                    .collect(Collectors.groupingBy(this::extractRegion));
+            return airports.stream().collect(Collectors.groupingBy(this::extractRegion));
         }
 
-        return airports.stream()
-                .map(this::mapToDTO)
-                .collect(Collectors.groupingBy(dto -> dto.country() != null ? dto.country() : "Unknown Country"));
+        return airports.stream().collect(Collectors.groupingBy(dto -> dto.country() != null ? dto.country() : "Unknown Country"));
+    }
+
+    private List<AirportViewDTO> fetchPeerAirports(UriComponentsBuilder builder, int hops) {
+        try {
+            ResponseEntity<JsonNode> response = restTemplate.exchange(
+                    builder.toUriString(), HttpMethod.GET, p2pEntity(hops + 1), JsonNode.class);
+            JsonNode body = response.getBody();
+            if (body == null || body.isNull()) return List.of();
+            JsonNode embedded = body.path("_embedded");
+            JsonNode airportsNode = embedded.path("airportViewDTO");
+            if (!airportsNode.isArray()) airportsNode = embedded.path("airports");
+            if (!airportsNode.isArray() && body.isArray()) airportsNode = body;
+            List<AirportViewDTO> airports = new ArrayList<>();
+            if (airportsNode.isArray()) {
+                for (JsonNode node : airportsNode) {
+                    airports.add(objectMapper.treeToValue(node, AirportViewDTO.class));
+                }
+            }
+            return airports;
+        } catch (HttpClientErrorException | ResourceAccessException exception) {
+            log.warn("Peer airport search failed for {}", builder, exception);
+            return List.of();
+        } catch (JsonProcessingException | RestClientException exception) {
+            log.warn("Invalid or unavailable airport response from peer {}", builder, exception);
+            return List.of();
+        }
     }
 
     private String extractRegion(AirportViewDTO dto) {
@@ -317,6 +369,7 @@ public class AirportService {
     // US225
     @Transactional
     public List<AirportViewDTO> importAirportsFromCsv(org.springframework.web.multipart.MultipartFile file) {
+        audit("CREATE", "CSV");
         if (file.isEmpty()) {
             throw new IllegalArgumentException("The uploaded CSV file is empty.");
         }
@@ -354,4 +407,14 @@ public class AirportService {
             throw new IllegalArgumentException("Error in CSV formatting/data: " + e.getMessage());
         }
     }
+
+    private void audit(String action, Object id) {
+            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+            Object principal = authentication == null ? null : authentication.getPrincipal();
+            String username = principal instanceof org.springframework.security.core.userdetails.UserDetails
+                    ? ((org.springframework.security.core.userdetails.UserDetails) principal).getUsername()
+                    : principal instanceof String ? (String) principal : null;
+            if (username == null || username.isBlank()) username = "SYSTEM";
+            log.info("AUDIT - User: {} - Action: {} - Target ID: {}", username, action, id);
     }
+}

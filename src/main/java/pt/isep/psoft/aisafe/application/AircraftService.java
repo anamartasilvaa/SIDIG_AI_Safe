@@ -3,6 +3,10 @@ package pt.isep.psoft.aisafe.application;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import pt.isep.psoft.aisafe.application.DTO.*;
 import pt.isep.psoft.aisafe.domain.*;
 import pt.isep.psoft.aisafe.repositories.AircraftModelRepository;
@@ -23,6 +27,7 @@ import java.io.IOException;
 
 @Service
 public class AircraftService {
+    private static final Logger logger = LoggerFactory.getLogger(AircraftService.class);
 
     private final AircraftModelRepository modelRepository;
     private final AircraftRepository aircraftRepository;
@@ -54,6 +59,7 @@ public class AircraftService {
 
     @Transactional
     public void registerModel(RegisterAircraftModelDTO dto) {
+        audit("CREATE", dto.modelName());
         AircraftModel model = new AircraftModel(
                 new ModelName(dto.modelName()), Manufacturer.valueOf(dto.manufacturer().toUpperCase()),
                 dto.seatingCapacity(), dto.fuelCapacity(), dto.range(), dto.speed(),
@@ -65,6 +71,7 @@ public class AircraftService {
 
     @Transactional
     public void registerAircraft(RegisterAircraftDTO dto) {
+        audit("CREATE", dto.registrationNumber());
         AircraftModel model = modelRepository.findByModelName(new ModelName(dto.modelName()))
                 .orElseThrow(() -> new IllegalArgumentException("Aircraft model not found: " + dto.modelName()));
         Aircraft aircraft = new Aircraft(
@@ -91,6 +98,7 @@ public class AircraftService {
 
     @Transactional
     public Map<String, Object> updateAircraftStatusWithReport(String regNum, UpdateAircraftStatusDTO dto) {
+        audit("UPDATE", regNum);
         Aircraft aircraft = aircraftRepository.findByRegistrationNumber(new RegistrationNumber(regNum))
                 .orElseThrow(() -> new IllegalArgumentException("Aircraft not found: " + regNum));
         AircraftStatus newStatus = AircraftStatus.valueOf(dto.status().toUpperCase());
@@ -142,6 +150,7 @@ public class AircraftService {
 
     @Transactional
     public AircraftModelViewDTO updateModelSpecifications(String modelName, UpdateAircraftModelSpecsDTO dto) {
+        audit("UPDATE", modelName);
         AircraftModel model = modelRepository.findByModelName(new ModelName(modelName.trim().toUpperCase()))
                 .orElseThrow(() -> new IllegalArgumentException("Aircraft model not found: " + modelName));
         model.updateSpecifications(dto.seatingCapacity(), dto.fuelCapacity(), dto.maximumRange(), dto.cruisingSpeed(), dto.seatingConfiguration(), dto.operatingHoursRange());
@@ -151,6 +160,7 @@ public class AircraftService {
 
     @Transactional
     public AircraftModelViewDTO updateModelImage(String modelName, MultipartFile file) {
+        audit("UPDATE", modelName);
         AircraftModel model = modelRepository.findByModelName(new ModelName(modelName.trim().toUpperCase()))
                 .orElseThrow(() -> new IllegalArgumentException("Aircraft model not found: " + modelName));
         model.updateImage(saveImageLocally(file));
@@ -218,5 +228,15 @@ public class AircraftService {
         if (aircraft.getStatus() == AircraftStatus.UNDER_MAINTENANCE) return "under maintenance";
         if (aircraft.getStatus() == AircraftStatus.INACTIVE) return "inactive";
         return scheduledFlightRepository.existsByAircraftAndStatus(aircraft, FlightStatus.IN_FLIGHT) ? "in-flight" : "available";
+    }
+
+    private void audit(String action, Object id) {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        Object principal = authentication == null ? null : authentication.getPrincipal();
+        String username = principal instanceof org.springframework.security.core.userdetails.UserDetails
+                ? ((org.springframework.security.core.userdetails.UserDetails) principal).getUsername()
+                : principal instanceof String ? (String) principal : null;
+        if (username == null || username.isBlank()) username = "SYSTEM";
+        logger.info("AUDIT - User: {} - Action: {} - Target ID: {}", username, action, id);
     }
 }

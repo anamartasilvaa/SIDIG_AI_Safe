@@ -2,6 +2,10 @@ package pt.isep.psoft.aisafe.application;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import pt.isep.psoft.aisafe.application.DTO.CreateScheduledFlightDTO;
 import pt.isep.psoft.aisafe.application.DTO.RouteUtilizationDTO;
 import pt.isep.psoft.aisafe.application.DTO.ScheduledFlightViewDTO;
@@ -14,6 +18,7 @@ import java.util.stream.Collectors;
 
 @Service
 public class ScheduledFlightService {
+    private static final Logger logger = LoggerFactory.getLogger(ScheduledFlightService.class);
 
     private final ScheduledFlightRepository flightRepository;
     private final RouteRepository routeRepository;
@@ -29,6 +34,7 @@ public class ScheduledFlightService {
 
     @Transactional
     public ScheduledFlightViewDTO scheduleFlight(CreateScheduledFlightDTO dto) {
+        audit("CREATE", dto.routeId());
         Route route = routeRepository.findByRouteId(new RouteId(dto.routeId()))
                 .orElseThrow(() -> new IllegalArgumentException("Route not found: " + dto.routeId()));
 
@@ -86,5 +92,15 @@ public class ScheduledFlightService {
         return flightRepository.countFlightsGroupedByRoute().stream()
                 .map(obj -> new RouteUtilizationDTO((String) obj[0], (Long) obj[1]))
                 .collect(Collectors.toList());
+    }
+
+    private void audit(String action, Object id) {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        Object principal = authentication == null ? null : authentication.getPrincipal();
+        String username = principal instanceof org.springframework.security.core.userdetails.UserDetails
+                ? ((org.springframework.security.core.userdetails.UserDetails) principal).getUsername()
+                : principal instanceof String ? (String) principal : null;
+        if (username == null || username.isBlank()) username = "SYSTEM";
+        logger.info("AUDIT - User: {} - Action: {} - Target ID: {}", username, action, id);
     }
 }

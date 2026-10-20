@@ -3,6 +3,10 @@ package pt.isep.psoft.aisafe.application;
 import org.springframework.stereotype.Service;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import pt.isep.psoft.aisafe.application.DTO.*;
 import pt.isep.psoft.aisafe.domain.*;
 import pt.isep.psoft.aisafe.repositories.*;
@@ -16,6 +20,7 @@ import java.util.stream.Collectors;
 
 @Service
 public class MaintenanceService {
+    private static final Logger logger = LoggerFactory.getLogger(MaintenanceService.class);
 
     private final MaintenanceTemplateRepository templateRepository;
     private final MaintenanceRecordRepository recordRepository;
@@ -36,6 +41,7 @@ public class MaintenanceService {
     }
 
     public MaintenanceTemplate createTemplate(CreateMaintenanceTemplateDTO dto) {
+        audit("CREATE", dto.templateName());
         if (templateRepository.findByTemplateName(dto.templateName()).isPresent()) {
             throw new IllegalArgumentException("Template name already exists: " + dto.templateName());
         }
@@ -51,6 +57,7 @@ public class MaintenanceService {
     }
 
     public MaintenanceRecord registerMaintenance(RegisterMaintenanceDTO dto) {
+        audit("CREATE", dto.registrationNumber());
         Aircraft aircraft = aircraftRepository.findByRegistrationNumber(new RegistrationNumber(dto.registrationNumber()))
                 .orElseThrow(() -> new IllegalArgumentException("Aircraft not found with registration: " + dto.registrationNumber()));
         MaintenanceTemplate template = templateRepository.findById(dto.templateId())
@@ -83,6 +90,7 @@ public class MaintenanceService {
     }
 
     public MaintenanceRecord completeMaintenance(Long recordId, CompleteMaintenanceDTO dto) {
+        audit("UPDATE", recordId);
         MaintenanceRecord record = recordRepository.findById(recordId)
                 .orElseThrow(() -> new IllegalArgumentException("Maintenance record not found with ID: " + recordId));
         record.complete(dto.completionNotes());
@@ -163,5 +171,15 @@ public class MaintenanceService {
         return partRepository.findPartsWithLowStock().stream()
                 .map(part -> new LowStockAlertDTO(part.getPartNumber().getNumber(), part.getName(), part.getStockQuantity(), part.getMinimumThreshold(), "CRITICAL"))
                 .collect(Collectors.toList());
+    }
+
+    private void audit(String action, Object id) {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        Object principal = authentication == null ? null : authentication.getPrincipal();
+        String username = principal instanceof org.springframework.security.core.userdetails.UserDetails
+                ? ((org.springframework.security.core.userdetails.UserDetails) principal).getUsername()
+                : principal instanceof String ? (String) principal : null;
+        if (username == null || username.isBlank()) username = "SYSTEM";
+        logger.info("AUDIT - User: {} - Action: {} - Target ID: {}", username, action, id);
     }
 }
