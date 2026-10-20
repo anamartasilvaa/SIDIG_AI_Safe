@@ -104,6 +104,17 @@ class PeerClientTest {
         Optional<String> found = client(caller, "http://bad", "http://down", "http://good").findFirst("/f/1", String.class);
         assertEquals(Optional.of("voo"), found);
     }
+    @Test
+    @DisplayName("Replica dona em baixo: 503 (pode existir), e nao 404 (nao existe)")
+    void ownerDownIsNotNotFound() {
+        FakeCaller caller = new FakeCaller()
+                .on("http://empty", Optional.empty())
+                .on("http://down", new RemoteUnavailableException("http://down", "timeout"));
+        PeerClient client = client(caller, "http://empty", "http://down");
+
+        assertThrows(DependencyUnavailableException.class, () -> client.findFirst("/f/9", String.class));
+        assertThrows(DependencyUnavailableException.class, () -> client.forwardPut("/f/9/status", "x", String.class));
+    }
 
     @Test
     @DisplayName("Agregacao com peers em falha devolve resposta PARCIAL e diz quem falhou")
