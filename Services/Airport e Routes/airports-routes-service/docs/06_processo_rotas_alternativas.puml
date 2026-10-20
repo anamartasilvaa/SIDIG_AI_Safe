@@ -1,0 +1,25 @@
+@startuml 06_processo_rotas_alternativas
+title Vista de Processo - Rotas alternativas (US216)
+actor "ATCC" as C
+participant "RouteController" as Ctl
+participant "RouteService" as S
+participant "FastestRouteStrategy" as F
+database "RouteRepository" as R
+
+C -> Ctl : GET /api/routes/alternatives?originIata=OPO&destinationIata=JFK
+Ctl -> S : findAlternativeRoutes(OPO, JFK)
+S -> F : findAlternatives(OPO, JFK)
+F -> R : rotas ativas com origem OPO
+loop BFS (máx. 3 voos, sem repetir aeroportos)
+  F -> R : rotas ativas a partir do último destino
+  F -> F : chegou a JFK? guarda caminho\n(tempo = soma dos voos + 60 min por escala)
+end
+F -> F : ordena por totalEstimatedFlightTime
+F --> S : List<AlternativeRouteDTO>
+S --> Ctl : alternativas
+alt lista vazia
+  Ctl --> C : 204 No Content
+else
+  Ctl --> C : 200 CollectionModel + link self
+end
+@enduml

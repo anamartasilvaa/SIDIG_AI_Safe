@@ -1,0 +1,120 @@
+@startuml 03_vista_logica_classes
+title Vista Lógica - Modelo de domínio e serviços
+skinparam classAttributeIconSize 0
+
+package "domain" {
+  class Airport <<Entity>> {
+    -pk: Long
+    -version: Long
+    -name: String
+    -city: String
+    -country: String
+    -timezone: String
+    -type: AirportType
+    -status: AirportStatus
+    -imageUrl: String
+    -operationalHours: String
+    -contactInformation: String
+    +addRunway(Runway)
+    +addFacility(Facility)
+    +updateStatus(AirportStatus)
+    +updateDetails(String, String)
+    +updateImage(String)
+  }
+  class Route <<Entity>> {
+    -pk: Long
+    -version: Long
+    -status: RouteStatus
+    -estimatedFlightTime: Integer
+    -minimumRange: Double
+    -minimumCapacity: Integer
+    +deactivate()
+    +updateParameters(Integer, Double, Integer)
+  }
+  class RouteHistory <<Entity>> {
+    -routeId: String
+    -action: String
+    -startDate: LocalDateTime
+    -endDate: LocalDateTime
+    +closeHistory(LocalDateTime)
+  }
+  class Runway <<Entity>> {
+    -name: String
+    -length: Double
+    -orientation: String
+  }
+  class IATACode <<ValueObject>> {
+    +code: String
+  }
+  class RouteId <<ValueObject>> {
+    +id: String
+  }
+  class Coordinates <<ValueObject>> {
+    +latitude: Double
+    +longitude: Double
+  }
+  class Facility <<ValueObject>> {
+    -type: String
+    -description: String
+  }
+  enum AirportType { INTERNATIONAL\nREGIONAL\nDOMESTIC }
+  enum AirportStatus { OPERATIONAL\nCLOSED\nUNDER_MAINTENANCE }
+  enum RouteStatus { ACTIVE\nINACTIVE }
+}
+
+package "application" {
+  class AirportService <<Service>> {
+    +registerAirport(dto, isReplication)
+    +getAirportByIataCode(iata)
+    +searchAirports(name, city, country)
+    +updateAirportStatus(iata, status, isReplication)
+    +updateAirportDetails(iata, dto, isReplication)
+    +getAirportsGrouped(by)
+    +importAirportsFromCsv(file)
+  }
+  class RouteService <<Service>> {
+    +createRoute(dto, isReplication)
+    +updateRoute(id, dto, isReplication)
+    +deactivateRoute(id, isReplication)
+    +getRoute(id)
+    +searchRoutes(origin, destination, pageable)
+    +getRouteHistory(id)
+    +getBusiestAirports()
+    +findAlternativeRoutes(origin, destination)
+    +exportRoutesAsGeoJson()
+  }
+  interface RouteSearchStrategy {
+    +findAlternatives(origin, destination)
+  }
+  class FastestRouteStrategy {
+    -MAX_FLIGHTS = 3
+    -MINIMUM_CONNECTING_TIME_MINUTES = 60
+  }
+}
+
+package "repositories" {
+  interface AirportRepository
+  interface RouteRepository
+  interface RouteHistoryRepository
+}
+
+Airport *-- "1" IATACode
+Airport *-- "1" Coordinates
+Airport *-- "0..*" Runway
+Airport *-- "0..*" Facility
+Airport --> AirportType
+Airport --> AirportStatus
+Route *-- "1" RouteId
+Route --> "1" Airport : origin
+Route --> "1" Airport : destination
+Route --> RouteStatus
+RouteHistory ..> Route : routeId (referência)
+
+RouteSearchStrategy <|.. FastestRouteStrategy
+RouteService --> RouteSearchStrategy
+FastestRouteStrategy --> RouteRepository
+AirportService --> AirportRepository
+RouteService --> RouteRepository
+RouteService --> AirportRepository
+RouteService --> RouteHistoryRepository
+@enduml

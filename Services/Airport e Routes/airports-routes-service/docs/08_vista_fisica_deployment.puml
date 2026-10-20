@@ -1,0 +1,32 @@
+@startuml 08_vista_fisica_deployment
+title Vista Física - Deployment local (3 réplicas)
+node "Cliente" {
+  artifact "Postman / Frontend" as client
+}
+node "Máquina local" {
+  node "JVM 1 :8081" as n1 {
+    artifact "airports-routes-service.jar" as a1
+    database "H2 (memória)" as d1
+  }
+  node "JVM 2 :8082" as n2 {
+    artifact "airports-routes-service.jar" as a2
+    database "H2 (memória)" as d2
+  }
+  node "JVM 3 :8083" as n3 {
+    artifact "airports-routes-service.jar" as a3
+    database "H2 (memória)" as d3
+  }
+}
+client --> a1 : HTTP + JWT
+client --> a2 : HTTP + JWT
+client --> a3 : HTTP + JWT
+a1 --> d1
+a2 --> d2
+a3 --> d3
+a1 <..> a2 : peer.url (forward GET / replicação)
+a2 <..> a3 : peer.url (forward GET / replicação)
+note bottom of n1
+  Mesmo jwt.secret em todas as instâncias.
+  Sem BD partilhada: cada nó é autónomo.
+end note
+@enduml

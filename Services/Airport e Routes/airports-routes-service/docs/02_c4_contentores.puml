@@ -1,0 +1,25 @@
+@startuml 02_c4_contentores
+!include <C4/C4_Container>
+LAYOUT_WITH_LEGEND()
+title C4 Nível 2 - Contentores: instâncias replicadas com BD própria
+
+Person(user, "ATCC / Backoffice / Admin", "Cliente REST (Postman ou frontend)")
+
+System_Boundary(b, "Airports & Routes Service") {
+  Container(i1, "Instância 1 :8081", "Spring Boot", "AirportController, RouteController, JwtAuthenticationFilter (RBAC), forwarding P2P")
+  ContainerDb(db1, "H2 em memória", "H2", "BD isolada da instância 1")
+  Container(i2, "Instância 2 :8082", "Spring Boot", "Mesmo código, configuração peer.url própria")
+  ContainerDb(db2, "H2 em memória", "H2", "BD isolada da instância 2")
+  Container(i3, "Instância 3 :8083", "Spring Boot", "Mesmo código, configuração peer.url própria")
+  ContainerDb(db3, "H2 em memória", "H2", "BD isolada da instância 3")
+}
+
+Rel(user, i1, "Pedidos REST + JWT", "HTTP")
+Rel(user, i2, "Pedidos REST + JWT", "HTTP")
+Rel(user, i3, "Pedidos REST + JWT", "HTTP")
+Rel(i1, db1, "JPA", "JDBC")
+Rel(i2, db2, "JPA", "JDBC")
+Rel(i3, db3, "JPA", "JDBC")
+BiRel(i1, i2, "GET: forward (X-P2P-Hops). Escrita: replicação (X-P2P-Sync)", "HTTP/REST")
+BiRel(i2, i3, "GET: forward (X-P2P-Hops). Escrita: replicação (X-P2P-Sync)", "HTTP/REST")
+@enduml

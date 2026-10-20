@@ -1,0 +1,23 @@
+@startuml 05_processo_replicacao_escrita
+title Vista de Processo - Escrita com replicação para o peer (US106/US110)
+actor "Backoffice Operator" as C
+participant "AirportController" as Ctl
+participant "AirportService" as S
+database "H2 local" as DB
+participant "Peer (instância B)" as B
+
+C -> Ctl : POST /api/airports + JWT\n(sem X-P2P-Sync)
+Ctl -> Ctl : RBAC: ROLE_BACKOFFICE ou ROLE_ADMIN
+Ctl -> S : registerAirport(dto, isReplication=false)
+S -> DB : save(Airport)
+S -> B : POST /api/airports\nX-P2P-Sync: true
+alt peer disponível
+  B -> B : registerAirport(dto, isReplication=true)\n(não volta a replicar)
+  B --> S : 201 Created
+else peer inacessível
+  S -> S : log.warn("Falha ao replicar para o peer")
+  note right: Consistência eventual:\no cliente continua a receber 201
+end
+S --> Ctl : AirportViewDTO
+Ctl --> C : 201 Created + link self
+@enduml
