@@ -12,6 +12,7 @@ import pt.isep.psoft.aisafe.flight_operations.application.DTO.AvailabilityDTO;
 import pt.isep.psoft.aisafe.flight_operations.application.DTO.ChangeFlightStatusDTO;
 import pt.isep.psoft.aisafe.flight_operations.application.DTO.CreateScheduledFlightDTO;
 import pt.isep.psoft.aisafe.flight_operations.application.DTO.RouteUtilizationDTO;
+import pt.isep.psoft.aisafe.flight_operations.application.DTO.ScheduleResultDTO;
 import pt.isep.psoft.aisafe.flight_operations.application.DTO.ScheduledFlightViewDTO;
 import pt.isep.psoft.aisafe.flight_operations.application.ScheduledFlightService;
 
@@ -35,9 +36,15 @@ public class ScheduledFlightController {
     @PostMapping
     public ResponseEntity<EntityModel<ScheduledFlightViewDTO>> scheduleFlight(
             @Valid @RequestBody CreateScheduledFlightDTO dto) {
-        ScheduledFlightViewDTO created = service.scheduleFlight(dto);
+        ScheduleResultDTO result = service.scheduleFlight(dto);
+        ScheduledFlightViewDTO created = result.flight();
+        HttpHeaders headers = new HttpHeaders();
+        if (result.isPartial()) {
+            headers.add(PARTIAL_HEADER, String.join(",", result.unreachablePeers()));
+        }
         return ResponseEntity
                 .created(linkTo(methodOn(ScheduledFlightController.class).getScheduledFlightById(created.id())).toUri())
+                .headers(headers)
                 .body(withLinks(created));
     }
 
@@ -70,6 +77,7 @@ public class ScheduledFlightController {
         return ResponseEntity.ok().headers(partialHeaders(result)).body(CollectionModel.of(resources,
                 linkTo(methodOn(ScheduledFlightController.class).getFlightsByAircraft(registrationNumber)).withSelfRel()));
     }
+
 
     @GetMapping("/availability")
     public ResponseEntity<AvailabilityDTO> checkAvailability(@RequestParam String registrationNumber,
