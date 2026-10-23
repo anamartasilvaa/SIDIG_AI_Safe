@@ -1,0 +1,31 @@
+@startuml
+skinparam sequenceArrowThickness 2
+
+actor Client
+participant "API Gateway" as Gateway
+box "Aircraft Service Cluster" #LightBlue
+participant "Instance 1\n(Port 8081)" as R1
+participant "Instance 2\n(Port 8082)" as R2
+end box
+
+Client -> Gateway : GET /aircraft/*
+Gateway -> R1 : Route Request (Load Balanced)
+
+activate R1
+note over R1: Checks local database
+R1 -> R1 : Data not found locally
+
+note over R1: Triggers peer-to-peer query resolution
+R1 -> R2 : Forward HTTP GET /aircraft/*
+activate R2
+
+note over R2: Checks local database
+R2 --> R1 : Return Data JSON
+deactivate R2
+
+note over R1: Aggregates response for client
+R1 --> Gateway : Return HTTP 200 OK (Data)
+deactivate R1
+
+Gateway --> Client : Return HTTP 200 OK (Data)
+@enduml

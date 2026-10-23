@@ -21,6 +21,11 @@ public class InternalScheduledFlightController {
         this.service = service;
     }
 
+    @GetMapping
+    public List<ScheduledFlightViewDTO> getAllLocal() {
+        return service.findLocalAll();
+    }
+
     @GetMapping("/{id}")
     public ResponseEntity<ScheduledFlightViewDTO> getLocal(@PathVariable String id) {
         return service.findLocalById(id)
@@ -31,9 +36,19 @@ public class InternalScheduledFlightController {
     @PutMapping("/{id}/status")
     public ResponseEntity<ScheduledFlightViewDTO> changeLocalStatus(@PathVariable String id,
                                                                     @Valid @RequestBody ChangeFlightStatusDTO dto) {
-        return service.changeLocalStatus(id, FlightStatus.parse(dto.status()))
+        return service.applyStatusLocally(id, FlightStatus.parse(dto.status()))
                 .map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+
+    @PutMapping("/{id}/replica")
+    public ResponseEntity<Void> receiveReplica(@PathVariable String id, @RequestBody ScheduledFlightViewDTO replica) {
+        if (!id.equalsIgnoreCase(replica.id())) {
+            throw new IllegalArgumentException("Path id and body id differ.");
+        }
+        service.applyReplica(replica);
+        return ResponseEntity.noContent().build();
     }
 
     @GetMapping("/aircraft/{registrationNumber}")

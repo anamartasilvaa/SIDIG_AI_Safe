@@ -36,6 +36,7 @@ public class PeerClient {
         log.info("Peers configurados: {}", this.peers);
     }
 
+
     public <T> Optional<T> findFirst(String internalPath, Class<T> type) {
         return firstPresent("GET " + internalPath, peer -> caller.get(peer + internalPath, type));
     }
@@ -53,6 +54,8 @@ public class PeerClient {
             }
         });
     }
+
+
     public <T> AggregatedResult<T> collectAll(String internalPath, ParameterizedTypeReference<List<T>> type) {
         Map<String, Future<List<T>>> futures = new java.util.LinkedHashMap<>();
         for (String peer : peers) {
@@ -87,6 +90,7 @@ public class PeerClient {
             owners.put(completion.submit(() -> call.apply(peer)), peer);
         }
 
+        List<String> failed = new ArrayList<>();
         try {
             for (int i = 0; i < peers.size(); i++) {
                 Future<Optional<T>> done = completion.take();
@@ -103,7 +107,12 @@ public class PeerClient {
                         throw violation;
                     }
                     log.warn("Peer {} falhou ({}), a ignorar", peer, describe(e.getCause()));
+                    failed.add(peer);
                 }
+            }
+            if (!failed.isEmpty()) {
+                throw new DependencyUnavailableException("Not found in the reachable replicas, but replicas "
+                        + failed + " did not answer: the resource may exist there. Try again later.");
             }
             return Optional.empty();
         } catch (InterruptedException e) {
