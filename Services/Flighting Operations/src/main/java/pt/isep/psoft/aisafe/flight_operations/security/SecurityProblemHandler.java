@@ -1,0 +1,55 @@
+package pt.isep.psoft.aisafe.flight_operations.security;
+
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.AuthenticationException;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.web.AuthenticationEntryPoint;
+import org.springframework.security.web.access.AccessDeniedHandler;
+
+import java.io.IOException;
+import java.util.stream.Collectors;
+public class SecurityProblemHandler implements AuthenticationEntryPoint, AccessDeniedHandler {
+
+    private static final Logger audit = LoggerFactory.getLogger("AUDIT");
+
+    @Override
+    public void commence(HttpServletRequest request, HttpServletResponse response,
+                         AuthenticationException authException) throws IOException {
+        Object reason = request.getAttribute(JwtAuthenticationFilter.ERROR_ATTRIBUTE);
+        String detail = reason == null ? "Missing bearer token." : "Invalid or expired token.";
+        audit.warn("DENIED 401 {} {} remote={} reason={}", request.getMethod(), request.getRequestURI(),
+                request.getRemoteAddr(), reason == null ? "no token" : reason);
+        write(response, 401, "Unauthorized", detail, request.getRequestURI());
+    }
+
+    @Override
+    public void handle(HttpServletRequest request, HttpServletResponse response,
+                       AccessDeniedException accessDeniedException) throws IOException {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        String user = auth == null ? "anonymous" : auth.getName();
+        String roles = auth == null ? "[]" : auth.getAuthorities().stream()
+                .map(GrantedAuthority::getAuthority).collect(Collectors.joining(",", "[", "]"));
+        audit.warn("DENIED 403 {} {} user={} roles={}", request.getMethod(), request.getRequestURI(), user, roles);
+        write(response, 403, "Forbidden", "Your role is not allowed to perform this operation.",
+                request.getRequestURI());
+    }
+
+    private static void write(HttpServletResponse response, int status, String title, String detail,
+                              String instance) throws IOException {
+        response.setStatus(status);
+        response.setContentType("application/problem+json");
+        response.setCharacterEncoding("UTF-8");
+        response.getWriter().write("{\"type\":\"about:blank\",\"title\":\"" + title + "\",\"status\":" + status
+                + ",\"detail\":\"" + detail + "\",\"instance\":\"" + escape(instance) + "\"}");
+    }
+
+    private static String escape(String s) {
+        return s == null ? "" : s.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+}

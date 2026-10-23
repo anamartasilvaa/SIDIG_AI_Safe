@@ -15,6 +15,7 @@ import pt.isep.psoft.aisafe.flight_operations.application.DTO.RouteUtilizationDT
 import pt.isep.psoft.aisafe.flight_operations.application.DTO.ScheduleResultDTO;
 import pt.isep.psoft.aisafe.flight_operations.application.DTO.ScheduledFlightViewDTO;
 import pt.isep.psoft.aisafe.flight_operations.application.ScheduledFlightService;
+import pt.isep.psoft.aisafe.flight_operations.security.AuditLog;
 
 import java.util.List;
 
@@ -24,7 +25,6 @@ import static org.springframework.hateoas.server.mvc.WebMvcLinkBuilder.methodOn;
 @RestController
 @RequestMapping("/api/scheduled-flights")
 public class ScheduledFlightController {
-
     public static final String PARTIAL_HEADER = "X-Partial-Response-Unreachable-Peers";
 
     private final ScheduledFlightService service;
@@ -38,6 +38,7 @@ public class ScheduledFlightController {
             @Valid @RequestBody CreateScheduledFlightDTO dto) {
         ScheduleResultDTO result = service.scheduleFlight(dto);
         ScheduledFlightViewDTO created = result.flight();
+        AuditLog.record("CREATE", created.id());
         HttpHeaders headers = new HttpHeaders();
         if (result.isPartial()) {
             headers.add(PARTIAL_HEADER, String.join(",", result.unreachablePeers()));
@@ -60,7 +61,10 @@ public class ScheduledFlightController {
     public ResponseEntity<EntityModel<ScheduledFlightViewDTO>> changeStatus(
             @PathVariable String id, @Valid @RequestBody ChangeFlightStatusDTO dto) {
         return service.changeStatus(id, dto.status())
-                .map(f -> ResponseEntity.ok(withLinks(f)))
+                .map(f -> {
+                    AuditLog.record("UPDATE_STATUS " + f.status(), f.id());
+                    return ResponseEntity.ok(withLinks(f));
+                })
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
@@ -77,7 +81,6 @@ public class ScheduledFlightController {
         return ResponseEntity.ok().headers(partialHeaders(result)).body(CollectionModel.of(resources,
                 linkTo(methodOn(ScheduledFlightController.class).getFlightsByAircraft(registrationNumber)).withSelfRel()));
     }
-
 
     @GetMapping("/availability")
     public ResponseEntity<AvailabilityDTO> checkAvailability(@RequestParam String registrationNumber,
