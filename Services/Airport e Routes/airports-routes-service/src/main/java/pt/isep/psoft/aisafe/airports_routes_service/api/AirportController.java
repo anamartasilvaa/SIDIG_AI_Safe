@@ -7,11 +7,14 @@ import org.springframework.hateoas.server.mvc.WebMvcLinkBuilder;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import pt.isep.psoft.aisafe.airports_routes_service.util.PartialResultContext;
 import pt.isep.psoft.aisafe.airports_routes_service.application.AirportService;
 import pt.isep.psoft.aisafe.airports_routes_service.application.DTO.*;
+import pt.isep.psoft.aisafe.airports_routes_service.security.PeerReplicationAuthorizer;
 
 import java.util.List;
 import java.util.stream.Collectors;
+import java.time.Instant;
 
 import static org.springframework.hateoas.server.mvc.WebMvcLinkBuilder.linkTo;
 import static org.springframework.hateoas.server.mvc.WebMvcLinkBuilder.methodOn;
@@ -21,18 +24,27 @@ import static org.springframework.hateoas.server.mvc.WebMvcLinkBuilder.methodOn;
 public class AirportController {
 
     private final AirportService service;
+    private final PeerReplicationAuthorizer replicationAuthorizer;
 
-    public AirportController(AirportService service) {
+    public AirportController(AirportService service, PeerReplicationAuthorizer replicationAuthorizer) {
         this.service = service;
+        this.replicationAuthorizer = replicationAuthorizer;
     }
 
     @PostMapping
     public ResponseEntity<EntityModel<AirportViewDTO>> createAirport(@RequestBody RegisterAirportDTO dto,
-                                                                       @RequestHeader(value = "X-P2P-Sync", defaultValue = "false") boolean isReplication) {
-        AirportViewDTO created = service.registerAirport(dto, isReplication);
+                                                                       @RequestHeader(value = "X-P2P-Sync", defaultValue = "false") boolean isReplication,
+                                                                       @RequestHeader(value = "X-Last-Modified", required = false) String lastModified,
+                                                                       @RequestHeader(value = "X-Origin-Node", required = false) String originNode) {
+        boolean authorized = replicationAuthorizer.isAuthorized(isReplication);
+        AirportViewDTO created = authorized
+                ? service.registerAirport(dto, true,
+                lastModified != null ? parseInstant(lastModified) : dto.lastModified(),
+                originNode != null ? originNode : dto.originNodeId())
+                : service.registerAirport(dto, false);
 
         EntityModel<AirportViewDTO> resource = EntityModel.of(created);
-        resource.add(WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(AirportController.class).getAirport(created.iataCode())).withSelfRel());
+        resource.add(WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(AirportController.class).getAirport(created.iataCode(), 0)).withSelfRel());
 
         return new ResponseEntity<>(resource, HttpStatus.CREATED);
     }
@@ -41,17 +53,13 @@ public class AirportController {
     public ResponseEntity<EntityModel<AirportViewDTO>> getAirport(
             @PathVariable String iataCode,
             @RequestHeader(value = "X-P2P-Hops", defaultValue = "0") int hops) {
-        AirportViewDTO airport = service.getAirportByIataCode(iataCode.toUpperCase(), hops);
+        AirportViewDTO airport = service.getAirportByIataCode(iataCode.toUpperCase(), Math.max(0, hops));
 
         EntityModel<AirportViewDTO> resource = EntityModel.of(airport);
 
-        resource.add(WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(AirportController.class).getAirport(iataCode)).withSelfRel());
+        resource.add(WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(AirportController.class).getAirport(iataCode, 0)).withSelfRel());
 
         return ResponseEntity.ok(resource);
-    }
-
-    public ResponseEntity<EntityModel<AirportViewDTO>> getAirport(String iataCode) {
-        return getAirport(iataCode, 0);
     }
 
     @GetMapping("/search")
@@ -61,31 +69,34 @@ public class AirportController {
             @RequestParam(required = false) String country,
             @RequestHeader(value = "X-P2P-Hops", defaultValue = "0") int hops) {
 
-        List<AirportViewDTO> airports = service.searchAirports(name, city, country, hops);
+        List<AirportViewDTO> airports = service.searchAirports(name, city, country, Math.max(0, hops));
 
         List<EntityModel<AirportViewDTO>> airportResources = airports.stream()
                 .map(dto -> EntityModel.of(dto,
-                        WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(AirportController.class).getAirport(dto.iataCode())).withSelfRel()))
+                        WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(AirportController.class).getAirport(dto.iataCode(), 0)).withSelfRel()))
                 .collect(Collectors.toList());
 
-        return ResponseEntity.ok(CollectionModel.of(airportResources,
-                WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(AirportController.class).searchAirports(name, city, country)).withSelfRel()));
+        ResponseEntity.BodyBuilder response = ResponseEntity.ok();
+        if (PartialResultContext.isPartial()) response.header("X-Partial-Result", "true");
+        return response.body(CollectionModel.of(airportResources,
+                WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(AirportController.class).searchAirports(name, city, country, 0)).withSelfRel()));
     }
 
-    public ResponseEntity<CollectionModel<EntityModel<AirportViewDTO>>> searchAirports(
-            String name, String city, String country) {
-        return searchAirports(name, city, country, 0);
-    }
     @PatchMapping("/{iataCode}/status")
     public ResponseEntity<EntityModel<AirportViewDTO>> updateStatus(
             @PathVariable String iataCode,
             @RequestBody String newStatus,
-            @RequestHeader(value = "X-P2P-Sync", defaultValue = "false") boolean isReplication) {
+            @RequestHeader(value = "X-P2P-Sync", defaultValue = "false") boolean isReplication,
+            @RequestHeader(value = "X-Last-Modified", required = false) String lastModified,
+            @RequestHeader(value = "X-Origin-Node", required = false) String originNode) {
 
-        AirportViewDTO updated = service.updateAirportStatus(iataCode, newStatus.replace("\"", ""), isReplication);
+        boolean authorized = replicationAuthorizer.isAuthorized(isReplication);
+        AirportViewDTO updated = authorized && (lastModified != null || originNode != null)
+                ? service.updateAirportStatus(iataCode, newStatus.replace("\"", ""), true, parseInstant(lastModified), originNode)
+                : service.updateAirportStatus(iataCode, newStatus.replace("\"", ""), authorized);
 
         EntityModel<AirportViewDTO> resource = EntityModel.of(updated);
-        resource.add(WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(AirportController.class).getAirport(iataCode)).withRel("airport-details"));
+        resource.add(WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(AirportController.class).getAirport(iataCode, 0)).withRel("airport-details"));
 
         return ResponseEntity.ok(resource);
     }
@@ -97,14 +108,15 @@ public class AirportController {
             @RequestParam("file") org.springframework.web.multipart.MultipartFile file,
             @RequestHeader(value = "X-P2P-Sync", defaultValue = "false") boolean isReplication) {
 
-        AirportViewDTO updatedAirport = service.updateAirportImage(iataCode, file, isReplication);
+        AirportViewDTO updatedAirport = service.updateAirportImage(iataCode, file,
+                replicationAuthorizer.isAuthorized(isReplication));
 
         EntityModel<AirportViewDTO> resource = EntityModel.of(updatedAirport);
 
         resource.add(WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(AirportController.class)
                 .updateAirportImage(iataCode, file, false)).withSelfRel());
         resource.add(WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(AirportController.class)
-                .getAirport(iataCode)).withRel("airport-details"));
+                .getAirport(iataCode, 0)).withRel("airport-details"));
 
         return ResponseEntity.ok(resource);
     }
@@ -114,15 +126,25 @@ public class AirportController {
     public ResponseEntity<EntityModel<AirportViewDTO>> updateAirportDetails(
             @PathVariable String iataCode,
             @Valid @RequestBody UpdateAirportDetailsDTO dto,
-            @RequestHeader(value = "X-P2P-Sync", defaultValue = "false") boolean isReplication) {
+            @RequestHeader(value = "X-P2P-Sync", defaultValue = "false") boolean isReplication,
+            @RequestHeader(value = "X-Last-Modified", required = false) String lastModified,
+            @RequestHeader(value = "X-Origin-Node", required = false) String originNode) {
 
-        AirportViewDTO updatedAirport = service.updateAirportDetails(iataCode, dto, isReplication);
+        AirportViewDTO updatedAirport = service.updateAirportDetails(iataCode, dto,
+                replicationAuthorizer.isAuthorized(isReplication), parseInstant(lastModified), originNode);
 
         EntityModel<AirportViewDTO> resource = EntityModel.of(updatedAirport);
-        resource.add(WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(AirportController.class).getAirport(iataCode)).withRel("airport-details"));
+        resource.add(WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(AirportController.class).getAirport(iataCode, 0)).withRel("airport-details"));
         resource.add(WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(AirportController.class).updateAirportDetails(iataCode, dto, false)).withSelfRel());
 
         return ResponseEntity.ok(resource);
+    }
+    private Instant parseInstant(String value) {
+        if (value == null || value.isBlank()) return null;
+        try { return Instant.parse(value); } catch (Exception ignored) { return null; }
+    }
+    public ResponseEntity<EntityModel<AirportViewDTO>> updateAirportDetails(String iataCode, UpdateAirportDetailsDTO dto, boolean isReplication) {
+        return updateAirportDetails(iataCode, dto, isReplication, null, null);
     }
 
     /* US211 - View airports grouped by region, country, or both */
@@ -131,13 +153,15 @@ public class AirportController {
             @RequestParam(defaultValue = "country") String by,
             @RequestHeader(value = "X-P2P-Hops", defaultValue = "0") int hops) {
 
-        Object groupedAirports = service.getAirportsGrouped(by, hops);
+        Object groupedAirports = service.getAirportsGrouped(by, Math.max(0, hops));
 
         if (((java.util.Map<?, ?>) groupedAirports).isEmpty()) {
             return ResponseEntity.noContent().build();
         }
 
-        return ResponseEntity.ok(groupedAirports);
+        ResponseEntity.BodyBuilder response = ResponseEntity.ok();
+        if (PartialResultContext.isPartial()) response.header("X-Partial-Result", "true");
+        return response.body(groupedAirports);
     }
 
     /* US225 - Import bulk airport data from CSV files */
@@ -149,7 +173,7 @@ public class AirportController {
 
         List<EntityModel<AirportViewDTO>> airportResources = importedAirports.stream()
                 .map(dto -> EntityModel.of(dto,
-                        WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(AirportController.class).getAirport(dto.iataCode())).withSelfRel()))
+                        WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(AirportController.class).getAirport(dto.iataCode(), 0)).withSelfRel()))
                 .collect(Collectors.toList());
 
         CollectionModel<EntityModel<AirportViewDTO>> collectionModel = CollectionModel.of(airportResources,
