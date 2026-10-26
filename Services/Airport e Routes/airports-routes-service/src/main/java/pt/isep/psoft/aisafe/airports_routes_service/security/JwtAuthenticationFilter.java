@@ -1,66 +1,66 @@
 package pt.isep.psoft.aisafe.airports_routes_service.security;
 
-import io.jsonwebtoken.Claims;
-import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.JwtException;
-import io.jsonwebtoken.security.Keys;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.jwt.BadJwtException;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.JwtException;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
-import javax.crypto.SecretKey;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Stream;
 
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
-    private final SecretKey signingKey;
+    private final JwtDecoder decoder;
 
-    public JwtAuthenticationFilter(@Value("${jwt.secret}") String secret) {
-        byte[] secretBytes = secret.getBytes(StandardCharsets.UTF_8);
-        if (secretBytes.length < 32) {
-            throw new IllegalArgumentException("jwt.secret must contain at least 32 UTF-8 bytes");
-        }
-        this.signingKey = Keys.hmacShaKeyFor(secretBytes);
+    public JwtAuthenticationFilter(
+            @Value("${app.security.jwt.jwk-set-uri:}") String jwkSetUri,
+            @Value("${app.security.jwt.issuer:}") String issuer,
+            @Value("${jwt.secret}") String secret,
+            @Value("${app.security.jwt.accept-dev-tokens:true}") boolean acceptDevTokens) {
+        this.decoder = TokenDecoders.create(jwkSetUri, issuer, secret, acceptDevTokens);
     }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
-        String header = request.getHeader("Authorization");
+        String header = request.getHeader(HttpHeaders.AUTHORIZATION);
         if (header == null || !header.startsWith("Bearer ")) {
             filterChain.doFilter(request, response);
             return;
         }
 
         try {
-            Claims claims = Jwts.parser()
-                    .verifyWith(signingKey)
-                    .build()
-                    .parseSignedClaims(header.substring(7))
-                    .getPayload();
+            Jwt jwt = decoder.decode(header.substring(7).trim());
 
-            String username = claims.get("username", String.class);
-            if (username == null || username.isBlank()) {
-                username = claims.getSubject();
+            String username = firstNonBlank(jwt.getClaimAsString("username"),
+                    jwt.getClaimAsString("preferred_username"), jwt.getSubject());
+            if (username == null) {
+                throw new BadJwtException("token without username/subject");
             }
-
-            if (username != null && !username.isBlank()) {
-                UsernamePasswordAuthenticationToken authentication =
-                        new UsernamePasswordAuthenticationToken(username, null, authorities(claims));
-                SecurityContextHolder.getContext().setAuthentication(authentication);
+            Object roles = jwt.getClaims().get("roles");
+            if (roles == null) {
+                Map<String, Object> realmAccess = jwt.getClaimAsMap("realm_access");
+                roles = realmAccess == null ? null : realmAccess.get("roles");
             }
+            SecurityContextHolder.getContext().setAuthentication(
+                    new UsernamePasswordAuthenticationToken(username, null, authorities(roles)));
         } catch (JwtException | IllegalArgumentException ignored) {
             SecurityContextHolder.clearContext();
         }
@@ -68,29 +68,28 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 
-    private List<SimpleGrantedAuthority> authorities(Claims claims) {
-        Object rolesClaim = claims.get("roles");
-        if (rolesClaim instanceof Collection<?> roles) {
-            return roles.stream()
-                    .map(String::valueOf)
-                    .map(this::authority)
-                    .toList();
+    private static String firstNonBlank(String... values) {
+        for (String v : values) {
+            if (v != null && !v.isBlank()) {
+                return v;
+            }
         }
-        if (rolesClaim instanceof String roles) {
-            return List.of(roles.split(",")).stream()
-                    .map(String::trim)
-                    .filter(role -> !role.isBlank())
-                    .map(this::authority)
-                    .toList();
-        }
-        return List.of();
+        return null;
     }
 
-    private SimpleGrantedAuthority authority(String role) {
-        String normalized = role.trim();
-        if (!normalized.startsWith("ROLE_")) {
-            normalized = "ROLE_" + normalized;
+    private static List<SimpleGrantedAuthority> authorities(Object rolesClaim) {
+        Stream<String> roles;
+        if (rolesClaim instanceof Collection<?> list) {
+            roles = list.stream().map(String::valueOf);
+        } else if (rolesClaim instanceof String text) {
+            roles = Arrays.stream(text.split(","));
+        } else {
+            return List.of();
         }
-        return new SimpleGrantedAuthority(normalized);
+        return roles.map(String::trim)
+                .filter(r -> !r.isBlank())
+                .map(r -> r.startsWith("ROLE_") ? r : "ROLE_" + r)
+                .map(SimpleGrantedAuthority::new)
+                .toList();
     }
 }

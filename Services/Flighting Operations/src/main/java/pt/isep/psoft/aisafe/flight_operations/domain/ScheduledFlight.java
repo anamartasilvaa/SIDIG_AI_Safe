@@ -96,8 +96,15 @@ public class ScheduledFlight {
 
     public boolean mergeReplica(FlightStatus otherStatus, LocalDateTime otherDeparture, LocalDateTime otherArrival,
                                 long otherRevision, Instant otherLastModifiedAt) {
+        return mergeReplica(null, otherStatus, otherDeparture, otherArrival, otherRevision, otherLastModifiedAt);
+    }
+    public boolean mergeReplica(RegistrationNumber otherAircraft, FlightStatus otherStatus, LocalDateTime otherDeparture,
+                                LocalDateTime otherArrival, long otherRevision, Instant otherLastModifiedAt) {
         if (!isOlderThan(otherRevision, otherLastModifiedAt, otherStatus)) {
             return false;
+        }
+        if (otherAircraft != null) {
+            this.aircraft = otherAircraft;
         }
         this.status = otherStatus;
         this.actualDepartureDateTime = otherDeparture;
@@ -105,6 +112,16 @@ public class ScheduledFlight {
         this.revision = otherRevision;
         this.lastModifiedAt = otherLastModifiedAt;
         return true;
+    }
+    public void reassignAircraft(RegistrationNumber newAircraft) {
+        if (newAircraft == null) throw new IllegalArgumentException("The new aircraft registration is required.");
+        if (status != FlightStatus.SCHEDULED && status != FlightStatus.DELAYED) {
+            throw new SchedulingRuleViolation("Flight " + flightId + " is " + status + " and cannot change aircraft.");
+        }
+        if (newAircraft.equals(aircraft)) return;
+        this.aircraft = newAircraft;
+        this.revision++;
+        this.lastModifiedAt = Instant.now();
     }
 
     private boolean isOlderThan(long otherRevision, Instant otherLastModifiedAt, FlightStatus otherStatus) {

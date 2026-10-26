@@ -30,7 +30,7 @@ public class StubExternalServices {
                     {"registrationNumber":"CS-TTM","status":"UNDER_MAINTENANCE","maximumRange":6000,"actualSeatingCapacity":180}""");
 
     public static void main(String[] args) throws IOException {
-        start(8091, "/api/routes/", ROUTES);
+       // start(8091, "/api/routes/", ROUTES);
         start(8071, "/api/aircraft/", AIRCRAFT);
         System.out.println("Stub a correr: routes em :8091, aircraft em :8071 (Stop para parar)");
     }
