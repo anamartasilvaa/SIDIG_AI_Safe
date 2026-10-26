@@ -1,58 +1,60 @@
 @startuml sd-route-utilization
 skinparam style strictuml
 autonumber
-title SD - US229 (Route utilization report, aggregated from all replicas)
+title SD - US229 Route utilization report (aggregated from all replicas, without duplicates)
 
 actor "Backoffice Operator" as User
-box "FO-1 :8081" #F4F7FF
+participant "API Gateway" as GW
+box "FO-1 (replica chosen by gateway)" #F4F7FF
 participant "ScheduledFlightController" as Ctrl
 participant "ScheduledFlightService" as Svc
 participant "ScheduledFlightRepository" as Repo
 participant "PeerClient" as Peers
 end box
-participant "FO-2 :8082\n/internal" as FO2
-participant "FO-3 :8083\n/internal" as FO3
+participant "FO-2 /internal" as FO2
+participant "FO-3 /internal" as FO3
 
-User -> Ctrl : GET /api/scheduled-flights/route-utilization
+User -> GW : GET /api/scheduled-flights/route-utilization + Bearer JWT
+GW -> Ctrl : HTTPS (BACKOFFICE/ADMIN role)
 activate Ctrl
 Ctrl -> Svc : routeUtilization()
 activate Svc
 
-Svc -> Peers : collectAll("/internal/scheduled-flights/route-utilization")
+Svc -> Peers : collectAll("/internal/scheduled-flights")
 activate Peers
 par in parallel
   Peers -> FO2 : GET (X-API-Key)
-  activate FO2
   alt FO-2 available
-    FO2 --> Peers : List<RouteUtilizationDTO>
+    FO2 --> Peers : List<ScheduledFlightViewDTO>
   else FO-2 down (timeout / open circuit)
-    FO2 --> Peers : failure -> unreachablePeers += FO-2
+    FO2 --> Peers : fails -> unreachablePeers += FO-2
   end
-  deactivate FO2
 else
   Peers -> FO3 : GET (X-API-Key)
-  activate FO3
-  FO3 --> Peers : List<RouteUtilizationDTO>
-  deactivate FO3
+  FO3 --> Peers : List<ScheduledFlightViewDTO>
 end
-Peers --> Svc : AggregatedResult(items, unreachablePeers)
+Peers --> Svc : AggregatedResult(flights, unreachablePeers)
 deactivate Peers
 
-Svc -> Repo : countFlightsGroupedByRoute()
-activate Repo
-Repo --> Svc : List<Object[]> (local counts)
-deactivate Repo
+Svc -> Repo : findAll() (local flights)
+Repo --> Svc : List<ScheduledFlight>
 
-Svc -> Svc : sum by routeId and sort (desc)
+Svc -> Svc : merge by FlightId (keeps newest copy)\ncount by routeId, sort (desc)
 
-alt all peers responded
-  Svc --> Ctrl : AggregatedResult (complete)
-  Ctrl --> User : 200 OK (List<RouteUtilizationDTO>)
-else some peer failed
-  Svc --> Ctrl : AggregatedResult (partial)
-  Ctrl --> User : 200 OK + X-Partial-Response-Unreachable-Peers
+alt there are flights
+  alt all peers responded
+    Svc --> Ctrl : complete result
+    Ctrl --> GW : 200 OK List<RouteUtilizationDTO>
+  else some peer failed
+    Svc --> Ctrl : partial result
+    Ctrl --> GW : 200 OK + X-Partial-Response-Unreachable-Peers
+  end
+else no flights
+  Ctrl --> GW : 204 No Content
 end
+GW --> User : response
 deactivate Svc
 deactivate Ctrl
 
+note over User, FO3 : AP choice (CAP): always responds, even with failing replicas; client is warned by the header.
 @enduml

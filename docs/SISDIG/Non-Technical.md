@@ -6,7 +6,7 @@ The system is split into four distinct network services communicating over HTTP/
 
 In front of the system is an API Gateway system which should act as the entry point into the overall system, allowing clients to interact with it.
 
-![High-Level System Architecture Diagram](high-level.svg) 
+![High-Level System Architecture Diagram](svg/high-level.svg) 
 
 ## Service Segregation & Design Rationale
 
@@ -50,7 +50,7 @@ The system is designed to survive the failure of individual nodes and temporary 
 ## Graceful Degradation
 If the Maintenance Service goes entirely offline, the Aircraft, Airports, and Flights services will remain operational, allowing the core business of scheduling and querying existing flights to continue unimpeded.
 
-![Peer-to-Peer Forwarding diagram](peer-to-peer.svg)
+![Peer-to-Peer Forwarding diagram](svg/peer-to-peer.svg)
 
 # References
 ::: {#refs}

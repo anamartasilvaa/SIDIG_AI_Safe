@@ -1,0 +1,97 @@
+@startuml class-diagram-flight-operations
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing false
+hide empty members
+title Flight Operations - Domain Model (distributed bounded context)
+
+package "Scheduled Flight Aggregate" {
+    class ScheduledFlight <<Entity>> <<Root>> {
+        - pk: Long
+        - version: Long
+        - scheduledDateTime: LocalDateTime
+        - actualDepartureDateTime: LocalDateTime
+        - actualArrivalDateTime: LocalDateTime
+        - revision: long
+        - lastModifiedAt: Instant
+        --
+        + changeStatus(newStatus: FlightStatus, now: LocalDateTime)
+        + mergeReplica(status, departure, arrival, revision, lastModifiedAt): boolean
+        + {static} restore(...): ScheduledFlight
+        + toSlot(): FlightSlot
+    }
+    class FlightId <<Value Object>> {
+        - uuid: String
+        --
+        + {static} newId(): FlightId
+        + {static} of(value: String): FlightId
+    }
+    class RouteId <<Value Object>> {
+        - code: String
+    }
+    class RegistrationNumber <<Value Object>> {
+        - number: String
+    }
+    enum FlightStatus <<Enumeration>> {
+        SCHEDULED
+        DELAYED
+        IN_FLIGHT
+        COMPLETED
+        CANCELED
+        --
+        + canTransitionTo(next): boolean
+        + occupiesAircraft(): boolean
+    }
+
+    ScheduledFlight "1" *-- "1" FlightId : identified by >
+    ScheduledFlight "1" *-- "1" RouteId : operates on >
+    ScheduledFlight "1" *-- "1" RegistrationNumber : assigned to >
+    ScheduledFlight "1" --> "1" FlightStatus : has >
+
+
+}
+
+package "Scheduling Rules (Domain Service)" {
+    class FlightSchedulingPolicy <<Domain Service>> {
+        - minimumGap: Duration
+        --
+        + checkAssignment(route: RouteRequirements, aircraft: AircraftCapabilities)
+        + findConflict(existing: Collection<FlightSlot>, when: LocalDateTime): Optional<FlightSlot>
+    }
+    class RouteRequirements <<Value Object>> {
+        routeId: String
+        active: boolean
+        distance: Double
+        minimumRange: Double
+        minimumCapacity: Integer
+    }
+    class AircraftCapabilities <<Value Object>> {
+        registrationNumber: String
+        status: String
+        maximumRange: Double
+        seatingCapacity: Integer
+    }
+    class FlightSlot <<Value Object>> {
+        flightId: String
+        scheduledDateTime: LocalDateTime
+        status: FlightStatus
+    }
+    class SchedulingRuleViolation <<Exception>>
+
+    FlightSchedulingPolicy ..> RouteRequirements : uses
+    FlightSchedulingPolicy ..> AircraftCapabilities : uses
+    FlightSchedulingPolicy ..> FlightSlot : uses
+    FlightSchedulingPolicy ..> SchedulingRuleViolation : throws
+}
+
+package "Other bounded contexts (accessed only via REST)" #EEEEEE {
+    class "Route\n(Airports & Routes Service)" as ExtRoute <<External>>
+    class "Aircraft\n(Aircraft Service)" as ExtAircraft <<External>>
+}
+
+RouteId ..> ExtRoute : <<reference by id>>
+RegistrationNumber ..> ExtAircraft : <<reference by id>>
+ScheduledFlight ..> FlightSlot : creates
+FlightSlot --> FlightStatus
+
+@enduml
