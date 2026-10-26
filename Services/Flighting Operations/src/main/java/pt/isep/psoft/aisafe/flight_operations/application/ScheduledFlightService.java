@@ -123,7 +123,8 @@ public class ScheduledFlightService {
                 return true;
             }
             ScheduledFlight flight = existing.get();
-            boolean changed = flight.mergeReplica(FlightStatus.parse(replica.status()),
+            boolean changed = flight.mergeReplica(RegistrationNumber.of(replica.registrationNumber()),
+                    FlightStatus.parse(replica.status()),
                     parse(replica.actualDepartureDateTime()), parse(replica.actualArrivalDateTime()),
                     replica.revision(), replica.lastModified());
             if (changed) {
@@ -325,4 +326,70 @@ public class ScheduledFlightService {
             throw new IllegalArgumentException("Invalid date/time '" + value + "'. Expected ISO-8601, e.g. 2027-03-15T10:00:00");
         }
     }
+
+    // ============================================================ GROUNDING (US119 / US222)
+    public List<String> groundAircraft(String registration, List<String> candidateRegistrations) {
+        RegistrationNumber grounded = RegistrationNumber.of(registration);
+        List<RegistrationNumber> candidates = (candidateRegistrations == null ? List.<String>of() : candidateRegistrations)
+                .stream()
+                .filter(c -> c != null && !c.isBlank())
+                .map(RegistrationNumber::of)
+                .filter(c -> !c.equals(grounded))
+                .distinct()
+                .toList();
+        LocalDateTime now = LocalDateTime.now();
+        List<ScheduledFlightViewDTO> affected = findByAircraft(grounded.value()).items().stream()
+                .filter(f -> {
+                    FlightStatus st = FlightStatus.parse(f.status());
+                    return (st == FlightStatus.SCHEDULED || st == FlightStatus.DELAYED)
+                            && LocalDateTime.parse(f.scheduledDateTime()).isAfter(now);
+                })
+                .toList();
+
+        List<String> report = new ArrayList<>();
+        if (affected.isEmpty()) {
+            report.add("Aircraft " + grounded + " has no upcoming flights to reassign.");
+        }
+        for (ScheduledFlightViewDTO flight : affected) {
+            report.add(reassignToFirstFreeCandidate(flight, grounded, candidates));
+        }
+        log.warn("GROUNDING {}: {}", grounded, report);
+        return report;
+    }
+
+    private String reassignToFirstFreeCandidate(ScheduledFlightViewDTO flight, RegistrationNumber grounded,
+                                                List<RegistrationNumber> candidates) {
+        LocalDateTime when = LocalDateTime.parse(flight.scheduledDateTime());
+        String label = "Flight " + flight.id() + " (" + flight.routeId() + ", " + flight.scheduledDateTime() + ")";
+        for (RegistrationNumber candidate : candidates) {
+            synchronized (aircraftLocks.computeIfAbsent(candidate.value(), k -> new Object())) {
+                List<FlightSlot> busy = toSlots(findByAircraft(candidate.value()).items());
+                if (policy.findConflict(busy, when).isPresent()) {
+                    continue;
+                }
+                Optional<ScheduledFlightViewDTO> moved = reassignLocally(flight.id(), candidate);
+                if (moved.isPresent()) {
+                    return label + " reassigned from " + grounded + " to " + candidate + ".";
+                }
+                return label + " is not stored on this replica yet; not reassigned.";
+            }
+        }
+        return label + " kept on " + grounded + ": no candidate aircraft is free at that time.";
+    }
+
+    private Optional<ScheduledFlightViewDTO> reassignLocally(String id, RegistrationNumber newAircraft) {
+        String flightId = FlightId.of(id).value();
+        Optional<ScheduledFlightViewDTO> moved;
+        synchronized (flightLock(flightId)) {
+            moved = repository.findByFlightId_Uuid(flightId).map(flight -> {
+                flight.reassignAircraft(newAircraft);
+                ScheduledFlight saved = repository.save(flight);
+                log.info("Voo {} reatribuido ao aviao {} (rev {})", flightId, newAircraft, saved.getRevision());
+                return ScheduledFlightViewDTO.from(saved);
+            });
+        }
+        moved.ifPresent(replicator::replicate);
+        return moved;
+    }
+
 }

@@ -4,6 +4,7 @@ import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import pt.isep.psoft.aisafe.flight_operations.application.DTO.ChangeFlightStatusDTO;
+import pt.isep.psoft.aisafe.flight_operations.application.DTO.GroundingRequestDTO;
 import pt.isep.psoft.aisafe.flight_operations.application.DTO.RouteUtilizationDTO;
 import pt.isep.psoft.aisafe.flight_operations.application.DTO.ScheduledFlightViewDTO;
 import pt.isep.psoft.aisafe.flight_operations.application.ScheduledFlightService;
@@ -59,5 +60,12 @@ public class InternalScheduledFlightController {
     @GetMapping("/route-utilization")
     public List<RouteUtilizationDTO> getLocalRouteUtilization() {
         return service.findLocalRouteUtilization();
+    }
+
+    @PostMapping("/aircraft/{registrationNumber}/grounding")
+    public List<String> groundAircraft(@PathVariable String registrationNumber,
+                                       @RequestBody(required = false) GroundingRequestDTO request) {
+        return service.groundAircraft(registrationNumber,
+                request == null ? List.of() : request.candidateRegistrationNumbers());
     }
 }
