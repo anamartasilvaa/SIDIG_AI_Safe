@@ -1,0 +1,69 @@
+@startuml sd-aircraft-grounding
+skinparam style strictuml
+autonumber
+title SD - Aircraft grounding: reassignment of upcoming flights
+
+actor "ATCC" as User
+participant "API Gateway\n(NGINX :8443)" as GW
+participant "Aircraft\nService" as AC
+box "FO-1 (replica that receives the call)" #F4F7FF
+participant "ApiKeyFilter" as Key
+participant "InternalScheduledFlightController" as Ctrl
+participant "ScheduledFlightService" as Svc
+participant "FlightSchedulingPolicy" as Policy
+participant "ScheduledFlightRepository" as Repo
+participant "FlightReplicator" as Rep
+end box
+participant "FO-2 / FO-3\n/internal" as FO
+
+== 1. The aircraft stops being ACTIVE ==
+User -> GW : PATCH /api/aircraft-models/instances/CS-TTB/status\nAuthorization: Bearer <JWT>
+GW -> AC : forwards (round-robin)
+AC -> AC : validates (RBAC ATCC/ADMIN) and updates the status\nCS-TTB: ACTIVE -> not ACTIVE
+AC -> AC : candidates = other ACTIVE aircraft of the same model
+
+== 2. Aircraft asks Flight Operations to reassign ==
+AC -> Key : POST /internal/scheduled-flights/aircraft/CS-TTB/grounding\nX-API-Key\n{ candidateRegistrationNumbers: [CS-TTA, ...] }
+Key -> Key : AUDIT ALLOWED (invalid key -> 401, AUDIT DENIED)
+Key -> Ctrl : valid key
+Ctrl -> Svc : groundAircraft("CS-TTB", candidates)
+
+== 3. Selection of the affected flights ==
+Svc -> Svc : cleans candidates\n(no blanks, no duplicates, not CS-TTB itself)
+Svc -> Repo : findByAircraft("CS-TTB") (local + peers)
+Svc --> Svc : affected = future flights in SCHEDULED or DELAYED
+
+== 4. Reassignment, flight by flight ==
+loop each affected flight
+  loop each candidate, in order, until one is free
+    Svc -> Svc : lock(candidate)
+    Svc -> Repo : flights of the candidate (local + peers)
+    Svc -> Policy : findConflict(slots, flight date)
+    alt no conflict (>= 2 h apart)
+      Svc -> Repo : flight.reassignAircraft(candidate), revision++, save
+      Svc -> Rep : replicate(flight)
+      Rep -> FO : PUT /internal/.../{id}/replica (new aircraft, revision)
+      note right of FO
+        Each replica applies the copy only if
+        its revision is more recent
+        (mergeReplica copies the aircraft)
+      end note
+    else conflict with that candidate
+      Svc -> Svc : tries the next candidate
+    end
+  end
+  alt no candidate is free
+    Svc -> Svc : flight stays on CS-TTB;\nthe report says so
+  else flight not stored on this replica yet
+    Svc -> Svc : not reassigned (replication lagging);\nthe report says so
+  end
+end
+
+Svc -> Svc : log GROUNDING CS-TTB: [...]
+
+== 5. Result ==
+Svc --> Ctrl : report (one sentence per flight)
+Ctrl --> AC : 200 JSON array of sentences
+AC --> GW : 200
+GW --> User : 200
+@enduml

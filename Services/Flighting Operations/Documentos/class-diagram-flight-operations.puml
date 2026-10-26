@@ -16,7 +16,8 @@ package "Scheduled Flight Aggregate" {
         - lastModifiedAt: Instant
         --
         + changeStatus(newStatus: FlightStatus, now: LocalDateTime)
-        + mergeReplica(status, departure, arrival, revision, lastModifiedAt): boolean
+        + reassignAircraft(newAircraft: RegistrationNumber)
+        + mergeReplica(aircraft, status, departure, arrival, revision, lastModifiedAt): boolean
         + {static} restore(...): ScheduledFlight
         + toSlot(): FlightSlot
     }

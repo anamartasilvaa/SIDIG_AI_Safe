@@ -6,14 +6,8 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Base64;
 
-/**
- * Gera JWTs de TESTE (HS256) assinados com o mesmo jwt.secret dos servicos do grupo,
- * um por perfil do AISafe. So para testar no Postman enquanto a API Gateway nao emite tokens.
- * Correr: botao direito -> Run 'DevTokenGenerator.main()' e copiar os tokens da consola.
- */
 public class DevTokenGenerator {
 
-    // Igual ao jwt.secret do application.properties (de todos os servicos)
     private static final String SECRET = "change-this-development-secret-key-with-at-least-32-bytes";
     private static final long VALID_HOURS = 24;
 

@@ -2,7 +2,8 @@
 
 Serviço do sistema distribuído **AISafe Flight Management System** (Assignment 1) responsável pelo
 agendamento de voos, pela atribuição de aviões a rotas (com restrições de alcance e capacidade), pela consulta de
-disponibilidade, pelo ciclo de vida dos voos e pelo relatório de utilização de rotas.
+disponibilidade, pelo ciclo de vida dos voos, pela **reatribuição de voos quando um avião é imobilizado (grounding)** e
+pelo relatório de utilização de rotas.
 
 O serviço corre em **3 réplicas**, cada uma com a sua própria base de dados. Os voos são **replicados de forma
 assíncrona** entre réplicas (consistência eventual). Quando uma réplica ainda não tem os dados pedidos, consulta as
@@ -14,28 +15,36 @@ comunicação usa **HTTPS**.
 
 ## 1. Arquitetura
 
-| Componente                                  | Responsabilidade                                                                                                                   |
-|---------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------|
-| `ScheduledFlightController`                 | API pública (`/api/scheduled-flights`). Leituras distribuídas, respostas HATEOAS, auditoria das escritas                           |
-| `InternalScheduledFlightController`         | API interna (`/internal/scheduled-flights`), usada **apenas** entre réplicas. Responde só com dados locais e **nunca reencaminha** |
-| `ScheduledFlightService`                    | Orquestração: local vs distribuído, agregação, AP/CP, replicação, sincronização no arranque, lock por avião                        |
-| `ScheduledFlight` + value objects           | Agregado: `FlightId` (UUID), `RouteId`, `RegistrationNumber`, máquina de estados `FlightStatus`, `revision` para convergência      |
-| `FlightSchedulingPolicy`                    | Domain service: rota ativa, avião `ACTIVE`, alcance, capacidade, conflitos de horário (2 h)                                        |
-| `FlightAssignmentValidator`                 | Obtém a rota e o avião dos outros serviços e traduz o JSON (`RouteInfo` / `AircraftInfo`, *Anti-Corruption Layer*)                 |
-| `FlightReplicator`                          | Replicação assíncrona dos voos, com cópias pendentes e reenvio a cada 5 s                                                          |
-| `PeerClient`                                | Comunicação com as outras réplicas **em paralelo** (`findFirst`, `collectAll`, `forwardPut`)                                       |
-| `ReplicatedServiceClient`                   | Cliente para os outros serviços: round-robin + failover entre réplicas                                                             |
-| `RemoteCaller` + `CircuitBreaker`           | Timeouts, retry com backoff exponencial e circuit breaker por destino                                                              |
-| `HttpClientConfig`                          | `RestTemplate` HTTPS: envia `X-API-Key` e `X-Origin-Instance` e **reencaminha o JWT** do utilizador aos outros serviços            |
-| `JwtAuthenticationFilter` + `TokenDecoders` | Valida o JWT: **RS256 do Keycloak** (chave pública via JWKS, emissor, expiração) ou HS256 de desenvolvimento                       |
-| `SecurityConfig`                            | Regras RBAC por endpoint e método, sem sessão, *deny by default*                                                                   |
-| `SecurityProblemHandler`                    | Respostas 401 / 403 em `ProblemDetail` e registo `DENIED` na auditoria                                                             |
-| `ApiKeyFilter`                              | Exige `X-API-Key` em `/internal/**` e regista cada acesso (logger `AUDIT`)                                                         |
-| `AuditLog`                                  | Regista quem criou ou alterou cada voo                                                                                             |
-| `GlobalExceptionHandler`                    | Traduz exceções para códigos HTTP (`ProblemDetail`)                                                                                |
+| Componente                                  | Responsabilidade                                                                                                                                           |
+|---------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `ScheduledFlightController`                 | API pública (`/api/scheduled-flights`). Leituras distribuídas, respostas HATEOAS, auditoria das escritas                                                   |
+| `InternalScheduledFlightController`         | API interna (`/internal/scheduled-flights`), usada **apenas** entre réplicas e pelo serviço Aircraft. Responde só com dados locais e **nunca reencaminha** |
+| `ScheduledFlightService`                    | Orquestração: local vs distribuído, agregação, AP/CP, replicação, sincronização no arranque, lock por avião, **grounding** (`groundAircraft`)              |
+| `ScheduledFlight` + value objects           | Agregado: `FlightId` (UUID), `RouteId`, `RegistrationNumber`, máquina de estados `FlightStatus`, `revision` para convergência, `reassignAircraft()`        |
+| `FlightSchedulingPolicy`                    | Domain service: rota ativa, avião `ACTIVE`, alcance, capacidade, conflitos de horário (2 h)                                                                |
+| `FlightAssignmentValidator`                 | Obtém a rota e o avião dos outros serviços e traduz o JSON (`RouteInfo` / `AircraftInfo`, *Anti-Corruption Layer*)                                         |
+| `FlightReplicator`                          | Replicação assíncrona dos voos, com cópias pendentes e reenvio a cada 5 s                                                                                  |
+| `PeerClient`                                | Comunicação com as outras réplicas **em paralelo** (`findFirst`, `collectAll`, `forwardPut`)                                                               |
+| `ReplicatedServiceClient`                   | Cliente para os outros serviços: round-robin + failover entre réplicas                                                                                     |
+| `RemoteCaller` + `CircuitBreaker`           | Timeouts, retry com backoff exponencial e circuit breaker por destino                                                                                      |
+| `HttpClientConfig`                          | `RestTemplate` HTTPS: envia `X-API-Key` e `X-Origin-Instance` e **reencaminha o JWT** do utilizador aos outros serviços                                    |
+| `JwtAuthenticationFilter` + `TokenDecoders` | Valida o JWT: **RS256 do Keycloak** (chave pública via JWKS, emissor, expiração) ou HS256 de desenvolvimento                                               |
+| `SecurityConfig`                            | Regras RBAC por endpoint e método, sem sessão, *deny by default*                                                                                           |
+| `SecurityProblemHandler`                    | Respostas 401 / 403 em `ProblemDetail` e registo `DENIED` na auditoria                                                                                     |
+| `ApiKeyFilter`                              | Exige `X-API-Key` em `/internal/**` e regista cada acesso (logger `AUDIT`)                                                                                 |
+| `AuditLog`                                  | Regista quem criou ou alterou cada voo                                                                                                                     |
+| `GlobalExceptionHandler`                    | Traduz exceções para códigos HTTP (`ProblemDetail`)                                                                                                        |
 
 Infraestrutura comum (pasta `infrastructure/` na raiz do repositório): **API Gateway NGINX** (`https://localhost:8443`)
 e **Keycloak** (`http://localhost:8180`, realm `aisafe`). Ver `infrastructure/README.md`.
+
+Serviços com que este serviço colabora:
+
+| Serviço            | Portas      | Utilização                                                                                           |
+|--------------------|-------------|------------------------------------------------------------------------------------------------------|
+| Airports & Routes  | 8091        | Valida a rota (ativa, capacidade mínima)                                                             |
+| Aircraft           | 8071–8073   | Valida o avião (`GET /api/aircraft/{reg}`: estado, alcance, capacidade) e dispara o grounding        |
+| Maintenance        | 8075–8077   | Não é chamado diretamente; atualiza o estado do avião no Aircraft, que o FO consulta                 |
 
 Diagramas (pasta `Documentos/`):
 - `01-c4-context`, `02-c4-container`: sistema, gateway, Keycloak e os 4 serviços
@@ -52,11 +61,11 @@ Diagramas (pasta `Documentos/`):
 
 ## 2. Pré-requisitos
 
-- Java 17 ou superior e Maven (ou IntelliJ IDEA)
-- **Keycloak** e **NGINX** a correr (ver `infrastructure/README.md`)
+- JDK 17 ou superior (o projeto compila com Java 17; foi testado com o JDK 25) e Maven (ou IntelliJ IDEA)
+- **Keycloak** e **NGINX** a correr (ver `infrastructure/README.md`). O Keycloak exige Java 21 ou superior
 - Certificado de desenvolvimento do grupo (`keystore.p12`) e a respetiva truststore (secção 4.1)
-- Serviços **Airports & Routes** e **Aircraft**. Enquanto o Aircraft não existir, usar o stub
-  `src/test/java/.../StubExternalServices.java` (secção 4.2)
+- Serviços **Airports & Routes** e **Aircraft** a correr (secção 4.2). O Maintenance só é necessário para o fluxo de
+  manutenção completo
 - Postman (testes distribuídos)
 
 ---
@@ -65,21 +74,21 @@ Diagramas (pasta `Documentos/`):
 
 Tudo em `src/main/resources/application.properties`, alterável por **variáveis de ambiente** (sem valores fixos no código).
 
-| Variável                                                 | Omissão                                                             | Descrição                                                                    |
-|----------------------------------------------------------|---------------------------------------------------------------------|------------------------------------------------------------------------------|
-| `PORT`                                                   | `8081`                                                              | Porta da réplica                                                             |
-| `INSTANCE_ID`                                            | `fo-1`                                                              | Identificador da réplica (logs e nome da BD)                                 |
-| `PEERS`                                                  | *(vazio)*                                                           | URLs **HTTPS** das **outras** réplicas, separadas por vírgulas               |
-| `ROUTES_URLS`                                            | `https://localhost:8091`                                            | Réplicas do Airports & Routes Service                                        |
-| `AIRCRAFT_URLS`                                          | `http://localhost:8071,http://localhost:8072`                       | Réplicas do Aircraft Service (stub enquanto não existir)                     |
-| `JWT_JWK_SET_URI`                                        | `http://localhost:8180/realms/aisafe/protocol/openid-connect/certs` | Chave pública do Keycloak usada para validar os tokens                       |
-| `JWT_ISSUER`                                             | `http://localhost:8180/realms/aisafe`                               | Emissor esperado no token (`iss`)                                            |
-| `ACCEPT_DEV_TOKENS`                                      | `true`                                                              | Aceita tokens HS256 de desenvolvimento; **`false` em produção**              |
-| `JWT_SECRET`                                             | `change-this-development-secret-key-with-at-least-32-bytes`         | Segredo dos tokens HS256 de desenvolvimento (JUnit, `DevTokenGenerator`)     |
-| `API_KEY`                                                | `sidis-dev-key`                                                     | Chave partilhada entre réplicas (`/internal/**`)                             |
-| `SSL_ENABLED` / `SSL_KEYSTORE` / `SSL_KEYSTORE_PASSWORD` | `true` / `classpath:keystore.p12` / `password`                      | HTTPS da réplica                                                             |
-| `REPLICATION_ENABLED`                                    | `true`                                                              | `false`: cada voo fica só na réplica onde foi criado (demonstrar forwarding) |
-| `REQUIRE_COMPLETE_CONFLICT_CHECK`                        | `false`                                                             | `false` = AP (aceita com aviso); `true` = CP (recusa com 503)                |
+| Variável                                                 | Omissão                                                                | Descrição                                                                    |
+|----------------------------------------------------------|------------------------------------------------------------------------|------------------------------------------------------------------------------|
+| `PORT`                                                   | `8081`                                                                 | Porta da réplica                                                             |
+| `INSTANCE_ID`                                            | `fo-1`                                                                 | Identificador da réplica (logs e nome da BD)                                 |
+| `PEERS`                                                  | *(vazio)*                                                              | URLs **HTTPS** das **outras** réplicas, separadas por vírgulas               |
+| `ROUTES_URLS`                                            | `https://localhost:8091`                                               | Réplicas do Airports & Routes Service                                        |
+| `AIRCRAFT_URLS`                                          | `https://localhost:8071,https://localhost:8072,https://localhost:8073` | Réplicas do Aircraft Service                                                 |
+| `JWT_JWK_SET_URI`                                        | `http://localhost:8180/realms/aisafe/protocol/openid-connect/certs`    | Chave pública do Keycloak usada para validar os tokens                       |
+| `JWT_ISSUER`                                             | `http://localhost:8180/realms/aisafe`                                  | Emissor esperado no token (`iss`)                                            |
+| `ACCEPT_DEV_TOKENS`                                      | `true`                                                                 | Aceita tokens HS256 de desenvolvimento; **`false` em produção**              |
+| `JWT_SECRET`                                             | `change-this-development-secret-key-with-at-least-32-bytes`            | Segredo dos tokens HS256 de desenvolvimento (JUnit, `DevTokenGenerator`)     |
+| `API_KEY`                                                | `sidis-dev-key`                                                        | Chave partilhada entre réplicas e com o Aircraft (`/internal/**`)            |
+| `SSL_ENABLED` / `SSL_KEYSTORE` / `SSL_KEYSTORE_PASSWORD` | `true` / `classpath:keystore.p12` / `password`                         | HTTPS da réplica                                                             |
+| `REPLICATION_ENABLED`                                    | `true`                                                                 | `false`: cada voo fica só na réplica onde foi criado (demonstrar forwarding) |
+| `REQUIRE_COMPLETE_CONFLICT_CHECK`                        | `false`                                                                | `false` = AP (aceita com aviso); `true` = CP (recusa com 503)                |
 
 Outras propriedades:
 
@@ -91,6 +100,8 @@ Outras propriedades:
 | `app.http.circuit-breaker.open-duration`     | `10s`         | Tempo com o circuito aberto                                 |
 | `app.replication.retry-interval`             | `5s`          | Reenvio das cópias a réplicas que estavam em baixo          |
 | `app.scheduling.min-gap-hours`               | `2`           | Intervalo mínimo entre voos do mesmo avião                  |
+| `app.security.jwt.jwk-set-uri` / `issuer`    | ver acima     | Configuração do Keycloak (`JWT_JWK_SET_URI`, `JWT_ISSUER`)  |
+| `app.security.jwt.accept-dev-tokens`         | `true`        | Tokens HS256 de desenvolvimento (`ACCEPT_DEV_TOKENS`)       |
 
 ---
 
@@ -109,11 +120,17 @@ keytool -importcert -alias aisafe -file aisafe.crt -keystore truststore.p12 -sto
 
 ### 4.2 Infraestrutura e serviços externos
 
+Ordem de arranque:
+
 1. Keycloak e gateway: `cd infrastructure` → `.\start-infra.ps1`
-2. Airports & Routes (porta 8091). Com uma só réplica, usar o *Program argument* `--peer.urls=`
-3. Stub do Aircraft: `src/test/java/.../StubExternalServices.java` → ▶ `main`. Responde em `:8071` com os aviões
-   `CS-TTA` (180 lugares), `CS-TTB` (120) e `CS-TTM` (`UNDER_MAINTENANCE`). A linha das rotas (`start(8091, ...)`)
-   fica comentada quando a Airports real está a correr
+   (o Keycloak precisa de Java 21+: `$env:JAVA_HOME = "<caminho do JDK 21+>"` antes de arrancar)
+2. **Airports & Routes** (porta 8091). Com uma só réplica, usar o *Program argument* `--peer.urls=`
+3. **Aircraft** (portas 8071–8073). No arranque cria o modelo A320 e os aviões `CS-TTA` (`ACTIVE`, 180 lugares),
+   `CS-TTB` (`ACTIVE`, 120 lugares) e `CS-TTM` (`UNDER_MAINTENANCE`, 180 lugares)
+4. **Maintenance** (portas 8075–8077)
+5. As 3 réplicas do Flight Operations (secção 4.3)
+
+Todos os serviços usam o mesmo `keystore.p12` e as mesmas VM options da truststore.
 
 ### 4.3 Três réplicas no IntelliJ
 
@@ -183,16 +200,17 @@ Para testar sem Keycloak, `src/test/java/.../DevTokenGenerator.java` gera tokens
   respondeu.
 - Através da gateway, os links HATEOAS e o `Location` apontam para `https://localhost:8443`.
 
-### 5.2 Interna – `/internal/scheduled-flights` (exige `X-API-Key`, sem JWT; bloqueada na gateway)
+### 5.2 Interna – `/internal/scheduled-flights` (exige `X-API-Key`, sem JWT; bloqueada na gateway; nunca reencaminha)
 
-| Método | Endpoint                         | Descrição                                                         |
-|--------|----------------------------------|-------------------------------------------------------------------|
-| `GET`  | `/`                              | Todos os voos locais (sincronização no arranque e US229)          |
-| `GET`  | `/{id}`                          | Voo local                                                         |
-| `PUT`  | `/{id}/status`                   | Mudança de estado local (forwarding de escrita), depois replicada |
-| `PUT`  | `/{id}/replica`                  | Recebe a cópia de um voo enviada por outra réplica (idempotente)  |
-| `GET`  | `/aircraft/{registrationNumber}` | Voos locais de um avião                                           |
-| `GET`  | `/route-utilization`             | Contagens locais por rota                                         |
+| Método | Endpoint                                   | Descrição                                                                                                       |
+|--------|--------------------------------------------|-----------------------------------------------------------------------------------------------------------------|
+| `GET`  | `/`                                        | Todos os voos locais (sincronização no arranque e US229)                                                        |
+| `GET`  | `/{id}`                                    | Voo local                                                                                                       |
+| `PUT`  | `/{id}/status`                             | Mudança de estado local (forwarding de escrita), depois replicada                                               |
+| `PUT`  | `/{id}/replica`                            | Recebe a cópia de um voo enviada por outra réplica (idempotente)                                                |
+| `GET`  | `/aircraft/{registrationNumber}`           | Voos locais de um avião                                                                                         |
+| `GET`  | `/route-utilization`                       | Contagens locais por rota                                                                                       |
+| `POST` | `/aircraft/{registrationNumber}/grounding` | **Grounding:** reatribui os voos futuros do avião a um dos candidatos (secção 5.4); devolve o relatório em JSON |
 
 ### 5.3 Ciclo de vida do voo
 
@@ -203,6 +221,52 @@ IN_FLIGHT → COMPLETED
 COMPLETED, CANCELED → estados finais (um voo cancelado deixa de ocupar o avião)
 ```
 
+### 5.4 Grounding (reatribuição de aviões)
+
+Quando um avião fica imobilizado (por exemplo, entra em manutenção), os voos futuros que lhe estavam atribuídos têm de
+passar para outro avião. O serviço Aircraft chama o endpoint interno de grounding do Flight Operations:
+
+```
+POST /internal/scheduled-flights/aircraft/{registrationNumber}/grounding
+X-API-Key: <API_KEY>
+Content-Type: application/json
+
+{ "candidateRegistrationNumbers": ["CS-TTA", "CS-TTB"] }
+```
+
+Regras:
+
+- Só são reatribuídos os voos **futuros** em estado `SCHEDULED` ou `DELAYED`. Voos `IN_FLIGHT`, `COMPLETED`,
+  `CANCELED` ou já passados não são alterados.
+- A lista de candidatos é limpa: ignora valores vazios, repetidos e o próprio avião imobilizado.
+- Cada voo passa para o **primeiro candidato livre**, isto é, o primeiro sem conflito de horário (intervalo de 2 h) com
+  os voos desse candidato, vistos em todas as réplicas. Se nenhum estiver livre, o voo **mantém o avião imobilizado** e
+  isso fica no relatório.
+- A troca é feita na cópia local da réplica que recebeu o pedido e incrementa a `revision`
+  (`ScheduledFlight.reassignAircraft()`), pelo que é replicada às outras réplicas como qualquer outra alteração. A fusão
+  de cópias (`mergeReplica`) copia também o avião. Se o voo ainda não estiver guardado nessa réplica (replicação em
+  atraso ou desligada), não é reatribuído e o relatório di-lo.
+- O endpoint pertence à API interna: exige `X-API-Key`, responde apenas com os dados da réplica e nunca reencaminha, e a
+  gateway bloqueia-o (403).
+
+Resposta: `200` com um **array JSON de frases**, uma por voo afetado (ou uma só, se não houver voos futuros):
+
+```json
+[
+  "Flight 3ea741e6-... (RT-OPOLIS, 2027-03-15T20:00) reassigned from CS-TTB to CS-TTA.",
+  "Flight 91c0b7aa-... (RT-LISLHR, 2027-03-16T09:00) kept on CS-TTB: no candidate aircraft is free at that time."
+]
+```
+
+Fluxo ponta a ponta: o ATCC ou ADMIN muda o estado do avião no Aircraft
+(`PATCH /api/aircraft-models/instances/{registo}/status`) e, se o avião deixou de estar `ACTIVE`, o Aircraft chama este
+endpoint no FO. No log do FO aparecem `ALLOWED POST /internal/.../grounding`, `GROUNDING <avião>: [...]` e, por cada
+voo, `Voo <id> reatribuido ao aviao <avião> (rev N)`.
+
+Limitações do grounding: só verifica **conflitos de horário** no candidato. A capacidade e o alcance da rota não são
+revalidados, pelo que a escolha de candidatos adequados (mesmo modelo, `ACTIVE`, lugares suficientes) é
+responsabilidade do Aircraft.
+
 ---
 
 ## 6. Decisões de arquitetura
@@ -211,7 +275,7 @@ COMPLETED, CANCELED → estados finais (um voo cancelado deixa de ocupar o aviã
    responde logo. Em segundo plano, a cópia vai para as outras réplicas (`PUT /internal/.../replica`). Se uma estiver
    em baixo, a cópia fica pendente e é reenviada a cada 5 s.
 2. **Convergência por versão (*last writer wins*).** Cada voo tem uma `revision`, incrementada em cada mudança de
-   estado. Uma réplica só aplica cópias mais recentes (em empate, ganha o `lastModifiedAt` mais recente).
+   estado ou de avião. Uma réplica só aplica cópias mais recentes (em empate, ganha o `lastModifiedAt` mais recente).
 3. **Sincronização no arranque.** Uma réplica que reinicia vai buscar os voos às outras.
 4. **`FlightId` UUID gerado no domínio**, único entre réplicas sem coordenação.
 5. **API interna que nunca reencaminha.** Os peers chamam sempre `/internal/**` e o `/replica` nunca volta a propagar.
@@ -227,6 +291,9 @@ COMPLETED, CANCELED → estados finais (um voo cancelado deixa de ocupar o aviã
    (defesa em profundidade): mesmo um pedido direto a uma réplica é autenticado e autorizado.
 10. **DDD.** Referências a rotas e aviões só por identidade, regras no domínio e *Anti-Corruption Layer* para os
     modelos externos.
+11. **Grounding no agregado.** A mudança de avião é uma operação do próprio `ScheduledFlight` (`reassignAircraft()`),
+    que valida o estado e incrementa a revisão. Assim a alteração segue o mesmo caminho de replicação e convergência
+    das mudanças de estado, sem mecanismos especiais.
 
 ---
 
@@ -247,6 +314,7 @@ COMPLETED, CANCELED → estados finais (um voo cancelado deixa de ocupar o aviã
 | Dois pedidos simultâneos para o mesmo avião (mesma réplica)  | Lock por avião: só um é aceite, o outro recebe 409                                  |
 | Conflito entre réplicas diferentes durante uma partição      | Ambos aceites (AP); conflito detetado e registado quando convergem                  |
 | Alterações concorrentes ao mesmo voo em réplicas diferentes  | Convergem para a mais recente (`revision`, `lastModifiedAt`)                        |
+| Grounding aplicado numa réplica                              | A revisão incrementada e o novo avião são replicados às outras réplicas             |
 
 ---
 
@@ -272,7 +340,8 @@ Perfis do AISafe: **Admin, Backoffice, ATCC, Maintenance Technician, Maintenance
   valida o certificado das réplicas e as réplicas usam a truststore do grupo.
 - **Propagação da identidade:** o JWT do utilizador é reencaminhado nas chamadas aos outros serviços, que aplicam as
   suas próprias regras.
-- **Entre réplicas:** header `X-API-Key` em `/internal/**`, comparado em tempo constante.
+- **Entre réplicas e com o Aircraft:** header `X-API-Key` em `/internal/**`, comparado em tempo constante. Inclui o
+  endpoint de grounding.
 - **Auditoria (logger `AUDIT`):**
     - operações: `User: atcc.user - Action: CREATE - Target ID: <id>` (também `UPDATE_STATUS ...`);
     - acessos negados: `DENIED 401 ... reason=...` e `DENIED 403 ... user=... roles=[...]`;
@@ -284,10 +353,11 @@ Perfis do AISafe: **Admin, Backoffice, ATCC, Maintenance Technician, Maintenance
 
 ## 9. Testes
 
-### 9.1 JUnit – 72 testes
+### 9.1 JUnit – 77 testes
 
 `src/test/java`:
 - **domínio:** value objects, máquina de estados, agregado, regras de agendamento e fusão de cópias (`ReplicaMergeTest`);
+- **grounding:** `AircraftReassignmentTest` (reatribuição só em `SCHEDULED`/`DELAYED`, incremento da revisão);
 - **infraestrutura:**
     - circuit breaker;
     - `PeerClient` (paralelismo, peers em falha, resposta parcial, 503 em vez de 404);
@@ -326,19 +396,20 @@ Executar:
 
 ## 10. Limitações conhecidas e trabalho futuro
 
-| Limitação                                                       | Impacto                                                                       | Trabalho futuro                                           |
-|-----------------------------------------------------------------|-------------------------------------------------------------------------------|-----------------------------------------------------------|
-| Conflitos entre réplicas durante uma partição (AP)              | Dois voos do mesmo avião podem ser aceites; detetados, mas não resolvidos     | Particionar agendamentos por matrícula ou quórum          |
-| *Last writer wins*                                              | Em alterações concorrentes ao mesmo voo, uma perde-se                         | Relógios vetoriais ou resolução no domínio                |
-| BDs H2 em memória                                               | Mitigado pela sincronização; se as 3 réplicas reiniciarem, os dados perdem-se | Base de dados persistente                                 |
-| Cópias pendentes em memória                                     | Se a origem reiniciar antes de entregar, a cópia só chega por sincronização   | Fila persistente / broker de mensagens                    |
-| Uma só instância da gateway e do Keycloak                       | Pontos únicos de falha da infraestrutura                                      | Várias instâncias (Docker, BD partilhada para o Keycloak) |
-| Keycloak local em HTTP; tokens HS256 de desenvolvimento aceites | Adequado só a desenvolvimento                                                 | Keycloak em HTTPS; `ACCEPT_DEV_TOKENS=false`              |
-| Certificado partilhado; API key entre réplicas                  | Sem identidade própria por serviço                                            | Certificados por serviço emitidos por uma CA; mTLS        |
-| Aircraft Service em stub                                        | Integração com aviões testada com dados simulados                             | Integrar com o serviço real                               |
-| `minimumRange` não exposto pelo Airports & Routes               | Regra do alcance não é verificada com o serviço real                          | Acrescentar o campo ao `RouteViewDTO`                     |
-| `X-Request-Id` da gateway não aparece nos logs do serviço       | Correlação gateway ↔ serviço feita à mão                                      | Incluir o id no MDC dos logs                              |
-| Datas sem fuso horário; lista de peers estática                 | Ambiguidade entre fusos; reconfigurar para mudar réplicas                     | `OffsetDateTime`/UTC; *service discovery*                 |
+| Limitação                                                       | Impacto                                                                             | Trabalho futuro                                           |
+|-----------------------------------------------------------------|-------------------------------------------------------------------------------------|-----------------------------------------------------------|
+| Conflitos entre réplicas durante uma partição (AP)              | Dois voos do mesmo avião podem ser aceites; detetados, mas não resolvidos           | Particionar agendamentos por matrícula ou quórum          |
+| *Last writer wins*                                              | Em alterações concorrentes ao mesmo voo, uma perde-se                               | Relógios vetoriais ou resolução no domínio                |
+| Grounding sem candidato livre                                   | O voo mantém o avião imobilizado (fica no relatório)                                | Notificar o operador / cancelar o voo de forma controlada |
+| Grounding só valida conflitos de horário                        | Um candidato com menos lugares ou alcance pode receber um voo que não cumpre a rota | Revalidar rota e capacidade do candidato na reatribuição  |
+| BDs H2 em memória                                               | Mitigado pela sincronização; se as 3 réplicas reiniciarem, os dados perdem-se       | Base de dados persistente                                 |
+| Cópias pendentes em memória                                     | Se a origem reiniciar antes de entregar, a cópia só chega por sincronização         | Fila persistente / broker de mensagens                    |
+| Uma só instância da gateway e do Keycloak                       | Pontos únicos de falha da infraestrutura                                            | Várias instâncias (Docker, BD partilhada para o Keycloak) |
+| Keycloak local em HTTP; tokens HS256 de desenvolvimento aceites | Adequado só a desenvolvimento                                                       | Keycloak em HTTPS; `ACCEPT_DEV_TOKENS=false`              |
+| Certificado partilhado; API key entre réplicas                  | Sem identidade própria por serviço                                                  | Certificados por serviço emitidos por uma CA; mTLS        |
+| `minimumRange` não exposto pelo Airports & Routes               | Regra do alcance não é verificada com o serviço real                                | Acrescentar o campo ao `RouteViewDTO`                     |
+| `X-Request-Id` da gateway não aparece nos logs do serviço       | Correlação gateway ↔ serviço feita à mão                                            | Incluir o id no MDC dos logs                              |
+| Datas sem fuso horário; lista de peers estática                 | Ambiguidade entre fusos; reconfigurar para mudar réplicas                           | `OffsetDateTime`/UTC; *service discovery*                 |
 
 ---
 
@@ -354,7 +425,7 @@ src/main/java/pt/isep/psoft/aisafe/flight_operations/
 ├── security/         JwtAuthenticationFilter, TokenDecoders, SecurityProblemHandler, AuditLog, Roles
 └── config/           SecurityConfig, HttpClientConfig, ApiKeyFilter, beans de domínio
 src/main/resources/   application.properties, keystore.p12
-src/test/java/...     testes JUnit, StubExternalServices, DevTokenGenerator
+src/test/java/...     testes JUnit (incl. AircraftReassignmentTest), DevTokenGenerator
 tests/                coleção Postman
 certs/                truststore.p12 (local, não submetido)
 ```
