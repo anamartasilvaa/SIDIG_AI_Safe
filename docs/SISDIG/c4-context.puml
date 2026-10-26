@@ -1,0 +1,21 @@
+@startuml c4-context
+!include <C4/C4_Context>
+LAYOUT_TOP_DOWN()
+
+title AISafe Flight Management System - C4 Nivel 1 (System Context)
+
+Person(admin, "Admin", "Gere utilizadores e tem acesso a todas as operacoes.")
+Person(backoffice, "Backoffice Operator", "Gere aeroportos, rotas e avioes; consulta relatorios de utilizacao.")
+Person(atcc, "ATCC", "Agenda voos, atribui avioes a rotas e acompanha o estado dos voos.")
+Person(maint, "Maintenance Technician / Supervisor", "Regista e valida manutencoes dos avioes.")
+
+System(aisafe, "AISafe Flight Management System", "Sistema distribuido: API Gateway + 4 servicos (Aircraft, Maintenance, Airports & Routes, Flight Operations), 3 replicas cada.")
+System_Ext(idp, "Keycloak (realm aisafe)", "Fornecedor de identidade: autentica os utilizadores e emite JWT assinados (RS256) com o perfil.")
+
+Rel(admin, aisafe, "Usa", "HTTPS/REST, JSON")
+Rel(backoffice, aisafe, "Usa", "HTTPS/REST, JSON")
+Rel(atcc, aisafe, "Usa", "HTTPS/REST, JSON")
+Rel(maint, aisafe, "Usa", "HTTPS/REST, JSON")
+Rel(aisafe, idp, "Login (via gateway) e chave publica para validar tokens", "OpenID Connect / JWKS")
+
+@enduml

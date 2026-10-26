@@ -1,0 +1,70 @@
+@startuml physical-view
+title AISafe - Physical View (Deployment, development environment)
+skinparam shadowing false
+skinparam defaultFontSize 12
+skinparam nodesep 30
+skinparam ranksep 50
+
+node "Client" as clientNode {
+  artifact "Postman\n(AISafe collection)" as postman
+}
+
+node "Development machine (localhost)" as host {
+
+  node "NGINX :8443 (HTTPS)\nAPI Gateway" as gw {
+    artifact "nginx.conf\n(infrastructure/gateway)" as gwconf
+  }
+  node "Keycloak :8180 (HTTP)\naisafe realm" as kc {
+    artifact "aisafe-realm.json\n(infrastructure/keycloak)" as realm
+  }
+
+  node "Flight Operations - 3 replicas" as foGroup {
+    node "JVM :8081 fo-1" as fo1 {
+      database "H2 mem\nflightops_fo-1" as fo1db
+    }
+    node "JVM :8082 fo-2" as fo2 {
+      database "H2 mem\nflightops_fo-2" as fo2db
+    }
+    node "JVM :8083 fo-3" as fo3 {
+      database "H2 mem\nflightops_fo-3" as fo3db
+    }
+  }
+
+  node "Airports & Routes\n3 replicas :8091-8093" as arGroup
+  node "Aircraft\n3 replicas :8071-8073" as acGroup
+  node "Maintenance\n3 replicas :8075-8077" as mtGroup
+}
+
+postman --> gw : HTTPS :8443\n/realms/..., /api/...
+gw --> kc : /realms/... (login, JWKS)
+gw --> foGroup : HTTPS round-robin + failover\n/api/scheduled-flights/...
+gw --> arGroup : HTTPS /api/airports/..., /api/routes/...
+gw --> acGroup : HTTPS /api/aircraft/...
+gw --> mtGroup : HTTPS /api/maintenance/...
+
+fo1 <.right.> fo2 : HTTPS /internal\nX-API-Key
+fo2 <.right.> fo3 : HTTPS /internal\nX-API-Key
+
+foGroup --> arGroup : HTTPS GET /api/routes/{id}\n+ user's JWT
+foGroup --> acGroup : GET /api/aircraft/{reg}\n+ user's JWT
+foGroup ..> kc : JWKS (public key)
+mtGroup --> acGroup : HTTPS /internal/aircraft/...\nX-API-Key (maintenance status)
+acGroup --> foGroup : HTTPS POST /internal/.../grounding\nX-API-Key (reassign flights)
+
+note as N1
+  Each replica: own JVM process, own port,
+  own H2 DB (no shared storage).
+  Configuration via environment variables:
+  PORT, INSTANCE_ID, PEERS, ROUTES_URLS, AIRCRAFT_URLS,
+  API_KEY, JWT_JWK_SET_URI, JWT_ISSUER, ACCEPT_DEV_TOKENS,
+  REPLICATION_ENABLED, REQUIRE_COMPLETE_CONFLICT_CHECK.
+  fo-1 <-> fo-3 also communicate (omitted).
+end note
+
+note as N2
+  TLS: group development certificate (keystore.p12).
+  The gateway uses it in PEM and validates the services' certificate;
+  the services trust it via a truststore.
+  /internal/..., /actuator/... and /h2-console/... do not pass through the gateway.
+end note
+@enduml

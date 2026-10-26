@@ -1,0 +1,43 @@
+@startuml c4-container
+!include <C4/C4_Container>
+LAYOUT_TOP_DOWN()
+
+title AISafe - C4 Nivel 2 (Containers)
+
+Person(user, "Utilizador AISafe", "Admin, Backoffice, ATCC, Maintenance Technician/Supervisor")
+
+System_Boundary(aisafe, "AISafe Flight Management System") {
+    Container(gw, "API Gateway", "NGINX, HTTPS :8443", "Ponto de entrada unico: routing por servico, round-robin e failover entre replicas, rate limiting, bloqueio de /internal, /actuator e /h2-console.")
+    Container(kc, "Keycloak", "Keycloak, realm aisafe, :8180", "Login (OpenID Connect) e emissao de JWT RS256 com o perfil (roles). Publica a chave publica (JWKS).")
+
+    Container(fo, "Flight Operations Service", "Java 17, Spring Boot 4", "Agendamento, atribuicao aviao-rota, disponibilidade, ciclo de vida do voo, reatribuicao de avioes (grounding), US229. 3 replicas (8081-8083) com replicacao assincrona.")
+    Container(ar, "Airports & Routes Service", "Java 17, Spring Boot 4", "Aeroportos, pistas, certificacoes, rotas e historico. 3 replicas (8091-8093).")
+    Container(ac, "Aircraft Service", "Java 17, Spring Boot 4", "Modelos e instancias de avioes, estado operacional. 3 replicas (8071-8073).")
+    Container(mt, "Maintenance Service", "Java 17, Spring Boot 4", "Templates e registos de manutencao. 3 replicas (8075-8077).")
+
+    ContainerDb(fodb, "Flight Ops DB", "H2 (uma por replica)", "Voos agendados (replicados)")
+    ContainerDb(ardb, "Airports & Routes DB", "H2 (uma por replica)", "Aeroportos e rotas")
+    ContainerDb(acdb, "Aircraft DB", "H2 (uma por replica)", "Avioes")
+    ContainerDb(mtdb, "Maintenance DB", "H2 (uma por replica)", "Manutencoes")
+}
+
+Rel(user, gw, "Login e pedidos (Bearer JWT)", "HTTPS")
+Rel(gw, kc, "/realms/... (login, JWKS)", "HTTP")
+Rel(gw, fo, "/api/scheduled-flights/...", "HTTPS, round-robin")
+Rel(gw, ar, "/api/airports/..., /api/routes/...", "HTTPS, round-robin")
+Rel(gw, ac, "/api/aircraft/...", "HTTPS, round-robin")
+Rel(gw, mt, "/api/maintenance/...", "HTTPS, round-robin")
+
+Rel(fo, ar, "Valida rota (ativa, capacidade)", "HTTPS GET /api/routes/{id}, JWT do utilizador")
+Rel(fo, ac, "Valida aviao (ACTIVE, alcance, capacidade)", "HTTPS GET /api/aircraft/{reg}, JWT do utilizador")
+Rel(mt, ac, "Atualiza estado operacional", "HTTPS /internal/aircraft/instances/{reg}/maintenance-status, X-API-Key")
+Rel(ac, fo, "Aviao imobilizado: pede a reatribuicao dos voos futuros", "HTTPS POST /internal/.../grounding, X-API-Key")
+Rel(fo, kc, "Chave publica para validar o JWT", "JWKS")
+Rel_L(fo, fo, "Replicacao e forwarding entre replicas", "HTTPS /internal/..., X-API-Key")
+
+Rel(fo, fodb, "Le/escreve", "JPA")
+Rel(ar, ardb, "Le/escreve", "JPA")
+Rel(ac, acdb, "Le/escreve", "JPA")
+Rel(mt, mtdb, "Le/escreve", "JPA")
+
+@enduml
