@@ -1,0 +1,169 @@
+{
+  "realm": "aisafe",
+  "enabled": true,
+  "displayName": "AISafe Flight Management System",
+  "accessTokenLifespan": 1800,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "roles": {
+    "realm": [
+      {
+        "name": "ADMIN",
+        "description": "Administrador do sistema"
+      },
+      {
+        "name": "BACKOFFICE",
+        "description": "Backoffice Operator"
+      },
+      {
+        "name": "ATCC",
+        "description": "Air Transport Company Collaborator"
+      },
+      {
+        "name": "MAINTENANCE_TECHNICIAN",
+        "description": "Maintenance Technician"
+      },
+      {
+        "name": "MAINTENANCE_SUPERVISOR",
+        "description": "Maintenance Supervisor"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "aisafe-client",
+      "name": "AISafe - clientes da API (Postman)",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "protocol": "openid-connect",
+      "protocolMappers": [
+        {
+          "name": "roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "multivalued": "true",
+            "claim.name": "roles",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "username",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "username",
+            "claim.name": "username",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "admin.user",
+      "enabled": true,
+      "email": "admin.user@aisafe.test",
+      "emailVerified": true,
+      "firstName": "Admin",
+      "lastName": "AISafe",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "ADMIN"
+      ]
+    },
+    {
+      "username": "atcc.user",
+      "enabled": true,
+      "email": "atcc.user@aisafe.test",
+      "emailVerified": true,
+      "firstName": "Atcc",
+      "lastName": "AISafe",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "atcc123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "ATCC"
+      ]
+    },
+    {
+      "username": "backoffice.user",
+      "enabled": true,
+      "email": "backoffice.user@aisafe.test",
+      "emailVerified": true,
+      "firstName": "Backoffice",
+      "lastName": "AISafe",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "backoffice123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "BACKOFFICE"
+      ]
+    },
+    {
+      "username": "tech.user",
+      "enabled": true,
+      "email": "tech.user@aisafe.test",
+      "emailVerified": true,
+      "firstName": "Technician",
+      "lastName": "AISafe",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "tech123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "MAINTENANCE_TECHNICIAN"
+      ]
+    },
+    {
+      "username": "supervisor.user",
+      "enabled": true,
+      "email": "supervisor.user@aisafe.test",
+      "emailVerified": true,
+      "firstName": "Supervisor",
+      "lastName": "AISafe",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "supervisor123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "MAINTENANCE_SUPERVISOR"
+      ]
+    }
+  ]
+}
