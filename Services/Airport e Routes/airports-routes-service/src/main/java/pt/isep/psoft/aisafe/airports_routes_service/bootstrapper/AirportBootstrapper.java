@@ -9,6 +9,7 @@ import pt.isep.psoft.aisafe.airports_routes_service.application.AirportService;
 import pt.isep.psoft.aisafe.airports_routes_service.application.DTO.FacilityDTO;
 import pt.isep.psoft.aisafe.airports_routes_service.application.DTO.RegisterAirportDTO;
 import pt.isep.psoft.aisafe.airports_routes_service.application.DTO.RunwayDTO;
+import pt.isep.psoft.aisafe.airports_routes_service.api.exception.NotFoundException;
 
 import java.util.List;
 
@@ -62,7 +63,7 @@ public class AirportBootstrapper implements CommandLineRunner {
         try {
             // Seed data is local and must not start a replication chain.
             airportService.registerAirport(dto, true);
-        } catch (IllegalArgumentException exception) {
+        } catch (IllegalArgumentException | NotFoundException exception) {
             log.debug("Airport {} already exists or has invalid data", dto.iataCode(), exception);
         }
     }

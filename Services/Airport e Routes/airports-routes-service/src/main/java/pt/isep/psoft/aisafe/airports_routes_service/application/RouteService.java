@@ -7,20 +7,24 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.beans.factory.annotation.Value;
+import java.time.Instant;
 import org.springframework.stereotype.Service;
 import pt.isep.psoft.aisafe.airports_routes_service.application.DTO.*;
+import pt.isep.psoft.aisafe.airports_routes_service.api.exception.NotFoundException;
 import pt.isep.psoft.aisafe.airports_routes_service.domain.*;
 import pt.isep.psoft.aisafe.airports_routes_service.repositories.AirportRepository;
 import pt.isep.psoft.aisafe.airports_routes_service.repositories.RouteRepository;
 import pt.isep.psoft.aisafe.airports_routes_service.repositories.RouteHistoryRepository;
+import pt.isep.psoft.aisafe.airports_routes_service.util.HalResponseUtils;
+import pt.isep.psoft.aisafe.airports_routes_service.util.PartialResultContext;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
@@ -34,8 +38,7 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class RouteService {
@@ -47,17 +50,21 @@ public class RouteService {
     private final RouteSearchStrategy routeSearchStrategy; // <-- A Estratégia adicionada aqui
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
+    private final ReplicationOutbox replicationOutbox;
+    private final AuditService auditService;
     private final List<String> peerUrls;
     private static final String HOPS_HEADER = "X-P2P-Hops";
     private final int maxForwardingHops;
+    @Value("${peer.node-id:${server.port:local}}")
+    private String nodeId = "local";
 
     public RouteService(RouteRepository routeRepository,
                         AirportRepository airportRepository,
                         RouteHistoryRepository routeHistoryRepository,
                         RouteSearchStrategy routeSearchStrategy,
                         RestTemplate restTemplate,
-                        ObjectMapper objectMapper,
-                        @Value("${peer.urls:${peer.url:http://localhost:8092}}") List<String> peerUrls,
+                        ObjectMapper objectMapper, ReplicationOutbox replicationOutbox, AuditService auditService,
+                        @Value("${peer.urls:}") List<String> peerUrls,
                         @Value("${peer.forwarding.max-hops:1}") int maxForwardingHops) {
         this.routeRepository = routeRepository;
         this.airportRepository = airportRepository;
@@ -65,62 +72,109 @@ public class RouteService {
         this.routeSearchStrategy = routeSearchStrategy;
         this.restTemplate = restTemplate;
         this.objectMapper = objectMapper;
+        this.replicationOutbox = replicationOutbox;
+        this.auditService = auditService;
         this.peerUrls = peerUrls.stream().map(String::trim).filter(url -> !url.isBlank()).toList();
         this.maxForwardingHops = maxForwardingHops;
     }
 
     // --- US110: Criar uma Rota ---
+    @Transactional
     public RouteViewDTO createRoute(CreateRouteDTO dto, boolean isReplication) {
-        audit("CREATE", dto.routeId());
+        return createRoute(dto, isReplication, dto.lastModified(), dto.originNodeId());
+    }
+    @Transactional
+    public RouteViewDTO createRoute(CreateRouteDTO dto, boolean isReplication, Instant receivedAt, String receivedNode) {
         Airport origin = airportRepository.findByIataCodeString(dto.originIata())
-                .orElseThrow(() -> new IllegalArgumentException("Origin Airport not found: " + dto.originIata()));
+                .orElseThrow(() -> {
+                    auditService.record("CREATE", dto.routeId(), "ERROR", isReplication);
+                    return new NotFoundException("Origin Airport not found: " + dto.originIata());
+                });
 
         Airport destination = airportRepository.findByIataCodeString(dto.destinationIata())
-                .orElseThrow(() -> new IllegalArgumentException("Destination Airport not found: " + dto.destinationIata()));
+                .orElseThrow(() -> {
+                    auditService.record("CREATE", dto.routeId(), "ERROR", isReplication);
+                    return new NotFoundException("Destination Airport not found: " + dto.destinationIata());
+                });
 
         RouteId routeId = new RouteId(dto.routeId());
+        if (!isReplication && routeRepository.findByRouteId(routeId).isPresent()) {
+            throw new IllegalStateException("Route already exists with ID: " + dto.routeId());
+        }
+        if (isReplication && routeRepository.findByRouteId(routeId).isPresent()) {
+            Route existing = routeRepository.findByRouteId(routeId).get();
+            if (isNewer(receivedAt, receivedNode, existing.getLastModified(), existing.getOriginNodeId())) {
+                existing.applyReplicationData(dto.estimatedFlightTime(), dto.minimumRange(), dto.minimumCapacity(), existing.getStatus());
+                existing.applyReplicationMetadata(receivedAt, receivedNode);
+                return convertToDTO(routeRepository.save(existing));
+            }
+            return convertToDTO(existing);
+        }
         Route newRoute = new Route(routeId, origin, destination, dto.estimatedFlightTime(), dto.minimumRange(), dto.minimumCapacity());
 
+        newRoute.applyReplicationMetadata(isReplication ? receivedAt : Instant.now(),
+                isReplication ? receivedNode : nodeId);
         Route savedRoute = routeRepository.save(newRoute);
         routeHistoryRepository.save(new RouteHistory(savedRoute.getRouteId().id(), "CREATED"));
         if (!isReplication) {
-            replicateCreate(dto);
+            replicateCreate(dto, savedRoute);
         }
-
+        auditService.record("CREATE", dto.routeId(), "SUCCESS", isReplication);
         return convertToDTO(savedRoute);
     }
 
     // --- US112: Desativar uma rota ---
+    @Transactional
     public RouteViewDTO deactivateRoute(String id, boolean isReplication) {
-        audit("DEACTIVATE", id);
+        return deactivateRoute(id, isReplication, null, null);
+    }
+    @Transactional
+    public RouteViewDTO deactivateRoute(String id, boolean isReplication, Instant receivedAt, String receivedNode) {
         RouteId routeId = new RouteId(id);
         Route route = routeRepository.findByRouteId(routeId)
-                .orElseThrow(() -> new IllegalArgumentException("Route not found: " + id));
+                .orElseThrow(() -> {
+                    auditService.record("DEACTIVATE", id, "ERROR", isReplication);
+                    return new NotFoundException("Route not found: " + id);
+                });
 
-        route.deactivate();
+        if (isReplication && !isNewer(receivedAt, receivedNode, route.getLastModified(), route.getOriginNodeId()))
+            return convertToDTO(route);
+        if (route.getStatus() != RouteStatus.INACTIVE) route.deactivate();
+        route.applyReplicationMetadata(isReplication ? receivedAt : Instant.now(), isReplication ? receivedNode : nodeId);
         Route saved = routeRepository.save(route);
         closeOldHistoryAndCreateNew(saved.getRouteId().id(), "DEACTIVATED");
         if (!isReplication) {
-            replicateDeactivate(id);
+            replicateDeactivate(id, saved.getLastModified(), saved.getOriginNodeId());
         }
-
+        auditService.record("DEACTIVATE", id, "SUCCESS", isReplication);
         return convertToDTO(saved);
     }
 
     // --- US112: Atualizar uma rota ---
+    @Transactional
     public RouteViewDTO updateRoute(String id, UpdateRouteDTO dto, boolean isReplication) {
-        audit("UPDATE", id);
+        return updateRoute(id, dto, isReplication, null, null);
+    }
+    @Transactional
+    public RouteViewDTO updateRoute(String id, UpdateRouteDTO dto, boolean isReplication,
+                                    Instant receivedAt, String receivedNode) {
         RouteId routeId = new RouteId(id);
         Route route = routeRepository.findByRouteId(routeId)
-                .orElseThrow(() -> new IllegalArgumentException("Route not found: " + id));
+                .orElseThrow(() -> {
+                    auditService.record("UPDATE", id, "ERROR", isReplication);
+                    return new NotFoundException("Route not found: " + id);
+                });
 
+        if (isReplication && !isNewer(receivedAt, receivedNode, route.getLastModified(), route.getOriginNodeId()))
+            return convertToDTO(route);
         route.updateParameters(dto.estimatedFlightTime(), dto.minimumRange(), dto.minimumCapacity());
+        route.applyReplicationMetadata(isReplication ? receivedAt : Instant.now(), isReplication ? receivedNode : nodeId);
         Route saved = routeRepository.save(route);
         closeOldHistoryAndCreateNew(saved.getRouteId().id(), "UPDATED");
         if (!isReplication) {
-            replicateUpdate(id, dto);
+            replicateUpdate(id, dto, saved.getLastModified(), saved.getOriginNodeId());
         }
-
+        auditService.record("UPDATE", id, "SUCCESS", isReplication);
         return convertToDTO(saved);
     }
 
@@ -130,6 +184,7 @@ public class RouteService {
     }
 
     public RouteViewDTO getRoute(String id, int hops) {
+        hops = Math.max(0, hops);
         RouteId routeId = new RouteId(id);
         Optional<Route> localRoute = routeRepository.findByRouteId(routeId);
         if (localRoute.isPresent()) {
@@ -140,6 +195,7 @@ public class RouteService {
             throw routeNotFound(id);
         }
 
+        boolean peerFailure = false;
         for (String peerUrl : peerUrls) {
             String url = UriComponentsBuilder.fromUriString(peerUrl)
                     .pathSegment("api", "routes", id).toUriString();
@@ -152,14 +208,20 @@ public class RouteService {
                 }
                 JsonNode dtoNode = body.has("content") ? body.get("content") : body;
                 return objectMapper.treeToValue(dtoNode, RouteViewDTO.class);
-            } catch (HttpClientErrorException.NotFound | ResourceAccessException exception) {
-                log.debug("Peer route lookup failed for {}", peerUrl, exception);
-            } catch (HttpClientErrorException exception) {
+            } catch (HttpClientErrorException.NotFound exception) {
+                log.debug("Peer route lookup returned 404 for {}", peerUrl);
+            } catch (RestClientException exception) {
+                peerFailure = true;
                 log.warn("Peer route lookup failed with status {} for {}",
-                        exception.getStatusCode(), peerUrl);
+                        exception instanceof HttpClientErrorException httpException
+                                ? httpException.getStatusCode() : "peer error", peerUrl);
             } catch (JsonProcessingException exception) {
-                throw new IllegalStateException("Invalid route response from peer", exception);
+                peerFailure = true;
+                log.warn("Invalid route response from peer {}", peerUrl, exception);
             }
+        }
+        if (peerFailure) {
+            throw new ResourceAccessException("One or more peers were unavailable");
         }
         throw routeNotFound(id);
     }
@@ -170,6 +232,8 @@ public class RouteService {
     }
 
     public Page<RouteViewDTO> searchRoutes(String origin, String destination, Pageable pageable, int hops) {
+        hops = Math.max(0, hops);
+        PartialResultContext.start();
         List<RouteViewDTO> routes = new ArrayList<>();
 
         if (origin != null && destination != null) {
@@ -205,14 +269,17 @@ public class RouteService {
     }
 
     //US209
+    // AI-assisted (GitHub Copilot)
     public Page<RouteViewDTO> getRoutesByAirport(String iataCode, Pageable pageable) {
         return getRoutesByAirport(iataCode, pageable, 0);
     }
 
     public Page<RouteViewDTO> getRoutesByAirport(String iataCode, Pageable pageable, int hops) {
+        hops = Math.max(0, hops);
+        PartialResultContext.start();
         String code = iataCode.toUpperCase();
-        List<RouteViewDTO> routes = routeRepository.findRoutesByAirport(code, Pageable.unpaged())
-                .map(this::convertToDTO).getContent();
+        List<RouteViewDTO> routes = new ArrayList<>(routeRepository.findRoutesByAirport(code, Pageable.unpaged())
+                .map(this::convertToDTO).getContent());
         if (hops < maxForwardingHops) {
             routes.addAll(searchRoutesOnPeers(code, pageable, hops));
         }
@@ -257,10 +324,8 @@ public class RouteService {
                         pageBuilder.toUriString(), HttpMethod.GET, p2pEntity(hops + 1), JsonNode.class);
                 JsonNode body = response.getBody();
                 if (body == null || body.isNull()) break;
-                JsonNode embedded = body.path("_embedded");
-                JsonNode routesNode = embedded.path("routeViewDTO");
-                if (!routesNode.isArray()) routesNode = embedded.path("routes");
-                if (routesNode.isArray()) {
+                JsonNode routesNode = HalResponseUtils.firstEmbeddedArray(body);
+                if (routesNode != null) {
                     for (JsonNode routeNode : routesNode) {
                         routes.add(objectMapper.treeToValue(routeNode, RouteViewDTO.class));
                     }
@@ -269,14 +334,19 @@ public class RouteService {
                 page++;
             } while (page < totalPages);
             return routes;
-        } catch (HttpClientErrorException.NotFound | ResourceAccessException exception) {
+        } catch (HttpClientErrorException.NotFound exception) {
+            return List.of();
+        } catch (ResourceAccessException exception) {
+            PartialResultContext.markPartial();
             log.debug("Peer route search failed for {}", builder, exception);
             return List.of();
         } catch (HttpClientErrorException exception) {
+            PartialResultContext.markPartial();
             log.warn("Peer route search failed with status {} for {}",
                     exception.getStatusCode(), builder);
             return List.of();
         } catch (JsonProcessingException | RestClientException exception) {
+            PartialResultContext.markPartial();
             log.warn("Invalid or unavailable route response from peer {}", builder, exception);
             return List.of();
         }
@@ -284,8 +354,20 @@ public class RouteService {
 
     private List<RouteViewDTO> deduplicateRoutes(List<RouteViewDTO> routes) {
         Map<String, RouteViewDTO> unique = new LinkedHashMap<>();
-        routes.forEach(route -> unique.putIfAbsent(route.routeId(), route));
+        routes.forEach(route -> unique.merge(route.routeId(), route,
+                this::newerRouteVersion));
         return new ArrayList<>(unique.values());
+    }
+
+    // AI-assisted (GitHub Copilot): keeps the newest representation during P2P aggregation.
+    private RouteViewDTO newerRouteVersion(RouteViewDTO current, RouteViewDTO candidate) {
+        if (current.lastModified() == null) return candidate;
+        if (candidate.lastModified() == null) return current;
+        int timestampComparison = candidate.lastModified().compareTo(current.lastModified());
+        if (timestampComparison != 0) return timestampComparison > 0 ? candidate : current;
+        String currentNode = current.originNodeId() == null ? "" : current.originNodeId();
+        String candidateNode = candidate.originNodeId() == null ? "" : candidate.originNodeId();
+        return candidateNode.compareTo(currentNode) > 0 ? candidate : current;
     }
 
     private Page<RouteViewDTO> pageRoutes(List<RouteViewDTO> routes, Pageable pageable) {
@@ -316,8 +398,8 @@ public class RouteService {
         };
     }
 
-    private IllegalArgumentException routeNotFound(String id) {
-        return new IllegalArgumentException("Route not found: " + id);
+    private NotFoundException routeNotFound(String id) {
+        return new NotFoundException("Route not found: " + id);
     }
 
     // US210
@@ -341,11 +423,14 @@ public class RouteService {
     }
 
     // --- US214: Listar rotas ativas ordenadas por popularidade ou distância ---
+    // AI-assisted (GitHub Copilot)
     public Page<RouteViewDTO> getActiveRoutesSorted(String sortBy, Pageable pageable) {
         return getActiveRoutesSorted(sortBy, pageable, 0);
     }
 
     public Page<RouteViewDTO> getActiveRoutesSorted(String sortBy, Pageable pageable, int hops) {
+        hops = Math.max(0, hops);
+        PartialResultContext.start();
         Page<Route> routes;
 
         // Decide a ordenação baseada no parâmetro recebido
@@ -356,7 +441,7 @@ public class RouteService {
         }
 
         // Usa o teu próprio método convertToDTO em vez de criar um DTO novo à mão!
-        List<RouteViewDTO> allRoutes = routes.map(this::convertToDTO).getContent();
+        List<RouteViewDTO> allRoutes = new ArrayList<>(routes.map(this::convertToDTO).getContent());
         if (hops < maxForwardingHops) {
             for (String peerUrl : peerUrls) {
                 UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(peerUrl)
@@ -381,40 +466,36 @@ public class RouteService {
                 route.getOrigin().getIataCode().code(),
                 route.getDestination().getIataCode().code(),
                 route.getStatus().name(),
-                route.getMinimumCapacity()
+                route.getMinimumCapacity(),
+                route.getLastModified(),
+                route.getOriginNodeId()
         );
     }
 
-    private void replicateCreate(CreateRouteDTO dto) {
-        for (String peerUrl : peerUrls) {
-            String url = UriComponentsBuilder.fromUriString(peerUrl).pathSegment("api", "routes").toUriString();
-            try {
-                restTemplate.postForEntity(url, replicationEntity(dto), Void.class);
-            } catch (ResourceAccessException exception) {
-                log.warn("Falha ao replicar para o peer {}", peerUrl, exception);
-            }
-        }
+    private void replicateCreate(CreateRouteDTO dto, Route route) {
+        // AI-assisted (GitHub Copilot): propagate metadata when Spring has injected the configured node id.
+        CreateRouteDTO payload = "local".equals(nodeId) ? dto : new CreateRouteDTO(dto.routeId(), dto.originIata(), dto.destinationIata(),
+                dto.estimatedFlightTime(), dto.minimumRange(), dto.minimumCapacity(),
+                route.getLastModified(), route.getOriginNodeId());
+        replicationOutbox.enqueue(peerUrls, "POST", "/api/routes", payload);
     }
 
-    private void replicateUpdate(String id, UpdateRouteDTO dto) {
-        replicatePatch(id, dto);
+    private void replicateUpdate(String id, UpdateRouteDTO dto, Instant lastModified, String originNodeId) {
+        replicatePatch(id, dto, lastModified, originNodeId);
     }
 
-    private void replicateDeactivate(String id) {
-        replicatePatch(id + "/deactivate", null);
+    private void replicateDeactivate(String id, Instant lastModified, String originNodeId) {
+        replicatePatch(id + "/deactivate", null, lastModified, originNodeId);
     }
 
-    private void replicatePatch(String path, Object body) {
-        for (String peerUrl : peerUrls) {
-            String url = UriComponentsBuilder.fromUriString(peerUrl)
-                    .pathSegment("api", "routes")
-                    .path("/" + path).toUriString();
-            try {
-                restTemplate.patchForObject(url, replicationEntity(body), Void.class);
-            } catch (ResourceAccessException exception) {
-                log.warn("Falha ao replicar para o peer {}", peerUrl, exception);
-            }
-        }
+    private void replicatePatch(String path, Object body, Instant lastModified, String originNodeId) {
+        replicationOutbox.enqueue(peerUrls, "PATCH", "/api/routes/" + path, body, lastModified, originNodeId);
+    }
+    private boolean isNewer(Instant incoming, String incomingNode, Instant current, String currentNode) {
+        if (incoming == null) return false;
+        if (current == null) return true;
+        int c = incoming.compareTo(current);
+        return c > 0 || (c == 0 && String.valueOf(incomingNode).compareTo(String.valueOf(currentNode)) > 0);
     }
 
     private <T> HttpEntity<T> p2pEntity(int hops) {
@@ -484,13 +565,4 @@ public class RouteService {
         return sb.toString();
     }
 
-    private void audit(String action, Object id) {
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        Object principal = authentication == null ? null : authentication.getPrincipal();
-        String username = principal instanceof org.springframework.security.core.userdetails.UserDetails
-                ? ((org.springframework.security.core.userdetails.UserDetails) principal).getUsername()
-                : principal instanceof String ? (String) principal : null;
-        if (username == null || username.isBlank()) username = "SYSTEM";
-        log.info("AUDIT - User: {} - Action: {} - Target ID: {}", username, action, id);
-    }
 }

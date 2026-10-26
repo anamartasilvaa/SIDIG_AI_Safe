@@ -7,6 +7,7 @@ import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import pt.isep.psoft.aisafe.airports_routes_service.application.DTO.CreateRouteDTO;
 import pt.isep.psoft.aisafe.airports_routes_service.application.RouteService;
+import pt.isep.psoft.aisafe.airports_routes_service.api.exception.NotFoundException;
 
 @Component
 @Order(4)
@@ -40,7 +41,7 @@ public class RouteBootstrapper implements CommandLineRunner {
             // Routes are created through the local service only; no external domain is needed.
             routeService.createRoute(new CreateRouteDTO(
                     routeId, origin, destination, estimatedFlightTime, minimumRange, minimumCapacity), true);
-        } catch (IllegalArgumentException exception) {
+        } catch (IllegalArgumentException | NotFoundException exception) {
             log.debug("Route {} already exists or has invalid airport references", routeId, exception);
         }
     }
