@@ -1,9 +1,5 @@
 package pt.isep.psoft.aisafe.flight_operations.security;
 
-import io.jsonwebtoken.Claims;
-import io.jsonwebtoken.JwtException;
-import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.security.Keys;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -12,27 +8,27 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.jwt.BadJwtException;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.JwtException;
 import org.springframework.web.filter.OncePerRequestFilter;
 
-import javax.crypto.SecretKey;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Stream;
+
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     public static final String ERROR_ATTRIBUTE = "jwt.error";
 
-    private final SecretKey signingKey;
+    private final JwtDecoder decoder;
 
-    public JwtAuthenticationFilter(String secret) {
-        byte[] bytes = secret.getBytes(StandardCharsets.UTF_8);
-        if (bytes.length < 32) {
-            throw new IllegalArgumentException("jwt.secret must contain at least 32 bytes (HS256).");
-        }
-        this.signingKey = Keys.hmacShaKeyFor(bytes);
+    public JwtAuthenticationFilter(JwtDecoder decoder) {
+        this.decoder = decoder;
     }
 
     @Override
@@ -41,21 +37,19 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         String header = request.getHeader(HttpHeaders.AUTHORIZATION);
         if (header != null && header.startsWith("Bearer ")) {
             try {
-                Claims claims = Jwts.parser()
-                        .verifyWith(signingKey)
-                        .build()
-                        .parseSignedClaims(header.substring(7).trim())
-                        .getPayload();
+                Jwt jwt = decoder.decode(header.substring(7).trim());
 
-                String username = claims.get("username", String.class);
-                if (username == null || username.isBlank()) {
-                    username = claims.getSubject();
+                String username = firstNonBlank(jwt.getClaimAsString("username"),
+                        jwt.getClaimAsString("preferred_username"), jwt.getSubject());
+                if (username == null) {
+                    throw new BadJwtException("token without username/subject");
                 }
-                if (username == null || username.isBlank()) {
-                    throw new JwtException("token without username/subject");
+                Object roles = jwt.getClaims().get("roles");
+                if (roles == null) {
+                    roles = realmRoles(jwt);
                 }
                 SecurityContextHolder.getContext().setAuthentication(
-                        new UsernamePasswordAuthenticationToken(username, null, authorities(claims.get("roles"))));
+                        new UsernamePasswordAuthenticationToken(username, null, authorities(roles)));
             } catch (JwtException | IllegalArgumentException e) {
                 SecurityContextHolder.clearContext();
                 request.setAttribute(ERROR_ATTRIBUTE, e.getMessage());
@@ -64,6 +58,19 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         chain.doFilter(request, response);
     }
 
+    private static Object realmRoles(Jwt jwt) {
+        Map<String, Object> realmAccess = jwt.getClaimAsMap("realm_access");
+        return realmAccess == null ? null : realmAccess.get("roles");
+    }
+
+    private static String firstNonBlank(String... values) {
+        for (String v : values) {
+            if (v != null && !v.isBlank()) {
+                return v;
+            }
+        }
+        return null;
+    }
     static List<SimpleGrantedAuthority> authorities(Object rolesClaim) {
         Stream<String> roles;
         if (rolesClaim instanceof Collection<?> list) {
