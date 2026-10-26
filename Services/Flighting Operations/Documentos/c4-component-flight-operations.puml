@@ -1,0 +1,66 @@
+@startuml c4-component-flight-operations
+!include <C4/C4_Component>
+LAYOUT_TOP_DOWN()
+
+title Flight Operations Service - C4 Nivel 3 (Components)
+
+Person(client, "Utilizador AISafe", "ATCC, Backoffice, Admin (via Postman / cliente)")
+Container_Ext(gateway, "API Gateway", "Spring Cloud Gateway", "Autentica o utilizador e emite o JWT (perfis no claim roles)")
+Container_Ext(peers, "Outras replicas Flight Operations", "Spring Boot", "Mesmo servico nas portas 8081/8082/8083")
+Container_Ext(ar, "Airports & Routes Service", "Spring Boot", "Replicas 8091-8093; valida o mesmo JWT")
+Container_Ext(am, "Aircraft Service", "Spring Boot", "Replicas 8071, 8072 (stub enquanto nao existir)")
+ContainerDb(db, "Flight Ops DB", "H2 em memoria", "Uma BD por replica")
+
+Container_Boundary(fo, "Flight Operations Service (uma replica)") {
+    Component(jwt, "JwtAuthenticationFilter", "OncePerRequestFilter", "Valida o JWT: assinatura HS256, expiracao, utilizador e perfis.")
+    Component(security, "SecurityConfig", "Spring Security, stateless", "RBAC por endpoint e metodo (ATCC, BACKOFFICE, ADMIN). Deny by default.")
+    Component(problems, "SecurityProblemHandler", "EntryPoint + AccessDeniedHandler", "401 / 403 em ProblemDetail. Audit DENIED.")
+    Component(filter, "ApiKeyFilter", "OncePerRequestFilter", "Exige X-API-Key em /internal/**. Audit ALLOWED/DENIED.")
+    Component(pub, "ScheduledFlightController", "@RestController /api/scheduled-flights", "API publica: US212, US213, US205, US229, mudar estado. HATEOAS.")
+    Component(internal, "InternalScheduledFlightController", "@RestController /internal/scheduled-flights", "Leituras locais, estado local e receber copias (/replica). Nunca reencaminha.")
+    Component(audit, "AuditLog", "logger AUDIT", "Quem criou / alterou cada voo.")
+    Component(handler, "GlobalExceptionHandler", "@RestControllerAdvice", "400 / 404 / 409 / 502 / 503 em ProblemDetail.")
+    Component(service, "ScheduledFlightService", "@Service", "Consultas locais vs distribuidas, agregacao, AP, lock por aviao, aplicar copias, sync no arranque.")
+    Component(policy, "FlightSchedulingPolicy", "Domain Service (Java puro)", "Rota ativa, aviao ACTIVE, alcance, capacidade, conflitos de 2 h.")
+    Component(domain, "ScheduledFlight + Value Objects", "Agregado JPA", "FlightId (UUID), RouteId, RegistrationNumber, maquina de estados, revision.")
+    Component(validator, "FlightAssignmentValidator", "@Component + ACL", "Obtem rota e aviao (RouteInfo/AircraftInfo) e delega na policy.")
+    Component(replicator, "FlightReplicator", "@Component + scheduler", "Replicação assincrona: copias pendentes e reenvio a cada 5 s.")
+    Component(peerClient, "PeerClient", "@Component + thread pool", "findFirst, collectAll e forwardPut em paralelo; 503 se um peer falhar e nada for encontrado.")
+    Component(replicated, "ReplicatedServiceClient", "routesClient, aircraftClient", "Round-robin + failover entre replicas de outro servico.")
+    Component(caller, "RemoteCaller + CircuitBreaker", "@Component", "Timeouts (1s/2s), retry com backoff, circuit breaker por destino.")
+    Component(http, "HttpClientConfig", "RestTemplate partilhado", "Envia X-API-Key e X-Origin-Instance; reencaminha o JWT do utilizador.")
+    Component(repo, "ScheduledFlightRepository", "Spring Data JPA", "Acesso a BD local.")
+}
+
+Rel(client, gateway, "Login e pedidos", "HTTPS")
+Rel(gateway, jwt, "Pedidos com Bearer JWT", "HTTPS")
+Rel(jwt, security, "Utilizador + perfis")
+Rel(security, pub, "Se o perfil tiver permissao")
+Rel(security, problems, "401 / 403")
+Rel(peers, filter, "Pedidos internos", "HTTPS + X-API-Key")
+Rel(filter, internal, "Se a chave for valida")
+
+Rel(pub, service, "Usa")
+Rel(pub, audit, "Regista CREATE / UPDATE_STATUS")
+Rel(internal, service, "Metodos locais e applyReplica")
+Rel(service, validator, "Valida antes de criar")
+Rel(validator, policy, "Delega regras")
+Rel(service, policy, "Deteta conflitos")
+Rel(service, domain, "Cria / altera / funde copias")
+Rel(service, repo, "Usa")
+Rel(service, replicator, "Replica apos gravar")
+Rel(service, peerClient, "Forwarding, agregacao e sync")
+Rel(validator, replicated, "Consulta rota / aviao")
+
+Rel(replicator, caller, "PUT /replica")
+Rel(peerClient, caller, "Usa")
+Rel(replicated, caller, "Usa")
+Rel(caller, http, "Usa")
+Rel(http, peers, "GET/PUT /internal/scheduled-flights/**", "HTTPS + X-API-Key")
+Rel(http, ar, "GET /api/routes/{id}", "HTTPS + Bearer JWT")
+Rel(http, am, "GET /api/aircraft/{reg}", "HTTP (stub) + Bearer JWT")
+Rel(repo, db, "Le/escreve", "JDBC")
+Rel_L(handler, pub, "Traduz excecoes")
+
+SHOW_LEGEND()
+@enduml

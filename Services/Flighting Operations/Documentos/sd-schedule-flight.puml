@@ -1,0 +1,91 @@
+@startuml sd-schedule-flight
+skinparam style strictuml
+autonumber
+title SD - Schedule Flight (aircraft-to-route assignment)
+
+actor "Backoffice Operator" as User
+box "FO-1 (replica receiving the request)" #F4F7FF
+participant "ScheduledFlightController" as Ctrl
+participant "ScheduledFlightService" as Svc
+participant "RouteId" as RouteIdVO
+participant "RegistrationNumber" as RegVO
+participant "ScheduledFlight" as Flight
+participant "FlightAssignmentValidator" as Val
+participant "FlightSchedulingPolicy" as Policy
+participant "PeerClient" as Peers
+participant "ScheduledFlightRepository" as Repo
+end box
+participant "Airports & Routes\nService" as AR
+participant "Aircraft\nService" as AC
+participant "FO-2 / FO-3\n/internal" as FO
+
+User -> Ctrl : POST /api/scheduled-flights (CreateScheduledFlightDTO)
+activate Ctrl
+Ctrl -> Svc : scheduleFlight(dto)
+activate Svc
+
+Svc -> RouteIdVO ** : of(dto.routeId)
+Svc -> RegVO ** : of(dto.registrationNumber)
+Svc -> Flight ** : new ScheduledFlight(routeId, registration, dateTime, now)
+note right of Flight : date in the past / missing fields\n-> IllegalArgumentException -> 400
+
+Svc -> Svc : lock(registration)
+note right of Svc : prevents 2 simultaneous schedulings\nof the same aircraft in this replica
+
+Svc -> Val : validate(routeId, registration)
+activate Val
+Val -> AR : GET /api/routes/{id}
+activate AR
+note right of AR : round-robin + failover\n+ circuit breaker
+AR --> Val : 200 RouteInfo
+deactivate AR
+Val -> AC : GET /api/aircraft/{registration}
+activate AC
+AC --> Val : 200 AircraftInfo
+deactivate AC
+Val -> Policy : checkAssignment(RouteRequirements, AircraftCapabilities)
+activate Policy
+Policy --> Val : ok
+deactivate Policy
+Val --> Svc : ok
+deactivate Val
+
+Svc -> Repo : findByAircraft_Number(registration)
+activate Repo
+Repo --> Svc : List<ScheduledFlight> (local)
+deactivate Repo
+Svc -> Peers : collectAll("/internal/scheduled-flights/aircraft/{reg}")
+activate Peers
+par in parallel
+  Peers -> FO : GET (X-API-Key)
+  activate FO
+  FO --> Peers : List<ScheduledFlightViewDTO>
+  deactivate FO
+end
+Peers --> Svc : AggregatedResult(items, unreachablePeers)
+deactivate Peers
+Svc -> Policy : findConflict(slots, scheduledDateTime)
+activate Policy
+Policy --> Svc : Optional<FlightSlot>
+deactivate Policy
+
+alt all valid
+  Svc -> Repo : save(flight)
+  activate Repo
+  Repo --> Svc : savedFlight
+  deactivate Repo
+  Svc --> Ctrl : ScheduledFlightViewDTO
+  Ctrl --> User : 201 Created + Location (EntityModel)
+else rule violated (inactive route, maintenance, range, capacity, conflict)
+  Svc --> Ctrl : SchedulingRuleViolation
+  Ctrl --> User : 409 Conflict (ProblemDetail)
+else some peer did not respond (partial response)
+  Svc --> Ctrl : DependencyUnavailableException
+  Ctrl --> User : 503 (cannot guarantee absence of conflicts)
+else all AR or AC replicas are down
+  Svc --> Ctrl : DependencyUnavailableException
+  Ctrl --> User : 503 Service Unavailable
+end
+deactivate Svc
+deactivate Ctrl
+@enduml

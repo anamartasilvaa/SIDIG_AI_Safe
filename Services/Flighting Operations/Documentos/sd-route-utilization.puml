@@ -1,0 +1,58 @@
+@startuml sd-route-utilization
+skinparam style strictuml
+autonumber
+title SD - US229 (Route utilization report, aggregated from all replicas)
+
+actor "Backoffice Operator" as User
+box "FO-1 :8081" #F4F7FF
+participant "ScheduledFlightController" as Ctrl
+participant "ScheduledFlightService" as Svc
+participant "ScheduledFlightRepository" as Repo
+participant "PeerClient" as Peers
+end box
+participant "FO-2 :8082\n/internal" as FO2
+participant "FO-3 :8083\n/internal" as FO3
+
+User -> Ctrl : GET /api/scheduled-flights/route-utilization
+activate Ctrl
+Ctrl -> Svc : routeUtilization()
+activate Svc
+
+Svc -> Peers : collectAll("/internal/scheduled-flights/route-utilization")
+activate Peers
+par in parallel
+  Peers -> FO2 : GET (X-API-Key)
+  activate FO2
+  alt FO-2 available
+    FO2 --> Peers : List<RouteUtilizationDTO>
+  else FO-2 down (timeout / open circuit)
+    FO2 --> Peers : failure -> unreachablePeers += FO-2
+  end
+  deactivate FO2
+else
+  Peers -> FO3 : GET (X-API-Key)
+  activate FO3
+  FO3 --> Peers : List<RouteUtilizationDTO>
+  deactivate FO3
+end
+Peers --> Svc : AggregatedResult(items, unreachablePeers)
+deactivate Peers
+
+Svc -> Repo : countFlightsGroupedByRoute()
+activate Repo
+Repo --> Svc : List<Object[]> (local counts)
+deactivate Repo
+
+Svc -> Svc : sum by routeId and sort (desc)
+
+alt all peers responded
+  Svc --> Ctrl : AggregatedResult (complete)
+  Ctrl --> User : 200 OK (List<RouteUtilizationDTO>)
+else some peer failed
+  Svc --> Ctrl : AggregatedResult (partial)
+  Ctrl --> User : 200 OK + X-Partial-Response-Unreachable-Peers
+end
+deactivate Svc
+deactivate Ctrl
+
+@enduml
