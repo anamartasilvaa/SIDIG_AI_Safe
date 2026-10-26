@@ -15,12 +15,15 @@ public class FlightsServiceClient {
     }
     public boolean isAircraftInFlight(String regNum) {
         RemoteUnavailableException lastFailure = null;
+        boolean answered = false;
         for (String url: urls) try {
             var flights=caller.get(url.trim()+inFlightPath.replace("{registration}",regNum.trim().toUpperCase()), new org.springframework.core.ParameterizedTypeReference<java.util.List<Map<String,Object>>>() {});
-            if (flights.isPresent() && !flights.get().isEmpty()) return true;
+            answered = true;
+            if (flights.isPresent() && flights.get().stream().anyMatch(f -> "IN_FLIGHT".equals(String.valueOf(f.get("status"))))) return true;
         } catch (RemoteUnavailableException failure) {
             lastFailure = failure;
         }
+        if (answered) return false;
         throw lastFailure != null
                 ? lastFailure
                 : new RemoteUnavailableException("flights://unconfigured");
