@@ -30,15 +30,16 @@ cd <repo>\infrastructure
 ```
 Depois arrancar no IntelliJ os serviços. Antes de testar, tem de estar tudo isto a correr:
 
-| # | O quê                                                              | Onde arrancar                      | Porta        |
-|---|--------------------------------------------------------------------|------------------------------------|--------------|
-| 1 | Keycloak                                                           | `start-infra.ps1` (janela própria) | 8180 (HTTP)  |
-| 2 | API Gateway (NGINX)                                                | `start-infra.ps1`                  | 8443 (HTTPS) |
-| 3 | Flight Operations FO-1                                             | IntelliJ                           | 8081         |
-| 4 | Flight Operations FO-2                                             | IntelliJ                           | 8082         |
-| 5 | Flight Operations FO-3                                             | IntelliJ                           | 8083         |
-| 6 | Airports & Routes                                                  | IntelliJ                           | 8091         |
-| 7 | Aircraft (stub `StubExternalServices`, até existir o serviço real) | IntelliJ                           | 8071         |
+| # | O quê                          | Onde arrancar                      | Porta            |
+|---|--------------------------------|------------------------------------|------------------|
+| 1 | Keycloak                       | `start-infra.ps1` (janela própria) | 8180 (HTTP)      |
+| 2 | API Gateway (NGINX)            | `start-infra.ps1`                  | 8443 (HTTPS)     |
+| 3 | Flight Operations FO-1         | IntelliJ                           | 8081             |
+| 4 | Flight Operations FO-2         | IntelliJ                           | 8082             |
+| 5 | Flight Operations FO-3         | IntelliJ                           | 8083             |
+| 6 | Airports & Routes              | IntelliJ                           | 8091             |
+| 7 | Aircraft (AC-1, AC-2, AC-3)    | IntelliJ                           | 8071, 8072, 8073 |
+| 8 | Maintenance (MT-1, MT-2, MT-3) | IntelliJ                           | 8075, 8076, 8077 |
 
 Erros típicos:
 - `503 "No replica of the requested service is available."` → a gateway não chega a nenhuma réplica desse serviço (estão paradas).
@@ -47,12 +48,12 @@ Erros típicos:
 Parar a gateway: `.\start-infra.ps1 -Stop` (o Keycloak para com Ctrl+C na janela dele).
 
 ## Utilizadores de teste (realm `aisafe`)
-| Utilizador | Password | Perfil |
-|---|---|---|
-| admin.user | admin123 | ADMIN |
-| atcc.user | atcc123 | ATCC |
-| backoffice.user | backoffice123 | BACKOFFICE |
-| tech.user | tech123 | MAINTENANCE_TECHNICIAN |
+| Utilizador      | Password      | Perfil                 |
+|-----------------|---------------|------------------------|
+| admin.user      | admin123      | ADMIN                  |
+| atcc.user       | atcc123       | ATCC                   |
+| backoffice.user | backoffice123 | BACKOFFICE             |
+| tech.user       | tech123       | MAINTENANCE_TECHNICIAN |
 | supervisor.user | supervisor123 | MAINTENANCE_SUPERVISOR |
 
 Consola de administração do Keycloak: http://localhost:8180 (admin/admin, só em desenvolvimento).
