@@ -12,11 +12,11 @@ API Gateway (NGINX) ──► /realms/...                Keycloak :8180 (login, 
 Cada serviço valida o JWT com a chave pública do Keycloak (JWKS) e aplica RBAC.
 ```
 
-| Pasta | Conteúdo |
-|---|---|
-| `keycloak/aisafe-realm.json` | Realm `aisafe`: 5 perfis, 5 utilizadores de teste, cliente `aisafe-client` |
-| `gateway/nginx.conf` | Gateway: HTTPS, routing, round-robin, failover, rate limiting (10 req/s por IP, burst 20), bloqueio de endpoints internos |
-| `start-infra.ps1` | Copia as configurações, gera os certificados PEM e arranca Keycloak + NGINX |
+| Pasta                        | Conteúdo                                                                                                                  |
+|------------------------------|---------------------------------------------------------------------------------------------------------------------------|
+| `keycloak/aisafe-realm.json` | Realm `aisafe`: 5 perfis, 5 utilizadores de teste, cliente `aisafe-client`                                                |
+| `gateway/nginx.conf`         | Gateway: HTTPS, routing, round-robin, failover, rate limiting (10 req/s por IP, burst 20), bloqueio de endpoints internos |
+| `start-infra.ps1`            | Copia as configurações, gera os certificados PEM e arranca Keycloak + NGINX                                               |
 
 ## Instalação (uma vez)
 1. **Keycloak**: descarregar o zip em keycloak.org/downloads e descomprimir em `C:\keycloak` (precisa de Java 21+).
@@ -28,7 +28,21 @@ Cada serviço valida o JWT com a chave pública do Keycloak (JWKS) e aplica RBAC
 cd <repo>\infrastructure
 .\start-infra.ps1          # Keycloak + gateway
 ```
-Depois arrancar no IntelliJ: FO-1, FO-2, FO-3, Airports & Routes e o stub do Aircraft (`StubExternalServices`).
+Depois arrancar no IntelliJ os serviços. Antes de testar, tem de estar tudo isto a correr:
+
+| # | O quê                                                              | Onde arrancar                      | Porta        |
+|---|--------------------------------------------------------------------|------------------------------------|--------------|
+| 1 | Keycloak                                                           | `start-infra.ps1` (janela própria) | 8180 (HTTP)  |
+| 2 | API Gateway (NGINX)                                                | `start-infra.ps1`                  | 8443 (HTTPS) |
+| 3 | Flight Operations FO-1                                             | IntelliJ                           | 8081         |
+| 4 | Flight Operations FO-2                                             | IntelliJ                           | 8082         |
+| 5 | Flight Operations FO-3                                             | IntelliJ                           | 8083         |
+| 6 | Airports & Routes                                                  | IntelliJ                           | 8091         |
+| 7 | Aircraft (stub `StubExternalServices`, até existir o serviço real) | IntelliJ                           | 8071         |
+
+Erros típicos:
+- `503 "No replica of the requested service is available."` → a gateway não chega a nenhuma réplica desse serviço (estão paradas).
+- `503 "Service airports-routes/aircraft unavailable"` → o FO respondeu, mas a dependência está parada; depois de a arrancar, esperar ~10 s (circuit breaker).
 
 Parar a gateway: `.\start-infra.ps1 -Stop` (o Keycloak para com Ctrl+C na janela dele).
 
