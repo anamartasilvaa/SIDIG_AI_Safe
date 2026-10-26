@@ -27,7 +27,7 @@ package "AISafe" {
     }
 }
 
-Client --> [API Gateway] : HTTP/REST
+Client --> [API Gateway] : HTTPS/REST
 [API Gateway] --> [Aircraft Service]
 [API Gateway] --> [Maintenance Service]
 [API Gateway] --> [Airports Service]
@@ -38,8 +38,8 @@ Client --> [API Gateway] : HTTP/REST
 [Airports Service] -down-> "Airports DB"
 [Flights Service] -down-> "Flights DB"
 
-[Maintenance Service] .up.> [Aircraft Service] : HTTP (Status Updates)
-[Flights Service] .up.> [Aircraft Service] : HTTP (Availability)
-[Flights Service] .up.> [Airports Service] : HTTP (Route Validation)
+[Maintenance Service] .up.> [Aircraft Service] : HTTPS (Status Updates)
+[Flights Service] .up.> [Aircraft Service] : HTTPS (Availability)
+[Flights Service] .up.> [Airports Service] : HTTPS (Route Validation)
 
 @enduml

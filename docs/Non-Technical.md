@@ -14,12 +14,12 @@ We have chosen a four-component architecture to strictly enforce loose coupling 
 
 The services are defined as follows:
 
-| **Service** | **Responsabilities** | **Rationale** |
-| ----------- | -------------------- | ------------- |
-| Aircraft | Manages aircraft models, specific aircraft instance registration, and tracks operational status. | Decoupling Aircraft from Maintenance prevents a Single Point Of Failure (SPOF) for core asset management and allows independent scaling if aircraft query loads increase. |
-| Maintenance | Manages maintenance templates, tracks ongoing maintenance activities, and stores historical maintenance records. | Maintenance is a distinct operational context. Separating it allows specialized data structures for heavy historical logging without impacting the performance of real-time aircraft status queries. |
-| Airports & Routes | Registers airports, defines flight routes, and maintains route compatibility rules. | This acts as the geographical and spatial foundation of the system. It is highly read-heavy and benefits from being isolated from transactional operational data. |
-| Flight Ops. | Coordinates flight scheduling, assigns specific aircraft to routes based on physical constraints, and tracks real-time flight utilization. | Acts as an orchestrator that consumes data from the other three services to perform complex business logic. |
+| **Service**       | **Responsibilities**                                                                                                                       | **Rationale**                                                                                                                                                                                        |
+|-------------------|--------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Aircraft          | Manages aircraft models, specific aircraft instance registration, and tracks operational status.                                           | Decoupling Aircraft from Maintenance prevents a Single Point Of Failure (SPOF) for core asset management and allows independent scaling if aircraft query loads increase.                            |
+| Maintenance       | Manages maintenance templates, tracks ongoing maintenance activities, and stores historical maintenance records.                           | Maintenance is a distinct operational context. Separating it allows specialized data structures for heavy historical logging without impacting the performance of real-time aircraft status queries. |
+| Airports & Routes | Registers airports, defines flight routes, and maintains route compatibility rules.                                                        | This acts as the geographical and spatial foundation of the system. It is highly read-heavy and benefits from being isolated from transactional operational data.                                    |
+| Flight Ops.       | Coordinates flight scheduling, assigns specific aircraft to routes based on physical constraints, and tracks real-time flight utilization. | Acts as an orchestrator that consumes data from the other three services to perform complex business logic.                                                                                          |
 
 # Data Decomposition Strategy
 To achieve true distribution, the system uses a strict **Database-per-Service** pattern.
