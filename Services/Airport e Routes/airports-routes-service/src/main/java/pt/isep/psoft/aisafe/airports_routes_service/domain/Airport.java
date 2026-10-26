@@ -8,9 +8,12 @@ import pt.isep.psoft.aisafe.airports_routes_service.application.Coordinates;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.time.Instant;
 
 @Entity
 public class Airport {
+    @Column(nullable=false) private Instant lastModified = Instant.now();
+    @Column(nullable=false) private String originNodeId = "local";
 
 
     @Id
@@ -65,6 +68,7 @@ public class Airport {
         if (contactInformation != null && !contactInformation.isBlank()) {
             this.contactInformation = contactInformation;
         }
+        touch();
     }
     public String getOperationalHours() { return operationalHours; }
     public String getContactInformation() { return contactInformation; }
@@ -72,6 +76,7 @@ public class Airport {
 
     public void updateImage(String newImageUrl) {
         this.imageUrl = newImageUrl;
+        touch();
     }
 
     public String getImageUrl() {
@@ -133,6 +138,23 @@ public class Airport {
     public void updateStatus(AirportStatus newStatus) {
         Assert.notNull(newStatus, "Status cannot be null.");
         this.status = newStatus;
+        touch();
+    }
+    private void touch() { lastModified=Instant.now(); }
+    public Instant getLastModified(){return lastModified;} public String getOriginNodeId(){return originNodeId;}
+    public void applyReplicationMetadata(Instant timestamp, String node) {
+        if (timestamp != null) lastModified=timestamp; if (node != null) originNodeId=node;
+    }
+    public void applyReplicationData(String name, String city, String country, String timezone,
+                                     AirportType type, Coordinates coordinates, AirportStatus status,
+                                     List<Runway> runways, List<Facility> facilities, String imageUrl,
+                                     String operationalHours, String contactInformation) {
+        this.name = name; this.city = city; this.country = country; this.timezone = timezone;
+        this.type = type; this.coordinates = coordinates; this.status = status;
+        this.runways.clear(); if (runways != null) this.runways.addAll(runways);
+        this.facilities.clear(); if (facilities != null) this.facilities.addAll(facilities);
+        this.imageUrl = imageUrl; this.operationalHours = operationalHours;
+        this.contactInformation = contactInformation;
     }
 
     public AirportStatus getStatus() { return status; }

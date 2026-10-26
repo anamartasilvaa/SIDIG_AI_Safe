@@ -2,9 +2,12 @@ package pt.isep.psoft.aisafe.airports_routes_service.domain;
 
 import jakarta.persistence.*;
 import org.springframework.util.Assert;
+import java.time.Instant;
 
 @Entity
 public class Route {
+    @Column(nullable=false) private Instant lastModified = Instant.now();
+    @Column(nullable=false) private String originNodeId = "local";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -70,6 +73,7 @@ public class Route {
             throw new IllegalStateException("Esta rota já se encontra inativa!");
         }
         this.status = RouteStatus.INACTIVE;
+        lastModified=Instant.now();
     }
 
     // US112 - Atualizar os dados da rota
@@ -77,5 +81,13 @@ public class Route {
         if (estimatedFlightTime != null) this.estimatedFlightTime = estimatedFlightTime;
         if (minimumRange != null) this.minimumRange = minimumRange;
         if (minimumCapacity != null) this.minimumCapacity = minimumCapacity;
+        lastModified=Instant.now();
+    }
+    public Instant getLastModified(){return lastModified;} public String getOriginNodeId(){return originNodeId;}
+    public void applyReplicationMetadata(Instant timestamp, String node) { if(timestamp!=null)lastModified=timestamp;if(node!=null)originNodeId=node; }
+    public void applyReplicationData(Integer estimatedFlightTime, Double minimumRange,
+                                     Integer minimumCapacity, RouteStatus status) {
+        this.estimatedFlightTime = estimatedFlightTime; this.minimumRange = minimumRange;
+        this.minimumCapacity = minimumCapacity; this.status = status;
     }
 }
