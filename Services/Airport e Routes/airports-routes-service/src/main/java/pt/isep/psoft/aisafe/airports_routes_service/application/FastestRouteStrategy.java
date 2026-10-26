@@ -46,7 +46,7 @@ public class FastestRouteStrategy implements RouteSearchStrategy {
                 AlternativeRouteDTO dto = convertToAlternativeDTO(currentPath);
                 foundAlternatives.add(dto);
 
-                // Imprime a árvore de decisão na consola para a defesa
+                // Imprime a árvore de decisão na consola
                 String pathString = currentPath.stream()
                         .map(r -> r.getOrigin().getIataCode().code())
                         .collect(Collectors.joining(" -> ")) + " -> " + destinationIata;

@@ -4,6 +4,7 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
+import java.time.Instant;
 
 public record CreateRouteDTO(
         @NotBlank(message = "Route ID is mandatory")
@@ -27,5 +28,9 @@ public record CreateRouteDTO(
 
         @NotNull(message = "Minimum capacity is required")
         @Min(value = 1, message = "Capacity must be positive")
-        Integer minimumCapacity
-) {}
+        Integer minimumCapacity,
+        Instant lastModified,
+        String originNodeId
+) {
+    public CreateRouteDTO(String a,String b,String c,Integer d,Double e,Integer f){this(a,b,c,d,e,f,null,null);}
+}

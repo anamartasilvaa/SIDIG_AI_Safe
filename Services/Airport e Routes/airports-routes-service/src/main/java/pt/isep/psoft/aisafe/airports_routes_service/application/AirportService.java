@@ -4,21 +4,25 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import org.springframework.beans.factory.annotation.Value;
+import java.time.Instant;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.client.ResourceAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.util.UriComponentsBuilder;
 import pt.isep.psoft.aisafe.airports_routes_service.application.DTO.*;
+import pt.isep.psoft.aisafe.airports_routes_service.api.exception.NotFoundException;
 import pt.isep.psoft.aisafe.airports_routes_service.domain.*;
 import pt.isep.psoft.aisafe.airports_routes_service.repositories.AirportRepository;
+import pt.isep.psoft.aisafe.airports_routes_service.util.HalResponseUtils;
+import pt.isep.psoft.aisafe.airports_routes_service.util.PartialResultContext;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -27,8 +31,6 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 
 @Service
 public class AirportService {
@@ -37,25 +39,53 @@ public class AirportService {
     private final AirportRepository airportRepository;
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
+    private final ReplicationOutbox replicationOutbox;
+    private final AuditService auditService;
     private final List<String> peerUrls;
     private static final String HOPS_HEADER = "X-P2P-Hops";
     private final int maxForwardingHops;
+    @Value("${peer.node-id:${server.port:local}}")
+    private String nodeId = "local";
 
     public AirportService(AirportRepository airportRepository,
                           RestTemplate restTemplate,
-                          ObjectMapper objectMapper,
-                          @Value("${peer.urls:${peer.url:http://localhost:8092}}") List<String> peerUrls,
+                          ObjectMapper objectMapper, ReplicationOutbox replicationOutbox, AuditService auditService,
+                          @Value("${peer.urls:}") List<String> peerUrls,
                           @Value("${peer.forwarding.max-hops:1}") int maxForwardingHops) {
         this.airportRepository = airportRepository;
         this.restTemplate = restTemplate;
         this.objectMapper = objectMapper;
+        this.replicationOutbox = replicationOutbox;
+        this.auditService = auditService;
         this.peerUrls = peerUrls.stream().map(String::trim).filter(url -> !url.isBlank()).toList();
         this.maxForwardingHops = maxForwardingHops;
     }
 
     @Transactional
     public AirportViewDTO registerAirport(RegisterAirportDTO dto, boolean isReplication) {
-        audit("CREATE", dto.iataCode());
+        return registerAirport(dto, isReplication, dto.lastModified(), dto.originNodeId());
+    }
+    @Transactional
+    public AirportViewDTO registerAirport(RegisterAirportDTO dto, boolean isReplication, Instant receivedAt, String receivedNode) {
+        if (!isReplication && airportRepository.findByIataCodeString(dto.iataCode().toUpperCase()).isPresent()) {
+            throw new IllegalStateException("Airport already exists with IATA Code: " + dto.iataCode());
+        }
+        if (isReplication) {
+            Optional<Airport> existing = airportRepository.findByIataCodeString(dto.iataCode().toUpperCase());
+            if (existing.isPresent()) {
+                Airport current = existing.get();
+                if (isNewer(receivedAt, receivedNode, current.getLastModified(), current.getOriginNodeId())) {
+                    current.applyReplicationData(dto.name(), dto.city(), dto.country(), dto.timezone(),
+                            AirportType.valueOf(dto.type().toUpperCase()), new Coordinates(dto.latitude(), dto.longitude()),
+                            current.getStatus(), null, null, dto.imageUrl(), null, null);
+                    current.applyReplicationMetadata(receivedAt, receivedNode);
+                    airportRepository.save(current);
+                    return mapToDTO(current);
+                }
+                auditService.record("CREATE", dto.iataCode(), "SUCCESS", true);
+                return mapToDTO(current);
+            }
+        }
         Airport airport = new Airport(
                 new IATACode(dto.iataCode()),
                 dto.name(),
@@ -83,10 +113,13 @@ public class AirportService {
             );
         }
 
+        airport.applyReplicationMetadata(isReplication ? receivedAt : Instant.now(),
+                isReplication ? receivedNode : nodeId);
         Airport saved = airportRepository.save(airport);
         if (!isReplication) {
-            replicateCreate(dto);
+            replicateCreate(dto, saved);
         }
+        auditService.record("CREATE", dto.iataCode(), "SUCCESS", isReplication);
         return mapToDTO(saved);
     }
 
@@ -96,6 +129,7 @@ public class AirportService {
     }
 
     public AirportViewDTO getAirportByIataCode(String iataCode, int hops) {
+        hops = Math.max(0, hops);
         String cleanCode = iataCode.trim().toUpperCase();
         Optional<Airport> localAirport = airportRepository.findByIataCodeString(cleanCode);
         if (localAirport.isPresent()) {
@@ -106,6 +140,7 @@ public class AirportService {
             throw airportNotFound(cleanCode);
         }
 
+        boolean peerFailure = false;
         for (String peerUrl : peerUrls) {
             String url = UriComponentsBuilder.fromUriString(peerUrl)
                     .pathSegment("api", "airports", cleanCode)
@@ -119,20 +154,26 @@ public class AirportService {
                 }
                 JsonNode dtoNode = body.has("content") ? body.get("content") : body;
                 return objectMapper.treeToValue(dtoNode, AirportViewDTO.class);
-            } catch (HttpClientErrorException.NotFound | ResourceAccessException exception) {
-                log.debug("Peer airport lookup failed for {}", peerUrl, exception);
-            } catch (HttpClientErrorException exception) {
+            } catch (HttpClientErrorException.NotFound exception) {
+                log.debug("Peer airport lookup returned 404 for {}", peerUrl);
+            } catch (RestClientException exception) {
+                peerFailure = true;
                 log.warn("Peer airport lookup failed with status {} for {}",
-                        exception.getStatusCode(), peerUrl);
+                        exception instanceof HttpClientErrorException httpException
+                                ? httpException.getStatusCode() : "peer error", peerUrl);
             } catch (JsonProcessingException exception) {
-                throw new IllegalStateException("Invalid airport response from peer", exception);
+                peerFailure = true;
+                log.warn("Invalid airport response from peer {}", peerUrl, exception);
             }
+        }
+        if (peerFailure) {
+            throw new ResourceAccessException("One or more peers were unavailable");
         }
         throw airportNotFound(cleanCode);
     }
 
-    private IllegalArgumentException airportNotFound(String iataCode) {
-        return new IllegalArgumentException("Airport not found with IATA Code: " + iataCode);
+    private NotFoundException airportNotFound(String iataCode) {
+        return new NotFoundException("Airport not found with IATA Code: " + iataCode);
     }
 
     @Transactional(readOnly = true)
@@ -141,6 +182,8 @@ public class AirportService {
     }
 
     public List<AirportViewDTO> searchAirports(String name, String city, String country, int hops) {
+        hops = Math.max(0, hops);
+        PartialResultContext.start();
         List<Airport> airports;
 
         if (name != null && !name.isBlank()) {
@@ -167,26 +210,50 @@ public class AirportService {
             }
         }
         Map<String, AirportViewDTO> unique = new LinkedHashMap<>();
-        results.forEach(airport -> unique.putIfAbsent(airport.iataCode(), airport));
+        results.forEach(airport -> unique.merge(airport.iataCode(), airport,
+                this::newerAirportVersion));
         return new ArrayList<>(unique.values());
+    }
+
+    // AI-assisted (GitHub Copilot): keeps the newest representation during P2P aggregation.
+    private AirportViewDTO newerAirportVersion(AirportViewDTO current, AirportViewDTO candidate) {
+        if (current.lastModified() == null) return candidate;
+        if (candidate.lastModified() == null) return current;
+        int timestampComparison = candidate.lastModified().compareTo(current.lastModified());
+        if (timestampComparison != 0) return timestampComparison > 0 ? candidate : current;
+        String currentNode = current.originNodeId() == null ? "" : current.originNodeId();
+        String candidateNode = candidate.originNodeId() == null ? "" : candidate.originNodeId();
+        return candidateNode.compareTo(currentNode) > 0 ? candidate : current;
     }
 
     // US109 - Update Status
     @Transactional
     public AirportViewDTO updateAirportStatus(String iataCode, String status, boolean isReplication) {
-        audit("UPDATE", iataCode);
+        return updateAirportStatus(iataCode, status, isReplication, null, null);
+    }
+    @Transactional
+    public AirportViewDTO updateAirportStatus(String iataCode, String status, boolean isReplication,
+                                              Instant receivedAt, String receivedNode) {
         Airport airport = airportRepository.findByIataCodeString(iataCode.toUpperCase())
-                .orElseThrow(() -> new IllegalArgumentException("Airport not found"));
+                .orElseThrow(() -> {
+                    auditService.record("UPDATE", iataCode, "ERROR", isReplication);
+                    return new NotFoundException("Airport not found");
+                });
 
         try {
             AirportStatus newStatus = AirportStatus.valueOf(status.trim().toUpperCase());
+            if (isReplication && !isNewer(receivedAt, receivedNode, airport.getLastModified(), airport.getOriginNodeId()))
+                return mapToDTO(airport);
             airport.updateStatus(newStatus);
+            airport.applyReplicationMetadata(isReplication ? receivedAt : Instant.now(), isReplication ? receivedNode : nodeId);
             Airport saved = airportRepository.save(airport);
             if (!isReplication) {
-                replicateStatus(iataCode, status);
+                replicateStatus(iataCode, status, saved.getLastModified(), saved.getOriginNodeId());
             }
+            auditService.record("UPDATE", iataCode, "SUCCESS", isReplication);
             return mapToDTO(saved);
         } catch (IllegalArgumentException e) {
+            auditService.record("UPDATE", iataCode, "ERROR", isReplication);
             throw new IllegalArgumentException("Invalid status. Use: OPERATIONAL, CLOSED, or UNDER_MAINTENANCE");
         }
     }
@@ -194,10 +261,11 @@ public class AirportService {
     @Transactional
     public AirportViewDTO updateAirportImage(String iataCode, org.springframework.web.multipart.MultipartFile file,
                                              boolean isReplication) {
-        audit("UPDATE", iataCode);
-
         Airport airport = airportRepository.findByIataCodeString(iataCode.toUpperCase())
-                .orElseThrow(() -> new IllegalArgumentException("Airport not found: " + iataCode));
+                .orElseThrow(() -> {
+                    auditService.record("UPDATE", iataCode, "ERROR", isReplication);
+                    return new NotFoundException("Airport not found: " + iataCode);
+                });
 
         try {
             String projectDirectory = System.getProperty("user.dir");
@@ -214,12 +282,14 @@ public class AirportService {
 
             String fileUrl = "/uploads/" + fileName;
             airport.updateImage(fileUrl);
+            airport.applyReplicationMetadata(isReplication ? null : Instant.now(), isReplication ? null : nodeId);
 
             airport = airportRepository.save(airport);
-
+            auditService.record("UPDATE", iataCode, "SUCCESS", isReplication);
             return mapToDTO(airport);
 
         } catch (java.io.IOException e) {
+            auditService.record("UPDATE", iataCode, "ERROR", isReplication);
             throw new RuntimeException("Failed to save airport image: " + e.getMessage());
         }
     }
@@ -241,59 +311,55 @@ public class AirportService {
                         .collect(Collectors.toList()),
                 airport.getImageUrl(),
                 airport.getOperationalHours(),
-                airport.getContactInformation()
+                airport.getContactInformation(), airport.getLastModified(), airport.getOriginNodeId()
         );
     }
 
     @Transactional
     public AirportViewDTO updateAirportDetails(String iataCode, UpdateAirportDetailsDTO dto, boolean isReplication) {
-        audit("UPDATE", iataCode);
+        return updateAirportDetails(iataCode, dto, isReplication, null, null);
+    }
+    @Transactional
+    public AirportViewDTO updateAirportDetails(String iataCode, UpdateAirportDetailsDTO dto, boolean isReplication,
+                                                Instant receivedAt, String receivedNode) {
         Airport airport = airportRepository.findByIataCodeString(iataCode.toUpperCase())
-                .orElseThrow(() -> new IllegalArgumentException("Airport not found: " + iataCode));
+                .orElseThrow(() -> {
+                    auditService.record("UPDATE", iataCode, "ERROR", isReplication);
+                    return new NotFoundException("Airport not found: " + iataCode);
+                });
 
+        if (isReplication && !isNewer(receivedAt, receivedNode, airport.getLastModified(), airport.getOriginNodeId()))
+            return mapToDTO(airport);
         airport.updateDetails(dto.operationalHours(), dto.contactInformation());
+        airport.applyReplicationMetadata(isReplication ? receivedAt : Instant.now(), isReplication ? receivedNode : nodeId);
         airport = airportRepository.save(airport);
         if (!isReplication) {
-            replicateUpdateDetails(iataCode, dto);
+            replicateUpdateDetails(iataCode, dto, airport.getLastModified(), airport.getOriginNodeId());
         }
-
+        auditService.record("UPDATE", iataCode, "SUCCESS", isReplication);
         return mapToDTO(airport);
     }
 
-    private void replicateCreate(RegisterAirportDTO dto) {
-        for (String peerUrl : peerUrls) {
-            String url = UriComponentsBuilder.fromUriString(peerUrl)
-                    .pathSegment("api", "airports").toUriString();
-            try {
-                restTemplate.postForEntity(url, replicationEntity(dto), Void.class);
-            } catch (ResourceAccessException exception) {
-                log.warn("Falha ao replicar para o peer {}", peerUrl, exception);
-            }
-        }
+    private void replicateCreate(RegisterAirportDTO dto, Airport airport) {
+        // AI-assisted (GitHub Copilot): propagate metadata when Spring has injected the configured node id.
+        RegisterAirportDTO payload = "local".equals(nodeId) ? dto : new RegisterAirportDTO(dto.iataCode(), dto.name(), dto.city(), dto.country(),
+                dto.timezone(), dto.type(), dto.latitude(), dto.longitude(), dto.runways(), dto.facilities(),
+                dto.imageUrl(), airport.getLastModified(), airport.getOriginNodeId());
+        replicationOutbox.enqueue(peerUrls, "POST", "/api/airports", payload);
     }
 
-    private void replicateUpdateDetails(String iataCode, UpdateAirportDetailsDTO dto) {
-        for (String peerUrl : peerUrls) {
-            String url = UriComponentsBuilder.fromUriString(peerUrl)
-                    .pathSegment("api", "airports", iataCode.toUpperCase(), "details").toUriString();
-            try {
-                restTemplate.patchForObject(url, replicationEntity(dto), Void.class);
-            } catch (ResourceAccessException exception) {
-                log.warn("Falha ao replicar para o peer {}", peerUrl, exception);
-            }
-        }
+    private void replicateUpdateDetails(String iataCode, UpdateAirportDetailsDTO dto, Instant lastModified, String originNodeId) {
+        replicationOutbox.enqueue(peerUrls, "PATCH", "/api/airports/"+iataCode.toUpperCase()+"/details", dto, lastModified, originNodeId);
     }
 
-    private void replicateStatus(String iataCode, String status) {
-        for (String peerUrl : peerUrls) {
-            String url = UriComponentsBuilder.fromUriString(peerUrl)
-                    .pathSegment("api", "airports", iataCode.toUpperCase(), "status").toUriString();
-            try {
-                restTemplate.patchForObject(url, replicationEntity(status), Void.class);
-            } catch (ResourceAccessException exception) {
-                log.warn("Falha ao replicar para o peer {}", peerUrl, exception);
-            }
-        }
+    private void replicateStatus(String iataCode, String status, Instant lastModified, String originNodeId) {
+        replicationOutbox.enqueue(peerUrls, "PATCH", "/api/airports/"+iataCode.toUpperCase()+"/status", status, lastModified, originNodeId);
+    }
+    private boolean isNewer(Instant incoming, String incomingNode, Instant current, String currentNode) {
+        if (incoming == null) return false;
+        if (current == null) return true;
+        int c = incoming.compareTo(current);
+        return c > 0 || (c == 0 && String.valueOf(incomingNode).compareTo(String.valueOf(currentNode)) > 0);
     }
 
     private <T> HttpEntity<T> p2pEntity(int hops) {
@@ -316,6 +382,8 @@ public class AirportService {
     }
 
     public Object getAirportsGrouped(String groupBy, int hops) {
+        hops = Math.max(0, hops);
+        PartialResultContext.start();
         List<AirportViewDTO> airports = searchAirports(null, null, null, hops);
 
         if ("both".equalsIgnoreCase(groupBy)) {
@@ -339,21 +407,22 @@ public class AirportService {
                     builder.toUriString(), HttpMethod.GET, p2pEntity(hops + 1), JsonNode.class);
             JsonNode body = response.getBody();
             if (body == null || body.isNull()) return List.of();
-            JsonNode embedded = body.path("_embedded");
-            JsonNode airportsNode = embedded.path("airportViewDTO");
-            if (!airportsNode.isArray()) airportsNode = embedded.path("airports");
-            if (!airportsNode.isArray() && body.isArray()) airportsNode = body;
+            JsonNode airportsNode = HalResponseUtils.firstEmbeddedArray(body);
             List<AirportViewDTO> airports = new ArrayList<>();
-            if (airportsNode.isArray()) {
+            if (airportsNode != null) {
                 for (JsonNode node : airportsNode) {
                     airports.add(objectMapper.treeToValue(node, AirportViewDTO.class));
                 }
             }
             return airports;
+        } catch (HttpClientErrorException.NotFound exception) {
+            return List.of();
         } catch (HttpClientErrorException | ResourceAccessException exception) {
+            PartialResultContext.markPartial();
             log.warn("Peer airport search failed for {}", builder, exception);
             return List.of();
         } catch (JsonProcessingException | RestClientException exception) {
+            PartialResultContext.markPartial();
             log.warn("Invalid or unavailable airport response from peer {}", builder, exception);
             return List.of();
         }
@@ -369,8 +438,8 @@ public class AirportService {
     // US225
     @Transactional
     public List<AirportViewDTO> importAirportsFromCsv(org.springframework.web.multipart.MultipartFile file) {
-        audit("CREATE", "CSV");
         if (file.isEmpty()) {
+            auditService.record("CREATE", "CSV", "ERROR");
             throw new IllegalArgumentException("The uploaded CSV file is empty.");
         }
 
@@ -399,22 +468,15 @@ public class AirportService {
                 importedAirports.add(savedAirport);
             }
 
+            auditService.record("CREATE", "CSV", "SUCCESS");
             return importedAirports;
 
         } catch (java.io.IOException e) {
+            auditService.record("CREATE", "CSV", "ERROR");
             throw new RuntimeException("Error parsing the CSV file: " + e.getMessage());
         } catch (IllegalArgumentException e) {
+            auditService.record("CREATE", "CSV", "ERROR");
             throw new IllegalArgumentException("Error in CSV formatting/data: " + e.getMessage());
         }
-    }
-
-    private void audit(String action, Object id) {
-            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-            Object principal = authentication == null ? null : authentication.getPrincipal();
-            String username = principal instanceof org.springframework.security.core.userdetails.UserDetails
-                    ? ((org.springframework.security.core.userdetails.UserDetails) principal).getUsername()
-                    : principal instanceof String ? (String) principal : null;
-            if (username == null || username.isBlank()) username = "SYSTEM";
-            log.info("AUDIT - User: {} - Action: {} - Target ID: {}", username, action, id);
     }
 }
