@@ -9,10 +9,11 @@ public record RouteViewDTO(
         String status,
         Integer minimumCapacity,
         Instant lastModified,
-        String originNodeId
+        String originNodeId,
+        Double minimumRange
 ) {
     public RouteViewDTO(String routeId, String originIata, String destinationIata,
                         String status, Integer minimumCapacity) {
-        this(routeId, originIata, destinationIata, status, minimumCapacity, null, null);
+        this(routeId, originIata, destinationIata, status, minimumCapacity, null, null, null);
     }
 }

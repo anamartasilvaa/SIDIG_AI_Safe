@@ -107,7 +107,7 @@ public class RouteController {
             @RequestHeader(value = "X-P2P-Hops", defaultValue = "0") int hops) {
         RouteViewDTO route = routeService.getRoute(id, hops);
         EntityModel<RouteViewDTO> resource = EntityModel.of(route);
-        resource.add(WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(RouteController.class).getRouteById(id)).withSelfRel());
+        resource.add(WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(RouteController.class).getRouteById(id, 0)).withSelfRel());
         resource.add(WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(RouteController.class).updateRoute(id, null, false)).withRel("update-route"));
         resource.add(WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(RouteController.class).getRouteHistory(id)).withRel("route-history"));
         return ResponseEntity.ok(resource);
@@ -123,7 +123,7 @@ public class RouteController {
         List<EntityModel<RouteHistoryDTO>> history = routeService.getRouteHistory(id)
                 .stream()
                 .map(dto -> EntityModel.of(dto,
-                        WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(RouteController.class).getRouteById(id)).withRel("route-details")))
+                        WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(RouteController.class).getRouteById(id, 0)).withRel("route-details")))
                 .collect(Collectors.toList());
 
         CollectionModel<EntityModel<RouteHistoryDTO>> collectionModel = CollectionModel.of(history,

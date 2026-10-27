@@ -468,7 +468,8 @@ public class RouteService {
                 route.getStatus().name(),
                 route.getMinimumCapacity(),
                 route.getLastModified(),
-                route.getOriginNodeId()
+                route.getOriginNodeId(),
+                route.getMinimumRange()
         );
     }
 
