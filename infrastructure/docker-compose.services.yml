@@ -1,5 +1,8 @@
+name: aisafe
+
 services:
   aircraft-1:
+    image: aisafe-aircraft:latest
     build:
       context: ../Services/Aircraft
     environment:
@@ -20,6 +23,7 @@ services:
       start_period: 30s
 
   aircraft-2:
+    image: aisafe-aircraft:latest
     build:
       context: ../Services/Aircraft
     environment:
@@ -40,6 +44,7 @@ services:
       start_period: 30s
 
   maintenance-1:
+    image: aisafe-maintenance:latest
     build:
       context: ../Services/Maintenance
     environment:
@@ -64,6 +69,7 @@ services:
       start_period: 30s
 
   maintenance-2:
+    image: aisafe-maintenance:latest
     build:
       context: ../Services/Maintenance
     environment:
@@ -88,6 +94,7 @@ services:
       start_period: 30s
 
   flight-operations-1:
+    image: aisafe-flight-operations:latest
     build:
       context: ../Services/Flighting Operations
     environment:
@@ -118,6 +125,7 @@ services:
       start_period: 30s
 
   flight-operations-2:
+    image: aisafe-flight-operations:latest
     build:
       context: ../Services/Flighting Operations
     environment:
@@ -148,6 +156,7 @@ services:
       start_period: 30s
 
   airports-routes-1:
+    image: aisafe-airports-routes:latest
     build:
       context: ../Services/Airport e Routes/airports-routes-service
     environment:
@@ -166,6 +175,7 @@ services:
       start_period: 30s
 
   airports-routes-2:
+    image: aisafe-airports-routes:latest
     build:
       context: ../Services/Airport e Routes/airports-routes-service
     environment:
