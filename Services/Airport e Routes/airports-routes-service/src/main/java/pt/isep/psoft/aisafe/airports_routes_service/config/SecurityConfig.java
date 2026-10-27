@@ -43,7 +43,7 @@ public class SecurityConfig {
                         }))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/actuator/health", "/h2-console/**", "/v3/api-docs/**",
-                                "/swagger-ui/**", "/swagger-ui.html").permitAll()
+                                "/swagger-ui/**", "/swagger-ui.html", "/error").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/admin/replication-tasks")
                         .hasAuthority("ROLE_ADMIN")
                         .requestMatchers(HttpMethod.GET, "/api/airports/**")
