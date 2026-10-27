@@ -55,4 +55,4 @@ Push-Location $NginxHome
 Start-Process -FilePath ".\nginx.exe" -WorkingDirectory $NginxHome
 Pop-Location
 Write-Host "[4/4] Keycloak a arrancar em http://localhost:8180 e gateway em https://localhost:8443"
-Write-Host "Agora arranca os servicos no IntelliJ (FO-1..3, Airports, stub do Aircraft)."
+Write-Host "Agora arranca os servicos no IntelliJ (FO-1..3, Airports)."

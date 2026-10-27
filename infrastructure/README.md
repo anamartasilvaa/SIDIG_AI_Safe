@@ -59,6 +59,29 @@ Cada serviço valida o JWT com a chave pública do Keycloak (JWKS) e aplica RBAC
 | `gateway/nginx.conf`         | Gateway: HTTPS, routing, round-robin, failover, rate limiting (10 req/s por IP, burst 20), bloqueio de endpoints internos |
 | `start-infra.ps1`            | Copia as configurações, gera os certificados PEM e arranca Keycloak + NGINX                                               |
 
+## Modo B – Docker seguro (opcional)
+Stack completa em containers: Keycloak, gateway NGINX e 4 serviços × 2 réplicas, com HTTPS em todos os saltos.
+
+```powershell
+cd infrastructure\docker
+.\gen-certs.ps1                                   # uma vez: cria .env (segredos aleatórios) e certificados
+cd ..
+docker compose -f docker-compose.secure.yml up --build
+```
+Entrada única: `https://localhost:8443` (login em `/realms/aisafe/protocol/openid-connect/token`).
+Parar: `docker compose -f docker-compose.secure.yml down`.
+
+Medidas de segurança deste modo:
+- HTTPS cliente→gateway, gateway→serviço (certificado verificado) e serviço→serviço (certificado com SAN dos containers).
+- Tokens do Keycloak (RS256) validados em cada serviço; tokens de teste (HS256) desligados em FO, Aircraft e Maintenance.
+  Na Airports ficam ligados porque as réplicas se autenticam entre si com um token HS256 assinado com o `JWT_SECRET`
+  (aleatório, no `.env`, fora do Git).
+- Só a gateway publica porta; os serviços e o Keycloak estão numa rede interna sem acesso à internet.
+- Segredos (`API_KEY`, `JWT_SECRET`, palavra-passe do keystore e do admin do Keycloak) no `.env`, gerados aleatoriamente.
+- Containers com `no-new-privileges` e sem capacidades Linux extra.
+
+Limitações: Keycloak em `start-dev` (BD embebida), uma só gateway, certificado autoassinado, sem mTLS entre serviços,
+BD H2 em memória. A porta 8443 e as réplicas do Modo A (IntelliJ) não podem estar ativas ao mesmo tempo.
 ## Instalação (uma vez)
 1. **Keycloak**: descarregar o zip em keycloak.org/downloads e descomprimir em `C:\keycloak` (precisa de Java 21+).
 2. **NGINX**: descarregar *nginx/Windows* (Stable) em nginx.org/en/download.html e descomprimir em `C:\nginx`.

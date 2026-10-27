@@ -31,3 +31,7 @@ build/
 
 ### VS Code ###
 .vscode/
+
+# Docker seguro: segredos e certificados gerados localmente
+infrastructure/.env
+infrastructure/docker/certs/

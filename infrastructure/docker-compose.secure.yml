@@ -1,0 +1,215 @@
+# =====================================================================
+#  AISafe - stack Docker SEGURA (Keycloak + gateway NGINX + 4 servicos x 2 replicas)
+#
+#  Uso (na pasta infrastructure):
+#     .\docker\gen-certs.ps1                                  # uma vez: certificados e segredos
+#     docker compose -f docker-compose.secure.yml up --build
+#  Entrada unica: https://localhost:8443  (tudo o resto fica na rede interna)
+#
+#  Diferencas para docker-compose.services.yml (so servicos, sem seguranca):
+#   - HTTPS em todos os saltos (cliente->gateway, gateway->servico, servico->servico)
+#   - Keycloak real: tokens RS256 validados com o JWKS (sem tokens de teste, ver nota da Airports)
+#   - So a gateway publica uma porta; os servicos nao sao acessiveis do exterior
+#   - Rede 'backend' interna (sem acesso a internet), segredos no .env (fora do Git)
+#   - Containers sem capacidades Linux extra e sem escalada de privilegios
+# =====================================================================
+name: aisafe
+
+# ---------- Blocos reutilizados ----------
+x-service: &service
+  restart: unless-stopped
+  networks: [backend]
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+  volumes:
+    # So o que o servico precisa (a chave PEM da gateway NAO e montada aqui)
+    - ./docker/certs/keystore.p12:/certs/keystore.p12:ro
+    - ./docker/certs/truststore.p12:/certs/truststore.p12:ro
+  healthcheck:
+    test: ["CMD", "curl", "--fail", "--silent", "--insecure", "https://localhost:8443/actuator/health"]
+    interval: 10s
+    timeout: 5s
+    retries: 12
+    start_period: 40s
+
+x-service-env: &service-env
+  PORT: "8443"
+  SSL_ENABLED: "true"
+  SSL_KEYSTORE: file:/certs/keystore.p12
+  SSL_KEYSTORE_PASSWORD: ${KEYSTORE_PASSWORD:?defina KEYSTORE_PASSWORD no .env (corra docker/gen-certs.ps1)}
+  SSL_KEY_ALIAS: aisafe-key
+  # Confianca nos certificados dos outros servicos (certificado do grupo, com SAN dos containers)
+  JAVA_TOOL_OPTIONS: >-
+    -Djavax.net.ssl.trustStore=/certs/truststore.p12
+    -Djavax.net.ssl.trustStorePassword=${KEYSTORE_PASSWORD}
+    -Djavax.net.ssl.trustStoreType=PKCS12
+  JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET no .env (corra docker/gen-certs.ps1)}
+  # Chaves publicas lidas do Keycloak (rede interna); o 'iss' dos tokens e o que o cliente ve (localhost:8180)
+  JWT_JWK_SET_URI: http://keycloak:8180/realms/aisafe/protocol/openid-connect/certs
+  JWT_ISSUER: http://localhost:8180/realms/aisafe
+
+services:
+
+  # ------------------------- Identidade -------------------------
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0.7
+    command: ["start-dev", "--http-port=8180", "--import-realm"]
+    restart: unless-stopped
+    networks: [backend]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_ADMIN_USER:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD:?defina KC_ADMIN_PASSWORD no .env}
+    volumes:
+      - ./keycloak/aisafe-realm.json:/opt/keycloak/data/import/aisafe-realm.json:ro
+    # Sem 'ports': o login faz-se pela gateway (https://localhost:8443/realms/...)
+
+  # ------------------------- Aircraft -------------------------
+  aircraft-1:
+    <<: *service
+    build:
+      context: ../Services/Aircraft
+    environment:
+      <<: *service-env
+      INSTANCE_ID: aircraft-1
+      PEERS: https://aircraft-2:8443
+      API_KEY: ${API_KEY:?defina API_KEY no .env}
+      ACCEPT_DEV_TOKENS: "false"
+      FLIGHTS_URLS: https://flight-operations-1:8443,https://flight-operations-2:8443
+      FLIGHTS_GROUNDING_PATH: "/internal/scheduled-flights/aircraft/{registration}/grounding"
+      ROUTES_URLS: https://airports-routes-1:8443,https://airports-routes-2:8443
+
+  aircraft-2:
+    <<: *service
+    build:
+      context: ../Services/Aircraft
+    environment:
+      <<: *service-env
+      INSTANCE_ID: aircraft-2
+      PEERS: https://aircraft-1:8443
+      API_KEY: ${API_KEY:?defina API_KEY no .env}
+      ACCEPT_DEV_TOKENS: "false"
+      FLIGHTS_URLS: https://flight-operations-1:8443,https://flight-operations-2:8443
+      FLIGHTS_GROUNDING_PATH: "/internal/scheduled-flights/aircraft/{registration}/grounding"
+      ROUTES_URLS: https://airports-routes-1:8443,https://airports-routes-2:8443
+
+  # ------------------------- Maintenance -------------------------
+  maintenance-1:
+    <<: *service
+    build:
+      context: ../Services/Maintenance
+    environment:
+      <<: *service-env
+      INSTANCE_ID: maintenance-1
+      PEERS: https://maintenance-2:8443
+      API_KEY: ${API_KEY:?defina API_KEY no .env}
+      ACCEPT_DEV_TOKENS: "false"
+      AIRCRAFT_URLS: https://aircraft-1:8443,https://aircraft-2:8443
+    depends_on:
+      aircraft-1: {condition: service_healthy}
+      aircraft-2: {condition: service_healthy}
+
+  maintenance-2:
+    <<: *service
+    build:
+      context: ../Services/Maintenance
+    environment:
+      <<: *service-env
+      INSTANCE_ID: maintenance-2
+      PEERS: https://maintenance-1:8443
+      API_KEY: ${API_KEY:?defina API_KEY no .env}
+      ACCEPT_DEV_TOKENS: "false"
+      AIRCRAFT_URLS: https://aircraft-1:8443,https://aircraft-2:8443
+    depends_on:
+      aircraft-1: {condition: service_healthy}
+      aircraft-2: {condition: service_healthy}
+
+  # ------------------------- Airports & Routes -------------------------
+  # NOTA: aqui ACCEPT_DEV_TOKENS tem de ficar "true". As replicas da Airports autenticam-se entre si com
+  # um token HS256 assinado com o JWT_SECRET (PeerTokenService); se os tokens HS256 forem desligados, o
+  # forwarding e a replicacao entre replicas deixam de funcionar. Como o JWT_SECRET vem do .env (aleatorio,
+  # fora do Git), so quem o conhece consegue forjar esses tokens.
+  airports-routes-1:
+    <<: *service
+    build:
+      context: ../Services/Airport e Routes/airports-routes-service
+    environment:
+      <<: *service-env
+      DB_NAME: airports_routes_db_1
+      PEERS: https://airports-routes-2:8443
+      ACCEPT_DEV_TOKENS: "true"
+
+  airports-routes-2:
+    <<: *service
+    build:
+      context: ../Services/Airport e Routes/airports-routes-service
+    environment:
+      <<: *service-env
+      DB_NAME: airports_routes_db_2
+      PEERS: https://airports-routes-1:8443
+      ACCEPT_DEV_TOKENS: "true"
+
+  # ------------------------- Flight Operations -------------------------
+  flight-operations-1:
+    <<: *service
+    build:
+      context: ../Services/Flighting Operations
+    environment:
+      <<: *service-env
+      INSTANCE_ID: flight-operations-1
+      PEERS: https://flight-operations-2:8443
+      API_KEY: ${API_KEY:?defina API_KEY no .env}
+      ACCEPT_DEV_TOKENS: "false"
+      AIRCRAFT_URLS: https://aircraft-1:8443,https://aircraft-2:8443
+      ROUTES_URLS: https://airports-routes-1:8443,https://airports-routes-2:8443
+    depends_on:
+      aircraft-1: {condition: service_healthy}
+      aircraft-2: {condition: service_healthy}
+      airports-routes-1: {condition: service_healthy}
+      airports-routes-2: {condition: service_healthy}
+
+  flight-operations-2:
+    <<: *service
+    build:
+      context: ../Services/Flighting Operations
+    environment:
+      <<: *service-env
+      INSTANCE_ID: flight-operations-2
+      PEERS: https://flight-operations-1:8443
+      API_KEY: ${API_KEY:?defina API_KEY no .env}
+      ACCEPT_DEV_TOKENS: "false"
+      AIRCRAFT_URLS: https://aircraft-1:8443,https://aircraft-2:8443
+      ROUTES_URLS: https://airports-routes-1:8443,https://airports-routes-2:8443
+    depends_on:
+      aircraft-1: {condition: service_healthy}
+      aircraft-2: {condition: service_healthy}
+      airports-routes-1: {condition: service_healthy}
+      airports-routes-2: {condition: service_healthy}
+
+  # ------------------------- API Gateway (unico ponto de entrada) -------------------------
+  gateway:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    networks: [edge, backend]
+    security_opt: ["no-new-privileges:true"]
+    ports:
+      - "8443:8443"
+    volumes:
+      - ./docker/nginx.docker.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/certs/aisafe.pem:/etc/nginx/certs/aisafe.pem:ro
+      - ./docker/certs/aisafe.key:/etc/nginx/certs/aisafe.key:ro
+    depends_on:
+      keycloak: {condition: service_started}
+      aircraft-1: {condition: service_healthy}
+      aircraft-2: {condition: service_healthy}
+      maintenance-1: {condition: service_healthy}
+      maintenance-2: {condition: service_healthy}
+      airports-routes-1: {condition: service_healthy}
+      airports-routes-2: {condition: service_healthy}
+      flight-operations-1: {condition: service_healthy}
+      flight-operations-2: {condition: service_healthy}
+
+networks:
+  edge: {}            # unica com porta publicada (so a gateway)
+  backend:
+    internal: true    # servicos e Keycloak: sem acesso de/para a internet
