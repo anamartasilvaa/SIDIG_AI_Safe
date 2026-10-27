@@ -1,0 +1,184 @@
+services:
+  aircraft-1:
+    build:
+      context: ../Services/Aircraft
+    environment:
+      PORT: 80
+      INSTANCE_ID: aircraft-1
+      PEERS: http://aircraft-2
+      FLIGHTS_URLS: http://flight-operations-1,http://flight-operations-2
+      ROUTES_URLS: http://airports-routes-1,http://airports-routes-2
+      SSL_ENABLED: "false"
+      API_KEY: sidis-dev-key
+    ports:
+      - "8071:80"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  aircraft-2:
+    build:
+      context: ../Services/Aircraft
+    environment:
+      PORT: 80
+      INSTANCE_ID: aircraft-2
+      PEERS: http://aircraft-1
+      FLIGHTS_URLS: http://flight-operations-1,http://flight-operations-2
+      ROUTES_URLS: http://airports-routes-1,http://airports-routes-2
+      SSL_ENABLED: "false"
+      API_KEY: sidis-dev-key
+    ports:
+      - "8072:80"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  maintenance-1:
+    build:
+      context: ../Services/Maintenance
+    environment:
+      PORT: 80
+      INSTANCE_ID: maintenance-1
+      PEERS: http://maintenance-2
+      AIRCRAFT_URLS: http://aircraft-1,http://aircraft-2
+      SSL_ENABLED: "false"
+      API_KEY: sidis-dev-key
+    ports:
+      - "8075:80"
+    depends_on:
+      aircraft-1:
+        condition: service_healthy
+      aircraft-2:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  maintenance-2:
+    build:
+      context: ../Services/Maintenance
+    environment:
+      PORT: 80
+      INSTANCE_ID: maintenance-2
+      PEERS: http://maintenance-1
+      AIRCRAFT_URLS: http://aircraft-1,http://aircraft-2
+      SSL_ENABLED: "false"
+      API_KEY: sidis-dev-key
+    ports:
+      - "8076:80"
+    depends_on:
+      aircraft-1:
+        condition: service_healthy
+      aircraft-2:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  flight-operations-1:
+    build:
+      context: ../Services/Flighting Operations
+    environment:
+      PORT: 80
+      INSTANCE_ID: flight-operations-1
+      PEERS: http://flight-operations-2
+      AIRCRAFT_URLS: http://aircraft-1,http://aircraft-2
+      ROUTES_URLS: http://airports-routes-1,http://airports-routes-2
+      SSL_ENABLED: "false"
+      API_KEY: sidis-dev-key
+      ACCEPT_DEV_TOKENS: "true"
+    ports:
+      - "8081:80"
+    depends_on:
+      aircraft-1:
+        condition: service_healthy
+      aircraft-2:
+        condition: service_healthy
+      airports-routes-1:
+        condition: service_healthy
+      airports-routes-2:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  flight-operations-2:
+    build:
+      context: ../Services/Flighting Operations
+    environment:
+      PORT: 80
+      INSTANCE_ID: flight-operations-2
+      PEERS: http://flight-operations-1
+      AIRCRAFT_URLS: http://aircraft-1,http://aircraft-2
+      ROUTES_URLS: http://airports-routes-1,http://airports-routes-2
+      SSL_ENABLED: "false"
+      API_KEY: sidis-dev-key
+      ACCEPT_DEV_TOKENS: "true"
+    ports:
+      - "8082:80"
+    depends_on:
+      aircraft-1:
+        condition: service_healthy
+      aircraft-2:
+        condition: service_healthy
+      airports-routes-1:
+        condition: service_healthy
+      airports-routes-2:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  airports-routes-1:
+    build:
+      context: ../Services/Airport e Routes/airports-routes-service
+    environment:
+      PORT: 80
+      DB_NAME: airports_routes_db_1
+      PEERS: http://airports-routes-2
+      SSL_ENABLED: "false"
+      ACCEPT_DEV_TOKENS: "true"
+    ports:
+      - "8091:80"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  airports-routes-2:
+    build:
+      context: ../Services/Airport e Routes/airports-routes-service
+    environment:
+      PORT: 80
+      DB_NAME: airports_routes_db_2
+      PEERS: http://airports-routes-1
+      SSL_ENABLED: "false"
+      ACCEPT_DEV_TOKENS: "true"
+    ports:
+      - "8092:80"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s

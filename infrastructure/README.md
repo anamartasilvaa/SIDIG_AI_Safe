@@ -1,5 +1,46 @@
 # AISafe – Infraestrutura (Keycloak + API Gateway)
 
+## Docker Compose Services
+
+The service-only Compose stack is in `docker-compose.services.yml`. It starts
+two containers for each service and intentionally does not include the API
+gateway or Keycloak for testing purposes.
+
+```bash
+docker compose -f infrastructure/docker-compose.services.yml up --build
+```
+
+Every container listens on port `80` internally. Services call one another by
+hostname without ports, for example `http://aircraft-1` and
+`http://aircraft-2`. The host mappings are only for direct local testing:
+
+| Service           |        Replica 1 |        Replica 2 |
+|-------------------|-----------------:|-----------------:|
+| Aircraft          | `localhost:8071` | `localhost:8072` |
+| Maintenance       | `localhost:8075` | `localhost:8076` |
+| Flight Operations | `localhost:8081` | `localhost:8082` |
+| Airports & Routes | `localhost:8091` | `localhost:8092` |
+
+Check all replicas with:
+
+```bash
+docker compose -f infrastructure/docker-compose.services.yml ps
+curl http://localhost:8071/actuator/health
+curl http://localhost:8072/actuator/health
+curl http://localhost:8075/actuator/health
+curl http://localhost:8076/actuator/health
+curl http://localhost:8081/actuator/health
+curl http://localhost:8082/actuator/health
+curl http://localhost:8091/actuator/health
+curl http://localhost:8092/actuator/health
+```
+
+Stop the stack with:
+
+```bash
+docker compose -f infrastructure/docker-compose.services.yml down
+```
+
 ```
 Cliente (Postman/curl)
    │  HTTPS :8443
