@@ -1,0 +1,38 @@
+@startuml sd-authentication
+title AISafe - Authentication and authorization (login, JWT, RBAC)
+skinparam shadowing false
+skinparam sequenceArrowThickness 2
+autonumber
+
+actor "User" as U
+participant "API Gateway\n(NGINX)" as GW
+participant "Keycloak\n(cluster)" as KC
+participant "Service\n(replica)" as S
+
+== Login ==
+U -> GW : POST /realms/aisafe/protocol/openid-connect/token\n(grant_type=password)
+GW -> KC : proxy (Host localhost:8180)
+KC --> GW : 200 {access_token JWT RS256 + roles}
+GW --> U : 200 access_token
+
+== Authenticated request ==
+U -> GW : GET /api/aircraft/CS-TTA\nAuthorization: Bearer <JWT>
+GW -> S : HTTPS (verified certificate)
+S -> KC : JWKS (public key, cached)
+KC --> S : keys
+S -> S : validates signature, issuer (iss) and validity
+alt valid token and authorized role
+  S --> GW : 200 JSON
+  GW --> U : 200 (X-Served-By)
+else no token / invalid token
+  S --> GW : 401 application/problem+json
+  GW --> U : 401
+else role without permission (e.g., MAINTENANCE_TECHNICIAN)
+  S -> S : logs AUDIT (access denied)
+  S --> GW : 403 application/problem+json
+  GW --> U : 403
+end
+
+== Service-to-service call ==
+S -> S : /internal/** requires X-API-Key\n(not exposed by gateway)
+@enduml

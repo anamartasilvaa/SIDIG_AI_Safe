@@ -1,0 +1,45 @@
+@startuml sd-high-availability
+title AISafe - Fault Tolerance (gateway, Keycloak and replicas)
+skinparam shadowing false
+skinparam sequenceArrowThickness 2
+autonumber
+
+actor "Client" as C
+participant "gateway-1\n:8443" as G1
+participant "gateway-2\n:8444" as G2
+participant "keycloak-1" as K1
+participant "keycloak-2" as K2
+participant "aircraft-1" as A1
+participant "aircraft-2" as A2
+
+== 1. Gateway failure ==
+C -> G1 : request
+G1 -[#red]-> C : no response
+note over C : client tries the second URL
+C -> G2 : request
+G2 -> A1 : proxy
+A1 --> G2 : 200
+G2 --> C : 200
+
+== 2. Keycloak node failure ==
+C -> G2 : POST /realms/... (login)
+G2 -> K1 : proxy
+K1 -[#red]-> G2 : connection refused
+note over G2 : proxy_next_upstream: tries the next node
+G2 -> K2 : proxy
+K2 --> G2 : token (same issuer, sessions in distributed cache)
+G2 --> C : 200 access_token
+
+== 3. Service replica failure ==
+C -> G2 : GET /api/aircraft/CS-TTA
+G2 -> A1 : proxy
+A1 -[#red]-> G2 : connection refused (replica down)
+note over G2 : replica is out for 10 s (max_fails=1)
+G2 -> A2 : proxy (next attempt)
+A2 --> G2 : 200
+G2 --> C : 200
+
+== 4. All replicas of a service down ==
+C -> G2 : GET /api/aircraft/CS-TTA
+G2 -[#red]-> C : 503 {"title":"Service Unavailable"}\n(other services continue to respond)
+@enduml
