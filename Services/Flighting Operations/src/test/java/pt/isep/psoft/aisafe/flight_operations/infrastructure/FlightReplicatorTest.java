@@ -86,7 +86,34 @@ class FlightReplicatorTest {
 
         assertEquals(List.of("http://p2|a|2"), peers.received);
     }
+    @Test
+    @DisplayName("Com confirmacao: um peer em baixo nao impede a confirmacao por outro")
+    void acknowledgedByAtLeastOnePeer() {
+        FakePeers peers = new FakePeers();
+        peers.down.put("http://p2", true);
+        replicator = new FlightReplicator(peers, List.of("http://p2", "http://p3"), true, Duration.ofSeconds(5));
 
+        boolean ack = replicator.replicateAcknowledged(flight("a", 1));
+
+        assertTrue(ack);
+        assertTrue(peers.received.contains("http://p3|a|1"));
+        assertEquals(1, replicator.pendingFor("http://p2"));
+    }
+
+    @Test
+    @DisplayName("Com confirmacao: todos os peers em baixo -> aceita mas fica em fila (AP)")
+    void notAcknowledgedWhenAllPeersDown() {
+        FakePeers peers = new FakePeers();
+        peers.down.put("http://p2", true);
+        peers.down.put("http://p3", true);
+        replicator = new FlightReplicator(peers, List.of("http://p2", "http://p3"), true, Duration.ofSeconds(5));
+
+        boolean ack = replicator.replicateAcknowledged(flight("a", 1));
+
+        assertFalse(ack);
+        assertEquals(1, replicator.pendingFor("http://p2"));
+        assertEquals(1, replicator.pendingFor("http://p3"));
+    }
     @Test
     @DisplayName("Com a replicacao desligada nada e enviado")
     void disabled() throws InterruptedException {

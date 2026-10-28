@@ -59,7 +59,6 @@ public class FlightReplicator {
         return enabled;
     }
 
-
     public void replicate(ScheduledFlightViewDTO flight) {
         if (!enabled) {
             return;
@@ -68,6 +67,24 @@ public class FlightReplicator {
             pending.get(peer).merge(flight.id(), flight, ScheduledFlightViewDTO::newest);
             scheduler.execute(() -> flush(peer));
         }
+    }
+    public boolean replicateAcknowledged(ScheduledFlightViewDTO flight) {
+        if (!enabled || peers.isEmpty()) {
+            return false;
+        }
+        for (String peer : peers) {
+            pending.get(peer).merge(flight.id(), flight, ScheduledFlightViewDTO::newest);
+        }
+        boolean acknowledged = false;
+        for (String peer : peers) {
+            if (acknowledged) {
+                scheduler.execute(() -> flush(peer));
+            } else {
+                flush(peer);
+                acknowledged = pendingFor(peer) == 0;
+            }
+        }
+        return acknowledged;
     }
 
 

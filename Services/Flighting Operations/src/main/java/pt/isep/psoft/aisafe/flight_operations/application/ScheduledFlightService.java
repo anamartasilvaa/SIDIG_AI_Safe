@@ -106,11 +106,9 @@ public class ScheduledFlightService {
 
     public Optional<ScheduledFlightViewDTO> applyStatusLocally(String id, FlightStatus target) {
         Optional<ScheduledFlightViewDTO> changed = changeLocalStatus(id, target);
-        changed.ifPresent(replicator::replicate);
+        changed.ifPresent(replicator::replicateAcknowledged);
         return changed;
     }
-
-    // ============================================================ REPLICACAO
 
     public boolean applyReplica(ScheduledFlightViewDTO replica) {
         String flightId = FlightId.of(replica.id()).value();
@@ -150,7 +148,6 @@ public class ScheduledFlightService {
                 remote.items().size(), changed, remote.unreachablePeers());
     }
 
-    // ============================================================ DISTRIBUIDO
 
     public Optional<ScheduledFlightViewDTO> findById(String id) {
         String flightId = FlightId.of(id).value();          // id invalido -> 400 antes de ir a rede
@@ -227,7 +224,7 @@ public class ScheduledFlightService {
         if (local.isPresent()) {
             return local;
         }
-        log.info("Voo {} ainda nao existe nesta replica: a reencaminhar mudanca de estado para os peers", flightId);
+        log.info("Voo {} ainda nao existe nesta replica: a reencaminhar mudança de estado para os peers", flightId);
         return peers.forwardPut(INTERNAL + "/" + flightId + "/status", Map.of("status", target.name()),
                 ScheduledFlightViewDTO.class);
     }
@@ -254,7 +251,7 @@ public class ScheduledFlightService {
                     throw new DependencyUnavailableException("Cannot guarantee the aircraft is free: replicas "
                             + unreachable + " did not answer. Try again later.");
                 }
-                log.warn("AP: agendamento aceite com verificacao PARCIAL de conflitos (peers sem resposta: {})",
+                log.warn("AP: agendamento aceite com verificação PARCIAL de conflitos (peers sem resposta: {})",
                         unreachable);
             }
             policy.findConflict(toSlots(existing.items()), flight.getScheduledDateTime())
@@ -265,10 +262,13 @@ public class ScheduledFlightService {
                     });
             ScheduledFlight saved = repository.save(flight);
             created = ScheduledFlightViewDTO.from(saved);
-            log.info("Voo {} criado LOCALMENTE (rota {}, aviao {})",
+            log.info("Voo {} criado LOCALMENTE (rota {}, avião {})",
                     saved.getFlightId(), saved.getRouteId(), saved.getAircraft());
         }
-        replicator.replicate(created);
+        if (!replicator.replicateAcknowledged(created)) {
+            log.warn("AP: voo {} aceite sem confirmação de nenhum peer (fica em fila para nova tentativa)",
+                    created.id());
+        }
         return new ScheduleResultDTO(created, unreachable);
     }
 
@@ -292,7 +292,7 @@ public class ScheduledFlightService {
                 .map(ScheduledFlight::toSlot)
                 .toList();
         policy.findConflict(others, received.getScheduledDateTime()).ifPresent(c ->
-                log.warn("CONFLITO detetado apos replicacao: voos {} e {} do aviao {} a menos de {} h",
+                log.warn("CONFLITO detetado apos replicação: voos {} e {} do avião {} a menos de {} h",
                         received.getFlightId(), c.flightId(), received.getAircraft(), policy.minimumGap().toHours()));
     }
 
@@ -384,7 +384,7 @@ public class ScheduledFlightService {
             moved = repository.findByFlightId_Uuid(flightId).map(flight -> {
                 flight.reassignAircraft(newAircraft);
                 ScheduledFlight saved = repository.save(flight);
-                log.info("Voo {} reatribuido ao aviao {} (rev {})", flightId, newAircraft, saved.getRevision());
+                log.info("Voo {} retribuído ao avião {} (rev {})", flightId, newAircraft, saved.getRevision());
                 return ScheduledFlightViewDTO.from(saved);
             });
         }

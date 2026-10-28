@@ -31,10 +31,6 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-/**
- * Regras de acesso (RBAC) da API, com a cadeia do Spring Security real.
- * O ScheduledFlightService e um mock: aqui so interessa QUEM pode chamar cada endpoint.
- */
 @SpringBootTest
 class SecurityRulesTest {
 
@@ -71,8 +67,6 @@ class SecurityRulesTest {
                 "CS-TTA", "2027-03-15T10:00", true, "ACTIVE", null, List.of(), List.of()));
     }
 
-    // ------------------------------------------------------------------ helpers
-
     private static MockHttpServletRequestBuilder as(String token, MockHttpServletRequestBuilder request) {
         return request.header("Authorization", TestTokens.bearer(token));
     }
@@ -86,18 +80,15 @@ class SecurityRulesTest {
                 .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"DELAYED\"}");
     }
 
-    /** Passou a seguranca: nao foi 401 nem 403 (o resto depende do endpoint). */
     private static ResultMatcher allowed() {
         return result -> {
             int code = result.getResponse().getStatus();
-            assertTrue(code != 401 && code != 403, "esperava acesso permitido, mas foi " + code);
+            assertTrue(code != 401 && code != 403, "expected access allowed, but was " + code);
         };
     }
 
-    // ------------------------------------------------------------------ 401
-
     @Test
-    @DisplayName("Sem token -> 401 em JSON (ProblemDetail)")
+    @DisplayName("No token -> 401 in JSON (ProblemDetail)")
     void noTokenIs401() throws Exception {
         mvc.perform(get("/api/scheduled-flights/route-utilization"))
                 .andExpect(status().isUnauthorized())
@@ -107,7 +98,7 @@ class SecurityRulesTest {
     }
 
     @Test
-    @DisplayName("Token expirado ou assinado com outro segredo -> 401")
+    @DisplayName("Expired token or signed with another secret -> 401")
     void invalidTokensAre401() throws Exception {
         mvc.perform(as(TestTokens.expired("atcc.user", List.of("ATCC")), createFlight()))
                 .andExpect(status().isUnauthorized())
@@ -116,17 +107,15 @@ class SecurityRulesTest {
                 .andExpect(status().isUnauthorized());
     }
 
-    // ------------------------------------------------------------------ US212: agendar
-
     @Test
-    @DisplayName("US212 agendar: ATCC e ADMIN podem (201)")
+    @DisplayName("US212 schedule: ATCC and ADMIN can (201)")
     void scheduleAllowed() throws Exception {
         mvc.perform(as(ATCC, createFlight())).andExpect(status().isCreated());
         mvc.perform(as(ADMIN, createFlight())).andExpect(status().isCreated());
     }
 
     @Test
-    @DisplayName("US212 agendar: BACKOFFICE e perfis de manutencao nao podem (403)")
+    @DisplayName("US212 schedule: BACKOFFICE and maintenance roles cannot (403)")
     void scheduleForbidden() throws Exception {
         mvc.perform(as(BACKOFFICE, createFlight()))
                 .andExpect(status().isForbidden())
@@ -135,19 +124,15 @@ class SecurityRulesTest {
         mvc.perform(as(SUPERVISOR, createFlight())).andExpect(status().isForbidden());
     }
 
-    // ------------------------------------------------------------------ estado do voo
-
     @Test
-    @DisplayName("Mudar estado: ATCC pode, BACKOFFICE nao")
+    @DisplayName("Change status: ATCC can, BACKOFFICE cannot")
     void changeStatusRules() throws Exception {
         mvc.perform(as(ATCC, changeStatus())).andExpect(status().isOk());
         mvc.perform(as(BACKOFFICE, changeStatus())).andExpect(status().isForbidden());
     }
 
-    // ------------------------------------------------------------------ consultas
-
     @Test
-    @DisplayName("Consultar voo por id: ATCC, BACKOFFICE e ADMIN; manutencao nao")
+    @DisplayName("Query flight by id: ATCC, BACKOFFICE and ADMIN; maintenance cannot")
     void getByIdRules() throws Exception {
         String url = "/api/scheduled-flights/" + FLIGHT_ID;
         mvc.perform(as(ATCC, get(url))).andExpect(status().isOk());
@@ -157,14 +142,14 @@ class SecurityRulesTest {
     }
 
     @Test
-    @DisplayName("US213 voos de um aviao: ATCC pode, BACKOFFICE nao")
+    @DisplayName("US213 flights of an aircraft: ATCC can, BACKOFFICE cannot")
     void aircraftFlightsRules() throws Exception {
         mvc.perform(as(ATCC, get("/api/scheduled-flights/aircraft/CS-TTA"))).andExpect(status().isOk());
         mvc.perform(as(BACKOFFICE, get("/api/scheduled-flights/aircraft/CS-TTA"))).andExpect(status().isForbidden());
     }
 
     @Test
-    @DisplayName("US205 disponibilidade: ATCC pode, BACKOFFICE nao")
+    @DisplayName("US205 availability: ATCC can, BACKOFFICE cannot")
     void availabilityRules() throws Exception {
         String url = "/api/scheduled-flights/availability?registrationNumber=CS-TTA&dateTime=2027-03-15T10:00:00";
         mvc.perform(as(ATCC, get(url))).andExpect(status().isOk());
@@ -172,7 +157,7 @@ class SecurityRulesTest {
     }
 
     @Test
-    @DisplayName("US229 utilizacao de rotas: BACKOFFICE e ADMIN podem, ATCC nao")
+    @DisplayName("US229 route utilization: BACKOFFICE and ADMIN can, ATCC cannot")
     void routeUtilizationRules() throws Exception {
         String url = "/api/scheduled-flights/route-utilization";
         mvc.perform(as(BACKOFFICE, get(url))).andExpect(allowed());
@@ -180,22 +165,20 @@ class SecurityRulesTest {
         mvc.perform(as(ATCC, get(url))).andExpect(status().isForbidden());
     }
 
-    // ------------------------------------------------------------------
-
     @Test
-    @DisplayName("Endpoint nao previsto: negado mesmo para ADMIN (deny by default)")
+    @DisplayName("Unforeseen endpoint: denied even for ADMIN (deny by default)")
     void denyByDefault() throws Exception {
-        mvc.perform(as(ADMIN, get("/api/qualquer-coisa"))).andExpect(status().isForbidden());
+        mvc.perform(as(ADMIN, get("/api/whatever"))).andExpect(status().isForbidden());
     }
 
     @Test
-    @DisplayName("/actuator/health e aberto (monitorizacao)")
+    @DisplayName("/actuator/health is open (monitoring)")
     void healthIsOpen() throws Exception {
         mvc.perform(get("/actuator/health")).andExpect(allowed());
     }
 
     @Test
-    @DisplayName("/internal/** nao usa JWT: sem API key -> 401; com API key -> passa")
+    @DisplayName("/internal/** does not use JWT: no API key -> 401; with API key -> passes")
     void internalUsesApiKey() throws Exception {
         String url = "/internal/scheduled-flights/" + FLIGHT_ID;
         mvc.perform(get(url)).andExpect(status().isUnauthorized());

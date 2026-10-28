@@ -18,16 +18,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
-
-/**
- * Tokens JWT para os testes:
- *  - HS256 (desenvolvimento): assinados com o jwt.secret partilhado;
- *  - RS256 (como o Keycloak): assinados com uma chave RSA gerada para os testes,
- *    com os perfis em realm_access.roles e o utilizador em preferred_username.
- */
 public final class TestTokens {
 
-    /** Igual ao jwt.secret por omissao do application.properties. */
     public static final String SECRET = "change-this-development-secret-key-with-at-least-32-bytes";
     public static final String ISSUER = "http://localhost:8180/realms/aisafe";
 
@@ -37,13 +29,12 @@ public final class TestTokens {
 
     private TestTokens() {}
 
-    // ---------------------------------------------------------------- HS256 (desenvolvimento)
+    // ---------------------------------------------------------------- HS256 (development)
 
     public static String valid(String user, Object roles) {
         return hs256(SECRET, user, roles, HOUR);
     }
 
-    /** Expirado ha 10 min (acima da tolerancia de relogio de 60 s do Spring Security). */
     public static String expired(String user, Object roles) {
         return hs256(SECRET, user, roles, -600_000);
     }
@@ -54,7 +45,6 @@ public final class TestTokens {
 
     // ---------------------------------------------------------------- RS256 (Keycloak)
 
-    /** Descodificador que confia na chave "do Keycloak" dos testes e exige o issuer do realm aisafe. */
     public static JwtDecoder keycloakDecoder() {
         try {
             NimbusJwtDecoder decoder = NimbusJwtDecoder.withPublicKey(KEYCLOAK_KEY.toRSAPublicKey()).build();
@@ -81,7 +71,7 @@ public final class TestTokens {
         return "Bearer " + token;
     }
 
-    // ---------------------------------------------------------------- auxiliares
+    // ---------------------------------------------------------------- helpers
 
     private static String hs256(String secret, String user, Object roles, long validForMillis) {
         JWTClaimsSet.Builder claims = times(validForMillis);
@@ -101,7 +91,6 @@ public final class TestTokens {
         }
     }
 
-    /** Mesmo formato de um access token do Keycloak (sem as claims extra "roles"/"username"). */
     private static String rs256(RSAKey key, String issuer, String user, List<String> roles) {
         JWTClaimsSet claims = times(HOUR)
                 .issuer(issuer)

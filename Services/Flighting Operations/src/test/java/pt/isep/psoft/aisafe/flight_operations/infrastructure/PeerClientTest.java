@@ -29,7 +29,7 @@ class PeerClientTest {
         executor.shutdownNow();
     }
 
-    /** RemoteCaller falso: para cada peer, um comportamento. */
+    /** Fake RemoteCaller: one behavior per peer. */
     static class FakeCaller extends RemoteCaller {
         final Map<String, Object> behaviour = new ConcurrentHashMap<>();
 
@@ -80,7 +80,7 @@ class PeerClientTest {
     }
 
     @Test
-    @DisplayName("Agregacao pergunta aos peers EM PARALELO (tempo ~ peer mais lento, nao a soma)")
+    @DisplayName("Aggregation asks peers IN PARALLEL (time ~ slowest peer, not the sum)")
     void aggregationIsParallel() {
         FakeCaller caller = new FakeCaller()
                 .on("http://p1", Duration.ofMillis(600))
@@ -91,21 +91,21 @@ class PeerClientTest {
 
         assertEquals(2, result.items().size());
         assertFalse(result.isPartial());
-        assertTrue(elapsedMs < 1100, "demorou " + elapsedMs + " ms, devia ser ~600 ms");
+        assertTrue(elapsedMs < 1100, "took " + elapsedMs + " ms, should be ~600 ms");
     }
 
     @Test
-    @DisplayName("Peer com 401 ou em baixo e ignorado no forwarding")
+    @DisplayName("Peer with 401 or down is ignored in forwarding")
     void failingPeersAreSkipped() {
         FakeCaller caller = new FakeCaller()
                 .on("http://bad", new HttpClientErrorException(HttpStatus.UNAUTHORIZED))
                 .on("http://down", new RemoteUnavailableException("http://down", "circuit open"))
-                .on("http://good", "voo");
+                .on("http://good", "flight");
         Optional<String> found = client(caller, "http://bad", "http://down", "http://good").findFirst("/f/1", String.class);
-        assertEquals(Optional.of("voo"), found);
+        assertEquals(Optional.of("flight"), found);
     }
     @Test
-    @DisplayName("Replica dona em baixo: 503 (pode existir), e nao 404 (nao existe)")
+    @DisplayName("Owner replica down: 503 (might exist), not 404 (does not exist)")
     void ownerDownIsNotNotFound() {
         FakeCaller caller = new FakeCaller()
                 .on("http://empty", Optional.empty())
@@ -117,42 +117,42 @@ class PeerClientTest {
     }
 
     @Test
-    @DisplayName("Agregacao com peers em falha devolve resposta PARCIAL e diz quem falhou")
+    @DisplayName("Aggregation with failing peers returns PARTIAL response and states who failed")
     void partialAggregation() {
         FakeCaller caller = new FakeCaller()
                 .on("http://bad", new HttpClientErrorException(HttpStatus.UNAUTHORIZED))
                 .on("http://down", new RemoteUnavailableException("http://down", "timeout"))
-                .on("http://good", "voo");
+                .on("http://good", "flight");
         AggregatedResult<String> result = client(caller, "http://bad", "http://down", "http://good").collectAll("/y", LIST);
 
         assertTrue(result.isPartial());
-        assertEquals(List.of("voo"), result.items());
+        assertEquals(List.of("flight"), result.items());
         assertTrue(result.unreachablePeers().containsAll(List.of("http://bad", "http://down")));
     }
 
     @Test
-    @DisplayName("findFirst devolve o peer mais rapido sem esperar pelo lento")
+    @DisplayName("findFirst returns the fastest peer without waiting for the slow one")
     void findFirstReturnsFastest() {
         FakeCaller caller = new FakeCaller()
                 .on("http://slow", Duration.ofMillis(1500))
-                .on("http://fast", "rapido");
+                .on("http://fast", "fast");
         long start = System.nanoTime();
         Optional<String> found = client(caller, "http://slow", "http://fast").findFirst("/f/2", String.class);
         long elapsedMs = (System.nanoTime() - start) / 1_000_000;
 
-        assertEquals(Optional.of("rapido"), found);
-        assertTrue(elapsedMs < 1000, "demorou " + elapsedMs + " ms");
+        assertEquals(Optional.of("fast"), found);
+        assertTrue(elapsedMs < 1000, "took " + elapsedMs + " ms");
     }
 
     @Test
-    @DisplayName("404 em todos os peers -> vazio")
+    @DisplayName("404 on all peers -> empty")
     void notFoundAnywhere() {
         FakeCaller caller = new FakeCaller().on("http://a", Optional.empty()).on("http://b", Optional.empty());
         assertTrue(client(caller, "http://a", "http://b").findFirst("/f/3", String.class).isEmpty());
     }
 
     @Test
-    @DisplayName("409 da replica dona e propagado ao cliente (transicao invalida)")
+    @DisplayName("409 from owner replica is propagated to client (invalid transition)")
     void conflictFromOwnerIsPropagated() {
         FakeCaller caller = new FakeCaller()
                 .on("http://other", Optional.empty())
@@ -162,7 +162,7 @@ class PeerClientTest {
     }
 
     @Test
-    @DisplayName("Sem peers configurados -> vazio, sem erro")
+    @DisplayName("No peers configured -> empty, no error")
     void noPeers() {
         assertTrue(client(new FakeCaller(), "").findFirst("/z", String.class).isEmpty());
     }
