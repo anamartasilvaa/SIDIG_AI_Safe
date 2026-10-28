@@ -34,7 +34,7 @@ class HttpClientConfigTest {
     }
 
     @Test
-    @DisplayName("Reenvia o JWT do utilizador ao outro servico (+ API key e id da replica)")
+    @DisplayName("Forwards the user's JWT to the other service (+ API key and replica id)")
     void propagatesBearerToken() {
         incomingRequestWithAuthorization("Bearer abc.def.ghi");
         server.expect(requestTo(URL))
@@ -48,7 +48,7 @@ class HttpClientConfigTest {
     }
 
     @Test
-    @DisplayName("Sem pedido de cliente (ex.: replicacao em segundo plano): so API key, sem Authorization")
+    @DisplayName("No client request (e.g., background replication): only API key, no Authorization")
     void backgroundCallsUseOnlyApiKey() {
         server.expect(requestTo(URL))
                 .andExpect(headerDoesNotExist("Authorization"))
@@ -60,7 +60,7 @@ class HttpClientConfigTest {
     }
 
     @Test
-    @DisplayName("Credenciais que nao sao Bearer (ex.: Basic) nao sao reenviadas")
+    @DisplayName("Non-Bearer credentials (e.g., Basic) are not forwarded")
     void doesNotForwardOtherSchemes() {
         incomingRequestWithAuthorization("Basic dXNlcjpwYXNz");
         server.expect(requestTo(URL))

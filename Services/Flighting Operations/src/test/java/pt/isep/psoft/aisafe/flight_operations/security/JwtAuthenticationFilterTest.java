@@ -15,10 +15,8 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** Validacao do JWT (sem Spring): tokens do Keycloak (RS256) e de desenvolvimento (HS256). */
 class JwtAuthenticationFilterTest {
 
-    /** Como em execucao: aceita tokens do Keycloak e tokens de desenvolvimento. */
     private JwtAuthenticationFilter filter =
             new JwtAuthenticationFilter(TokenDecoders.create(TestTokens.keycloakDecoder(), TestTokens.SECRET, true));
 
@@ -27,7 +25,6 @@ class JwtAuthenticationFilterTest {
         SecurityContextHolder.clearContext();
     }
 
-    /** Corre o filtro e devolve o utilizador autenticado que ficou durante o pedido (ou null). */
     private Authentication authenticate(MockHttpServletRequest request) throws Exception {
         Authentication[] seen = new Authentication[1];
         MockFilterChain chain = new MockFilterChain() {
@@ -53,7 +50,7 @@ class JwtAuthenticationFilterTest {
     }
 
     @Test
-    @DisplayName("Token valido: utilizador e perfis (com prefixo ROLE_) ficam no contexto de seguranca")
+    @DisplayName("Valid token: user and roles (with ROLE_ prefix) remain in the security context")
     void validToken() throws Exception {
         Authentication auth = authenticate(withAuthorization(
                 TestTokens.bearer(TestTokens.valid("atcc.user", List.of("ATCC")))));
@@ -64,7 +61,7 @@ class JwtAuthenticationFilterTest {
     }
 
     @Test
-    @DisplayName("Perfis em texto separado por virgulas e com ROLE_ ja incluido tambem sao aceites")
+    @DisplayName("Roles as comma-separated text and with ROLE_ already included are also accepted")
     void rolesAsText() throws Exception {
         Authentication auth = authenticate(withAuthorization(
                 TestTokens.bearer(TestTokens.valid("admin.user", "ROLE_ADMIN, ATCC"))));
@@ -73,7 +70,7 @@ class JwtAuthenticationFilterTest {
     }
 
     @Test
-    @DisplayName("Sem header Authorization: pedido segue sem utilizador (o Spring Security responde 401)")
+    @DisplayName("No Authorization header: request continues without user (Spring Security responds 401)")
     void noToken() throws Exception {
         MockHttpServletRequest request = withAuthorization(null);
         assertNull(authenticate(request));
@@ -81,7 +78,7 @@ class JwtAuthenticationFilterTest {
     }
 
     @Test
-    @DisplayName("Assinatura com outro segredo: token recusado")
+    @DisplayName("Signed with another secret: token rejected")
     void wrongSignature() throws Exception {
         MockHttpServletRequest request = withAuthorization(
                 TestTokens.bearer(TestTokens.signedWithOtherSecret("intruder", List.of("ADMIN"))));
@@ -91,7 +88,7 @@ class JwtAuthenticationFilterTest {
     }
 
     @Test
-    @DisplayName("Token expirado: recusado")
+    @DisplayName("Expired token: rejected")
     void expiredToken() throws Exception {
         MockHttpServletRequest request = withAuthorization(
                 TestTokens.bearer(TestTokens.expired("atcc.user", List.of("ATCC"))));
@@ -101,9 +98,9 @@ class JwtAuthenticationFilterTest {
     }
 
     @Test
-    @DisplayName("Token mal formado ou de outro esquema (Basic): recusado / ignorado")
+    @DisplayName("Malformed token or from another scheme (Basic): rejected / ignored")
     void malformedToken() throws Exception {
-        MockHttpServletRequest garbage = withAuthorization("Bearer isto.nao.e.um.jwt");
+        MockHttpServletRequest garbage = withAuthorization("Bearer this.is.not.a.jwt");
         assertNull(authenticate(garbage));
         assertNotNull(garbage.getAttribute(JwtAuthenticationFilter.ERROR_ATTRIBUTE));
 
@@ -111,22 +108,20 @@ class JwtAuthenticationFilterTest {
     }
 
     @Test
-    @DisplayName("Token sem utilizador (sem username nem sub): recusado")
+    @DisplayName("Token without user (no username or sub): rejected")
     void tokenWithoutUser() throws Exception {
         MockHttpServletRequest request = withAuthorization(TestTokens.bearer(TestTokens.valid(null, List.of("ATCC"))));
         assertNull(authenticate(request));
     }
 
     @Test
-    @DisplayName("Segredo com menos de 32 bytes e rejeitado ao arrancar (HS256 exige chave forte)")
+    @DisplayName("Secret with less than 32 bytes is rejected on startup (HS256 requires strong key)")
     void weakSecretRejected() {
-        assertThrows(IllegalArgumentException.class, () -> TokenDecoders.create((JwtDecoder) null, "curto", true));
+        assertThrows(IllegalArgumentException.class, () -> TokenDecoders.create((JwtDecoder) null, "short", true));
     }
 
-    // ------------------------------------------------------------------ Keycloak (RS256)
-
     @Test
-    @DisplayName("Token do Keycloak: perfis de realm_access.roles e utilizador de preferred_username")
+    @DisplayName("Keycloak token: roles from realm_access.roles and user from preferred_username")
     void keycloakToken() throws Exception {
         Authentication auth = authenticate(withAuthorization(
                 TestTokens.bearer(TestTokens.keycloak("atcc.user", List.of("ATCC")))));
@@ -137,7 +132,7 @@ class JwtAuthenticationFilterTest {
     }
 
     @Test
-    @DisplayName("Token RS256 assinado com outra chave (nao do Keycloak): recusado")
+    @DisplayName("RS256 token signed with another key (not Keycloak's): rejected")
     void keycloakTokenWithOtherKey() throws Exception {
         MockHttpServletRequest request = withAuthorization(
                 TestTokens.bearer(TestTokens.keycloakSignedWithOtherKey("intruder", List.of("ADMIN"))));
@@ -147,7 +142,7 @@ class JwtAuthenticationFilterTest {
     }
 
     @Test
-    @DisplayName("Token de outro realm/emissor (iss diferente): recusado")
+    @DisplayName("Token from another realm/issuer (different iss): rejected")
     void keycloakTokenFromOtherIssuer() throws Exception {
         MockHttpServletRequest request = withAuthorization(TestTokens.bearer(TestTokens.keycloakWithIssuer(
                 "http://localhost:8180/realms/master", "admin", List.of("ADMIN"))));
@@ -157,7 +152,7 @@ class JwtAuthenticationFilterTest {
     }
 
     @Test
-    @DisplayName("Tokens de desenvolvimento desligados (producao): HS256 recusado, Keycloak continua aceite")
+    @DisplayName("Development tokens disabled (production): HS256 rejected, Keycloak still accepted")
     void devTokensDisabled() throws Exception {
         filter = new JwtAuthenticationFilter(TokenDecoders.create(TestTokens.keycloakDecoder(), TestTokens.SECRET, false));
 
@@ -170,7 +165,7 @@ class JwtAuthenticationFilterTest {
     }
 
     @Test
-    @DisplayName("Sem Keycloak configurado: tokens RS256 sao recusados")
+    @DisplayName("No Keycloak configured: RS256 tokens are rejected")
     void noIdentityProviderConfigured() throws Exception {
         filter = new JwtAuthenticationFilter(TokenDecoders.create((JwtDecoder) null, TestTokens.SECRET, true));
 

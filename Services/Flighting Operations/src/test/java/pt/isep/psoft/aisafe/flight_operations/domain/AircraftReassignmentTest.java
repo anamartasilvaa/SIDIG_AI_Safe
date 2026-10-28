@@ -19,7 +19,7 @@ class AircraftReassignmentTest {
     }
 
     @Test
-    @DisplayName("Voo agendado passa para outro aviao e a revision aumenta (para a troca ser replicada)")
+    @DisplayName("Scheduled flight changes to another aircraft and revision increases (for the swap to be replicated)")
     void reassignScheduledFlight() {
         ScheduledFlight f = flight();
         f.reassignAircraft(TTB);
@@ -28,7 +28,7 @@ class AircraftReassignmentTest {
     }
 
     @Test
-    @DisplayName("Voo atrasado tambem pode trocar de aviao")
+    @DisplayName("Delayed flight can also change aircraft")
     void reassignDelayedFlight() {
         ScheduledFlight f = flight();
         f.changeStatus(FlightStatus.DELAYED, NOW);
@@ -37,7 +37,7 @@ class AircraftReassignmentTest {
     }
 
     @Test
-    @DisplayName("Voo que ja partiu nao pode trocar de aviao")
+    @DisplayName("Flight that has already departed cannot change aircraft")
     void cannotReassignAfterDeparture() {
         ScheduledFlight f = flight();
         f.changeStatus(FlightStatus.IN_FLIGHT, NOW);
@@ -46,7 +46,7 @@ class AircraftReassignmentTest {
     }
 
     @Test
-    @DisplayName("Trocar para o mesmo aviao nao tem efeito")
+    @DisplayName("Changing to the same aircraft has no effect")
     void sameAircraftIsNoOp() {
         ScheduledFlight f = flight();
         f.reassignAircraft(TTA);
@@ -54,7 +54,7 @@ class AircraftReassignmentTest {
     }
 
     @Test
-    @DisplayName("A copia replicada leva o novo aviao para as outras replicas")
+    @DisplayName("The replicated copy carries the new aircraft to other replicas")
     void replicaCarriesNewAircraft() {
         ScheduledFlight local = ScheduledFlight.restore(FlightId.of("22222222-2222-2222-2222-222222222222"),
                 RouteId.of("RT-OPOLIS"), TTA, NOW.plusDays(1), null, null, FlightStatus.SCHEDULED, 1,

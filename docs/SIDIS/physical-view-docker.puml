@@ -1,0 +1,72 @@
+@startuml physical-view-docker
+title AISafe - Physical View (Secure Docker, docker-compose.secure.yml): no single points of failure in application components
+skinparam shadowing false
+skinparam defaultFontSize 12
+skinparam nodesep 25
+skinparam ranksep 45
+
+node "Client" as clientNode {
+  artifact "Postman / curl\n(list of 2 URLs)" as postman
+}
+
+node "Docker Engine (1 host)" as host {
+
+  frame "'edge' network (published ports)" as edge {
+    node "gateway-1\nNGINX :8443" as gw1
+    node "gateway-2\nNGINX :8444" as gw2
+  }
+
+  frame "'backend' network (internal, no Internet access)" as backend {
+
+    frame "Keycloak (cluster, jdbc-ping)" as kcg {
+      node "keycloak-1 :8180" as kc1
+      node "keycloak-2 :8180" as kc2
+      database "keycloak-db\nPostgreSQL" as kcdb
+    }
+
+    frame "Flight Operations" as fog {
+      node "flight-operations-1\n:8443 HTTPS" as fo1
+      node "flight-operations-2\n:8443 HTTPS" as fo2
+    }
+    frame "Airports & Routes" as arg {
+      node "airports-routes-1\n:8443 HTTPS" as ar1
+      node "airports-routes-2\n:8443 HTTPS" as ar2
+    }
+    frame "Aircraft" as acg {
+      node "aircraft-1\n:8443 HTTPS" as ac1
+      node "aircraft-2\n:8443 HTTPS" as ac2
+    }
+    frame "Maintenance" as mtg {
+      node "maintenance-1\n:8443 HTTPS" as mt1
+      node "maintenance-2\n:8443 HTTPS" as mt2
+    }
+  }
+}
+
+postman --> gw1 : HTTPS :8443
+postman --> gw2 : HTTPS :8444\n(if :8443 fails)
+
+gw1 --> kcg : /realms/... (failover between the 2 nodes)
+gw2 .right.> kcg : same
+kc1 -- kcdb
+kc2 -- kcdb
+kc1 <..> kc2 : distributed cache
+
+gw1 --> fog : round-robin + failover
+gw1 --> arg
+gw1 --> acg
+gw1 --> mtg
+gw2 .down.> fog : both gateways\nconnect to the same services
+
+fo1 <..> fo2 : replication and forwarding\nX-API-Key
+ar1 <..> ar2 : replication and forwarding\npeer token
+ac1 <..> ac2
+mt1 <..> mt2
+
+fog --> arg : GET /api/routes/{id}
+fog --> acg : GET /api/aircraft/{reg}
+mtg --> acg : /internal (status)
+acg --> fog : /internal (grounding)
+fog ..> kc1 : JWKS (alias 'keycloak')
+
+@enduml

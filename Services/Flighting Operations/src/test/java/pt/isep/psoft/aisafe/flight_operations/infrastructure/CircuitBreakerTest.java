@@ -21,7 +21,7 @@ class CircuitBreakerTest {
     }
 
     @Test
-    @DisplayName("Abre ao fim de 3 falhas seguidas e passa a falhar logo")
+    @DisplayName("Opens after 3 consecutive failures and fails immediately")
     void opensAfterThreshold() {
         CircuitBreaker breaker = openBreaker();
         assertEquals(CircuitBreaker.State.OPEN, breaker.state());
@@ -29,7 +29,7 @@ class CircuitBreakerTest {
     }
 
     @Test
-    @DisplayName("Um sucesso reinicia a contagem de falhas")
+    @DisplayName("A success resets the failure count")
     void successResetsCount() {
         CircuitBreaker breaker = new CircuitBreaker("test", 3, OPEN_TIME);
         breaker.onFailure();
@@ -41,7 +41,7 @@ class CircuitBreakerTest {
     }
 
     @Test
-    @DisplayName("Depois do tempo de espera deixa passar UM pedido de teste")
+    @DisplayName("After the wait time, it allows ONE trial request to pass")
     void halfOpenAllowsSingleTrial() throws InterruptedException {
         CircuitBreaker breaker = openBreaker();
         Thread.sleep(OPEN_TIME.toMillis() + 50);
@@ -51,7 +51,7 @@ class CircuitBreakerTest {
     }
 
     @Test
-    @DisplayName("Sucesso no pedido de teste fecha o circuito")
+    @DisplayName("Success on the trial request closes the circuit")
     void trialSuccessCloses() throws InterruptedException {
         CircuitBreaker breaker = openBreaker();
         Thread.sleep(OPEN_TIME.toMillis() + 50);
@@ -61,7 +61,7 @@ class CircuitBreakerTest {
     }
 
     @Test
-    @DisplayName("Falha no pedido de teste volta a abrir o circuito")
+    @DisplayName("Failure on the trial request reopens the circuit")
     void trialFailureReopens() throws InterruptedException {
         CircuitBreaker breaker = openBreaker();
         Thread.sleep(OPEN_TIME.toMillis() + 50);

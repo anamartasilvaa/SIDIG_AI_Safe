@@ -8,21 +8,21 @@ import static org.junit.jupiter.api.Assertions.*;
 class ValueObjectsTest {
 
     @Test
-    @DisplayName("RouteId e normalizado (trim + maiusculas)")
+    @DisplayName("RouteId is normalized (trim + uppercase)")
     void routeIdIsNormalized() {
         assertEquals("OPO-LIS", RouteId.of("  opo-lis ").value());
         assertEquals(RouteId.of("opo-lis"), RouteId.of("OPO-LIS"));
     }
 
     @Test
-    @DisplayName("RegistrationNumber e normalizado e comparado por valor")
+    @DisplayName("RegistrationNumber is normalized and compared by value")
     void registrationIsNormalized() {
         assertEquals(RegistrationNumber.of("cs-tta"), RegistrationNumber.of(" CS-TTA "));
         assertEquals("CS-TTA", RegistrationNumber.of("cs-tta").value());
     }
 
     @Test
-    @DisplayName("Valores vazios sao rejeitados")
+    @DisplayName("Blank values are rejected")
     void blankValuesAreRejected() {
         assertThrows(IllegalArgumentException.class, () -> RouteId.of(" "));
         assertThrows(IllegalArgumentException.class, () -> RegistrationNumber.of(null));
@@ -30,7 +30,7 @@ class ValueObjectsTest {
     }
 
     @Test
-    @DisplayName("FlightId aceita apenas UUIDs e gera ids unicos")
+    @DisplayName("FlightId only accepts UUIDs and generates unique ids")
     void flightIdIsUuid() {
         assertThrows(IllegalArgumentException.class, () -> FlightId.of("123"));
         FlightId id = FlightId.newId();

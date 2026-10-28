@@ -23,48 +23,48 @@ class FlightSchedulingPolicyTest {
     private static final AircraftCapabilities IN_MAINTENANCE = new AircraftCapabilities("CS-TTM", "UNDER_MAINTENANCE", 6000.0, 180);
     private static final AircraftCapabilities SMALL = new AircraftCapabilities("CS-SML", "ACTIVE", 6000.0, 100);
 
-    // ------------------------------------------------------------- atribuicao
+    // ------------------------------------------------------------- assignment
 
     @Test
-    @DisplayName("Aviao ativo com alcance e capacidade suficientes e aceite")
+    @DisplayName("Active aircraft with sufficient range and capacity is accepted")
     void validAssignment() {
         assertDoesNotThrow(() -> policy.checkAssignment(LIS, LONG_RANGE));
         assertDoesNotThrow(() -> policy.checkAssignment(JFK, LONG_RANGE));
     }
 
     @Test
-    @DisplayName("Rota inativa e rejeitada")
+    @DisplayName("Inactive route is rejected")
     void inactiveRoute() {
         assertThrows(SchedulingRuleViolation.class, () -> policy.checkAssignment(INACTIVE, LONG_RANGE));
     }
 
     @Test
-    @DisplayName("Aviao em manutencao e rejeitado")
+    @DisplayName("Aircraft in maintenance is rejected")
     void aircraftInMaintenance() {
         assertThrows(SchedulingRuleViolation.class, () -> policy.checkAssignment(LIS, IN_MAINTENANCE));
     }
 
     @Test
-    @DisplayName("Alcance insuficiente e rejeitado (usa minimumRange da rota)")
+    @DisplayName("Insufficient range is rejected (uses route's minimumRange)")
     void insufficientRange() {
         assertThrows(SchedulingRuleViolation.class, () -> policy.checkAssignment(JFK, SHORT_RANGE));
     }
 
     @Test
-    @DisplayName("Capacidade abaixo do minimo da rota e rejeitada")
+    @DisplayName("Capacity below route's minimum is rejected")
     void insufficientCapacity() {
         assertThrows(SchedulingRuleViolation.class, () -> policy.checkAssignment(JFK, SMALL));
     }
 
     @Test
-    @DisplayName("Dados em falta nos outros servicos nao bloqueiam o agendamento")
+    @DisplayName("Missing data from other services does not block scheduling")
     void missingDataIsNotBlocking() {
         assertDoesNotThrow(() -> policy.checkAssignment(
                 new RouteRequirements("X", true, null, null, null),
                 new AircraftCapabilities("Y", null, null, null)));
     }
 
-    // -------------------------------------------------------------- conflitos
+    // -------------------------------------------------------------- conflicts
 
     private static final LocalDateTime T = LocalDateTime.of(2027, 3, 15, 10, 0);
     private static final List<FlightSlot> EXISTING = List.of(
@@ -72,7 +72,7 @@ class FlightSchedulingPolicyTest {
             new FlightSlot("b", T.plusHours(5), FlightStatus.CANCELED));
 
     @Test
-    @DisplayName("Voo a menos de 2 h (antes ou depois) e conflito")
+    @DisplayName("Flight less than 2 h away (before or after) is a conflict")
     void conflictWithinGap() {
         Optional<FlightSlot> conflict = policy.findConflict(EXISTING, T.plusHours(1));
         assertTrue(conflict.isPresent());
@@ -81,19 +81,19 @@ class FlightSchedulingPolicyTest {
     }
 
     @Test
-    @DisplayName("Exatamente 2 h de intervalo nao e conflito")
+    @DisplayName("Exactly 2 h gap is not a conflict")
     void exactGapIsAllowed() {
         assertTrue(policy.findConflict(EXISTING, T.plusHours(2)).isEmpty());
     }
 
     @Test
-    @DisplayName("Voos cancelados nao contam como conflito")
+    @DisplayName("Canceled flights do not count as a conflict")
     void canceledFlightsAreIgnored() {
         assertTrue(policy.findConflict(EXISTING, T.plusHours(5)).isEmpty());
     }
 
     @Test
-    @DisplayName("Intervalo minimo negativo e invalido")
+    @DisplayName("Negative minimum gap is invalid")
     void negativeGapIsInvalid() {
         assertThrows(IllegalArgumentException.class, () -> new FlightSchedulingPolicy(Duration.ofHours(-1)));
     }

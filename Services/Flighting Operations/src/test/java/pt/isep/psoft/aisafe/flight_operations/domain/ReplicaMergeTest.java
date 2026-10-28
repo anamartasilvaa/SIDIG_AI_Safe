@@ -20,19 +20,19 @@ class ReplicaMergeTest {
     }
 
     @Test
-    @DisplayName("Voo novo comeca na revision 1; cada mudanca de estado incrementa; pedido repetido nao")
+    @DisplayName("New flight starts at revision 1; each state change increments; repeated request does not")
     void revisionCountsChanges() {
         ScheduledFlight flight = new ScheduledFlight(RouteId.of("OPO-LIS"), RegistrationNumber.of("CS-TTA"),
                 NOW.plusDays(1), NOW);
         assertEquals(1L, flight.getRevision());
         flight.changeStatus(FlightStatus.DELAYED, NOW);
         assertEquals(2L, flight.getRevision());
-        flight.changeStatus(FlightStatus.DELAYED, NOW);      // idempotente
+        flight.changeStatus(FlightStatus.DELAYED, NOW);      // idempotent
         assertEquals(2L, flight.getRevision());
     }
 
     @Test
-    @DisplayName("Copia mais recente (revision maior) e aplicada")
+    @DisplayName("Newer copy (higher revision) is applied")
     void newerReplicaWins() {
         ScheduledFlight local = copy(FlightStatus.SCHEDULED, 1, T1);
         assertTrue(local.mergeReplica(FlightStatus.DELAYED, null, null, 2, T2));
@@ -41,7 +41,7 @@ class ReplicaMergeTest {
     }
 
     @Test
-    @DisplayName("Copia antiga ou repetida e ignorada (chegar fora de ordem nao estraga nada)")
+    @DisplayName("Older or duplicate copy is ignored (arriving out of order does not break anything)")
     void olderOrDuplicateReplicaIgnored() {
         ScheduledFlight local = copy(FlightStatus.DELAYED, 2, T2);
         assertFalse(local.mergeReplica(FlightStatus.SCHEDULED, null, null, 1, T1));
@@ -50,7 +50,7 @@ class ReplicaMergeTest {
     }
 
     @Test
-    @DisplayName("Alteracoes concorrentes com a mesma revision: ganha a mais recente, em todas as replicas")
+    @DisplayName("Concurrent changes with the same revision: the most recent wins, in all replicas")
     void concurrentChangesConverge() {
         ScheduledFlight a = copy(FlightStatus.DELAYED, 2, T1);
         ScheduledFlight b = copy(FlightStatus.CANCELED, 2, T2);

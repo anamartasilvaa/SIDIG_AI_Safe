@@ -16,7 +16,7 @@ class ScheduledFlightTest {
     }
 
     @Test
-    @DisplayName("Um voo novo comeca SCHEDULED e tem um id UUID")
+    @DisplayName("A new flight starts as SCHEDULED and has a UUID id")
     void newFlightIsScheduled() {
         ScheduledFlight flight = newFlight();
         assertEquals(FlightStatus.SCHEDULED, flight.getStatus());
@@ -24,7 +24,7 @@ class ScheduledFlightTest {
     }
 
     @Test
-    @DisplayName("Nao e possivel agendar no passado nem sem dados obrigatorios")
+    @DisplayName("Cannot schedule in the past nor without mandatory data")
     void invariants() {
         assertThrows(IllegalArgumentException.class, () ->
                 new ScheduledFlight(RouteId.of("A"), RegistrationNumber.of("B"), NOW.minusMinutes(1), NOW));
@@ -35,7 +35,7 @@ class ScheduledFlightTest {
     }
 
     @Test
-    @DisplayName("Ciclo completo regista partida e chegada")
+    @DisplayName("Complete lifecycle records departure and arrival")
     void fullLifecycle() {
         ScheduledFlight flight = newFlight();
         flight.changeStatus(FlightStatus.DELAYED, NOW);
@@ -47,7 +47,7 @@ class ScheduledFlightTest {
     }
 
     @Test
-    @DisplayName("Pedir o estado atual e idempotente (seguro para retries)")
+    @DisplayName("Changing to the same status is idempotent (safe for retries)")
     void sameStatusIsNoOp() {
         ScheduledFlight flight = newFlight();
         flight.changeStatus(FlightStatus.DELAYED, NOW);
@@ -56,7 +56,7 @@ class ScheduledFlightTest {
     }
 
     @Test
-    @DisplayName("Transicao invalida lanca SchedulingRuleViolation (409)")
+    @DisplayName("Invalid transition throws SchedulingRuleViolation (409)")
     void invalidTransition() {
         ScheduledFlight flight = newFlight();
         flight.changeStatus(FlightStatus.IN_FLIGHT, NOW);
