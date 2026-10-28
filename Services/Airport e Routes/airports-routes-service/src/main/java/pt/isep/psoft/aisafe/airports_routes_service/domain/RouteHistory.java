@@ -25,11 +25,15 @@ public class RouteHistory {
     protected RouteHistory() {}
 
     public RouteHistory(String routeId, String action) {
+        this(routeId, action, LocalDateTime.now());
+    }
+
+    public RouteHistory(String routeId, String action, LocalDateTime startDate) {
         Assert.hasText(routeId, "Route ID required");
         Assert.hasText(action, "Action required");
         this.routeId = routeId;
         this.action = action;
-        this.startDate = LocalDateTime.now();
+        this.startDate = startDate;
     }
 
     public void closeHistory(LocalDateTime endDate) {

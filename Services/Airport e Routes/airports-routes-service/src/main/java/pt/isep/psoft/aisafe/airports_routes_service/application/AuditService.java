@@ -14,6 +14,7 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.time.Instant;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 public class AuditService {
@@ -34,6 +35,13 @@ public class AuditService {
         String user = authentication == null || authentication instanceof AnonymousAuthenticationToken
                 || authentication.getName() == null
                 ? "SYSTEM" : sanitize(authentication.getName());
+        String roles = authentication == null
+                ? "[]"
+                : authentication.getAuthorities().stream()
+                .map(authority -> sanitize(authority.getAuthority()))
+                .collect(Collectors.joining(",", "[", "]"));
+        String method = request == null ? "" : sanitize(request.getMethod());
+        String path = request == null ? "" : sanitize(request.getRequestURI());
         String originalUser = request == null ? "" : sanitize(request.getHeader("X-Original-User"));
         if (originalUser.isBlank()) originalUser = user;
         String origin = Boolean.TRUE.equals(replication) ? "REPLICATION" : "CLIENT";
@@ -42,9 +50,9 @@ public class AuditService {
             correlationId = sanitize(request.getHeader("X-Correlation-Id"));
         }
         if (correlationId.isBlank()) correlationId = UUID.randomUUID().toString();
-        AUDIT.info("timestamp={} instance={} user={} origin={} originalUser={} action={} targetId={} outcome={} correlationId={}",
-                Instant.now(), sanitize(instance), user, origin, originalUser, sanitize(action),
-                sanitize(targetId), sanitize(outcome), correlationId);
+        AUDIT.info("timestamp={} instance={} user={} roles={} method={} path={} origin={} originalUser={} action={} targetId={} outcome={} correlationId={}",
+                Instant.now(), sanitize(instance), user, roles, method, path, origin, originalUser,
+                sanitize(action), sanitize(targetId), sanitize(outcome), correlationId);
     }
 
     public void recordDenied(String action, Object targetId) {

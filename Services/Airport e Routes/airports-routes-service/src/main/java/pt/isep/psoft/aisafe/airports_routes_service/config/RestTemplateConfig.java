@@ -32,6 +32,10 @@ public class RestTemplateConfig {
     @Bean
     public RestTemplate restTemplate(@Value("${peer.http.connect-timeout:2000}") int connectTimeout,
                                      @Value("${peer.http.read-timeout:3000}") int readTimeout,
+                                     @Value("${peer.resilience.failure-threshold:3}") int failureThreshold,
+                                     @Value("${peer.resilience.open-duration:10s}") Duration openDuration,
+                                     @Value("${peer.resilience.max-retries:1}") int maxRetries,
+                                     @Value("${peer.resilience.retry-backoff:100ms}") Duration retryBackoff,
                                      @Value("${server.ssl.key-store:}") String keyStoreLocation,
                                      @Value("${server.ssl.key-store-password:}") String keyStorePassword,
                                      @Value("${server.ssl.key-store-type:PKCS12}") String keyStoreType,
@@ -74,6 +78,8 @@ public class RestTemplateConfig {
             ClientHttpRequestInterceptor jwtInterceptor = new JwtClientHttpRequestInterceptor(peerTokenService);
             restTemplate.getInterceptors().add(jwtInterceptor);
         }
+        restTemplate.getInterceptors().add(new PeerResilienceInterceptor(
+                failureThreshold, openDuration, maxRetries, retryBackoff));
 
         return restTemplate;
     }

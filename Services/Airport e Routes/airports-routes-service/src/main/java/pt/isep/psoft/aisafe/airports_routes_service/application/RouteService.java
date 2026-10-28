@@ -30,6 +30,7 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -153,7 +154,8 @@ public class RouteService {
 
         route.applyReplicationMetadata(isReplication ? receivedAt : Instant.now(), isReplication ? receivedNode : nodeId);
         Route saved = routeRepository.save(route);
-        closeOldHistoryAndCreateNew(saved.getRouteId().id(), "DEACTIVATED");
+        closeOldHistoryAndCreateNew(saved.getRouteId().id(), "DEACTIVATED",
+                isReplication && receivedAt != null ? receivedAt : saved.getLastModified());
 
         if (!isReplication) {
             replicateDeactivate(id, saved.getLastModified(), saved.getOriginNodeId());
@@ -185,7 +187,8 @@ public class RouteService {
         route.updateParameters(dto.estimatedFlightTime(), dto.minimumRange(), dto.minimumCapacity());
         route.applyReplicationMetadata(isReplication ? receivedAt : Instant.now(), isReplication ? receivedNode : nodeId);
         Route saved = routeRepository.save(route);
-        closeOldHistoryAndCreateNew(saved.getRouteId().id(), "UPDATED");
+        closeOldHistoryAndCreateNew(saved.getRouteId().id(), "UPDATED",
+                isReplication && receivedAt != null ? receivedAt : saved.getLastModified());
         if (!isReplication) {
             replicateUpdate(id, dto, saved.getLastModified(), saved.getOriginNodeId());
         }
@@ -465,7 +468,8 @@ public class RouteService {
                 route.getMinimumCapacity(),
                 route.getLastModified(),
                 route.getOriginNodeId(),
-                route.getMinimumRange()
+                route.getMinimumRange(),
+                route.getEstimatedFlightTime()
         );
     }
 
@@ -501,57 +505,74 @@ public class RouteService {
         return new HttpEntity<>(headers);
     }
 
-    private void closeOldHistoryAndCreateNew(String routeId, String action) {
+    private void closeOldHistoryAndCreateNew(String routeId, String action, Instant eventTimestamp) {
+        LocalDateTime eventDateTime = LocalDateTime.ofInstant(eventTimestamp, ZoneOffset.UTC);
         Optional<RouteHistory> activeHistory = routeHistoryRepository.findFirstByRouteIdAndEndDateIsNull(routeId);
         if (activeHistory.isPresent()) {
             RouteHistory old = activeHistory.get();
-            old.closeHistory(LocalDateTime.now());
+            old.closeHistory(eventDateTime);
             routeHistoryRepository.save(old);
         }
-        routeHistoryRepository.save(new RouteHistory(routeId, action));
+        routeHistoryRepository.save(new RouteHistory(routeId, action, eventDateTime));
     }
 
     // US228
     public String exportRoutesAsGeoJson() {
         List<Route> allRoutes = routeRepository.findAll();
+        List<GeoJsonFeature> features = allRoutes.stream()
+                .map(this::toGeoJsonFeature)
+                .toList();
 
-        StringBuilder sb = new StringBuilder();
-        sb.append("{\n");
-        sb.append("  \"type\": \"FeatureCollection\",\n");
-        sb.append("  \"features\": [\n");
-
-        boolean isFirst = true;
-
-        for (Route route : allRoutes) {
-            if (!isFirst) {
-                sb.append(",\n");
-            }
-            isFirst = false;
-
-            Airport origin = route.getOrigin();
-            Airport dest = route.getDestination();
-
-            sb.append("    {\n");
-            sb.append("      \"type\": \"Feature\",\n");
-            sb.append("      \"properties\": {\n");
-            sb.append("        \"routeId\": \"").append(route.getRouteId().id()).append("\",\n");
-            sb.append("        \"origin\": \"").append(origin.getIataCode().code()).append("\",\n");
-            sb.append("        \"destination\": \"").append(dest.getIataCode().code()).append("\",\n");
-            sb.append("        \"status\": \"").append(route.getStatus().name()).append("\"\n");
-            sb.append("      },\n");
-            sb.append("      \"geometry\": {\n");
-            sb.append("        \"type\": \"LineString\",\n");
-            sb.append("        \"coordinates\": [\n");
-            sb.append("          [").append(origin.getCoordinates().longitude()).append(", ").append(origin.getCoordinates().latitude()).append("],\n");
-            sb.append("          [").append(dest.getCoordinates().longitude()).append(", ").append(dest.getCoordinates().latitude()).append("]\n");
-            sb.append("        ]\n");
-            sb.append("      }\n");
-            sb.append("    }");
+        try {
+            return objectMapper.writeValueAsString(new GeoJsonFeatureCollection(features));
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Unable to serialize routes as GeoJSON", exception);
         }
+    }
 
-        sb.append("\n  ]\n");
-        sb.append("}\n");
+    private GeoJsonFeature toGeoJsonFeature(Route route) {
+        Airport origin = route.getOrigin();
+        Airport destination = route.getDestination();
+        Map<String, String> properties = new LinkedHashMap<>();
+        properties.put("routeId", route.getRouteId().id());
+        properties.put("origin", origin.getIataCode().code());
+        properties.put("destination", destination.getIataCode().code());
+        properties.put("status", route.getStatus().name());
 
-        return sb.toString();
+        return new GeoJsonFeature(
+                properties,
+                new GeoJsonLineString(List.of(
+                        List.of(origin.getCoordinates().longitude(), origin.getCoordinates().latitude()),
+                        List.of(destination.getCoordinates().longitude(), destination.getCoordinates().latitude())
+                ))
+        );
+    }
+
+    private record GeoJsonFeatureCollection(
+            String type,
+            List<GeoJsonFeature> features
+    ) {
+        private GeoJsonFeatureCollection(List<GeoJsonFeature> features) {
+            this("FeatureCollection", features);
+        }
+    }
+
+    private record GeoJsonFeature(
+            String type,
+            Map<String, String> properties,
+            GeoJsonLineString geometry
+    ) {
+        private GeoJsonFeature(Map<String, String> properties, GeoJsonLineString geometry) {
+            this("Feature", properties, geometry);
+        }
+    }
+
+    private record GeoJsonLineString(
+            String type,
+            List<List<Double>> coordinates
+    ) {
+        private GeoJsonLineString(List<List<Double>> coordinates) {
+            this("LineString", coordinates);
+        }
     }
 }

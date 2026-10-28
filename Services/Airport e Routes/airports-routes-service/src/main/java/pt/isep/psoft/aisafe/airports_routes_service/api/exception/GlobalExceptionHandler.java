@@ -20,7 +20,7 @@ public class GlobalExceptionHandler {
                 .body(Map.of("error", "Not Found", "message", ex.getMessage()));
     }
 
-    // AI-assisted (GitHub Copilot)
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, String>> handleBadRequest(IllegalArgumentException ex) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)

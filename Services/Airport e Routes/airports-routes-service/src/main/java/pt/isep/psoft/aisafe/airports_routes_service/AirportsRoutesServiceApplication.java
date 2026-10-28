@@ -6,7 +6,6 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 
 @SpringBootApplication
 @EnableScheduling
-// AI-assisted (GitHub Copilot): enables the transactional replication outbox worker.
 public class AirportsRoutesServiceApplication {
 
 	public static void main(String[] args) {

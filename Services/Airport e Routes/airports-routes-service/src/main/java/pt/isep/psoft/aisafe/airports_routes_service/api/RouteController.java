@@ -20,6 +20,7 @@ import pt.isep.psoft.aisafe.airports_routes_service.application.DTO.UpdateRouteD
 import pt.isep.psoft.aisafe.airports_routes_service.application.RouteService;
 
 import java.util.List;
+import java.time.Instant;
 import java.util.stream.Collectors;
 
 import static org.springframework.hateoas.server.mvc.WebMvcLinkBuilder.linkTo;
@@ -55,24 +56,42 @@ public class RouteController {
     @PatchMapping("/{id}")
     @Operation(summary = "Updates technical parameters of an existing route")
     public ResponseEntity<EntityModel<RouteViewDTO>> updateRoute(@PathVariable String id, @Valid @RequestBody UpdateRouteDTO dto,
-                                                                  @RequestHeader(value = "X-P2P-Sync", defaultValue = "false") boolean isReplication) {
-        RouteViewDTO updated = routeService.updateRoute(id, dto, isReplication);
+                                                                  @RequestHeader(value = "X-P2P-Sync", defaultValue = "false") boolean isReplication,
+                                                                  @RequestHeader(value = "X-Last-Modified", required = false) String lastModified,
+                                                                  @RequestHeader(value = "X-Origin-Node", required = false) String originNode) {
+        RouteViewDTO updated = routeService.updateRoute(id, dto, isReplication,
+                parseInstant(lastModified), originNode);
         EntityModel<RouteViewDTO> resource = EntityModel.of(updated);
         resource.add(WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(RouteController.class).deactivateRoute(id, false)).withRel("deactivate-route"));
         resource.add(WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(RouteController.class).getRouteHistory(id)).withRel("route-history"));
         return ResponseEntity.ok(resource);
     }
 
+    public ResponseEntity<EntityModel<RouteViewDTO>> updateRoute(String id, UpdateRouteDTO dto, boolean isReplication) {
+        return updateRoute(id, dto, isReplication, null, null);
+    }
+
     // --- US112: Desativar a Rota ---
     @PatchMapping("/{id}/deactivate")
     @Operation(summary = "Deactivates a route")
     public ResponseEntity<EntityModel<RouteViewDTO>> deactivateRoute(@PathVariable String id,
-                                                                       @RequestHeader(value = "X-P2P-Sync", defaultValue = "false") boolean isReplication) {
-        RouteViewDTO deactivated = routeService.deactivateRoute(id, isReplication);
+                                                                       @RequestHeader(value = "X-P2P-Sync", defaultValue = "false") boolean isReplication,
+                                                                       @RequestHeader(value = "X-Last-Modified", required = false) String lastModified,
+                                                                       @RequestHeader(value = "X-Origin-Node", required = false) String originNode) {
+        RouteViewDTO deactivated = routeService.deactivateRoute(id, isReplication,
+                parseInstant(lastModified), originNode);
         EntityModel<RouteViewDTO> resource = EntityModel.of(deactivated);
         resource.add(WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(RouteController.class).updateRoute(id, null, false)).withRel("update-route"));
         resource.add(WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(RouteController.class).getRouteHistory(id)).withRel("route-history"));
         return ResponseEntity.ok(resource);
+    }
+
+    public ResponseEntity<EntityModel<RouteViewDTO>> deactivateRoute(String id, boolean isReplication) {
+        return deactivateRoute(id, isReplication, null, null);
+    }
+
+    private Instant parseInstant(String value) {
+        return value == null || value.isBlank() ? null : Instant.parse(value);
     }
 
     // --- US216: Pesquisar Rotas Alternativas ---

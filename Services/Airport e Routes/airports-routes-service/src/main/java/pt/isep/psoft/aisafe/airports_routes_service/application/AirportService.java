@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import org.springframework.beans.factory.annotation.Value;
 import java.time.Instant;
+import java.util.Base64;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -18,6 +19,7 @@ import org.springframework.web.client.RestTemplate;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.util.UriComponentsBuilder;
+import org.springframework.beans.factory.annotation.Value;
 import pt.isep.psoft.aisafe.airports_routes_service.application.DTO.*;
 import pt.isep.psoft.aisafe.airports_routes_service.api.exception.NotFoundException;
 import pt.isep.psoft.aisafe.airports_routes_service.domain.*;
@@ -268,19 +270,10 @@ public class AirportService {
                 });
 
         try {
-            String projectDirectory = System.getProperty("user.dir");
-            java.nio.file.Path uploadPath = java.nio.file.Paths.get(projectDirectory, "uploads");
-
-            if (!java.nio.file.Files.exists(uploadPath)) {
-                java.nio.file.Files.createDirectories(uploadPath);
-            }
-
-            String fileName = iataCode.toUpperCase() + "_" + file.getOriginalFilename();
-            java.nio.file.Path filePath = uploadPath.resolve(fileName);
-
-            java.nio.file.Files.copy(file.getInputStream(), filePath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-
-            String fileUrl = "/uploads/" + fileName;
+            String contentType = file.getContentType() == null
+                    ? "application/octet-stream" : file.getContentType();
+            String fileUrl = "data:" + contentType + ";base64,"
+                    + Base64.getEncoder().encodeToString(file.getBytes());
             airport.updateImage(fileUrl);
             airport.applyReplicationMetadata(isReplication ? null : Instant.now(), isReplication ? null : nodeId);
 
