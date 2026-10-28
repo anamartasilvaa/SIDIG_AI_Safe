@@ -12,6 +12,7 @@ participant "InternalScheduledFlightController" as Ctrl
 participant "ScheduledFlightService" as Svc
 participant "FlightSchedulingPolicy" as Policy
 participant "ScheduledFlightRepository" as Repo
+participant "ScheduledFlight" as Flight
 participant "FlightReplicator" as Rep
 end box
 participant "FO-2 / FO-3\n/internal" as FO
@@ -23,31 +24,28 @@ AC -> AC : validates (RBAC ATCC/ADMIN) and updates the status\nCS-TTB: ACTIVE ->
 AC -> AC : candidates = other ACTIVE aircraft of the same model
 
 == 2. Aircraft asks Flight Operations to reassign ==
-AC -> Key : POST /internal/scheduled-flights/aircraft/CS-TTB/grounding\nX-API-Key\n{ candidateRegistrationNumbers: [CS-TTA, ...] }
+AC -> Key : POST /internal/scheduled-flights/aircraft/CS-TTB/grounding\nX-API-Key\n{ candidateRegistrationNumbers: [CS-TTA, ...] }\n(tries the FO replicas in order; stops at the first that answers)
 Key -> Key : AUDIT ALLOWED (invalid key -> 401, AUDIT DENIED)
 Key -> Ctrl : valid key
 Ctrl -> Svc : groundAircraft("CS-TTB", candidates)
 
 == 3. Selection of the affected flights ==
 Svc -> Svc : cleans candidates\n(no blanks, no duplicates, not CS-TTB itself)
-Svc -> Repo : findByAircraft("CS-TTB") (local + peers)
+Svc -> Svc : findByAircraft("CS-TTB")\n(local flights + collectAll on the peers, newest copy wins)
 Svc --> Svc : affected = future flights in SCHEDULED or DELAYED
 
 == 4. Reassignment, flight by flight ==
 loop each affected flight
   loop each candidate, in order, until one is free
     Svc -> Svc : lock(candidate)
-    Svc -> Repo : flights of the candidate (local + peers)
+    Svc -> Svc : findByAircraft(candidate)\n(local + peers)
     Svc -> Policy : findConflict(slots, flight date)
     alt no conflict (>= 2 h apart)
-      Svc -> Repo : flight.reassignAircraft(candidate), revision++, save
-      Svc -> Rep : replicate(flight)
+      Svc -> Repo : find the local copy of the flight
+      Svc -> Flight : reassignAircraft(candidate)
+      Svc -> Repo : save(flight)
+      Svc -> Rep : replicate(flight) [background]
       Rep -> FO : PUT /internal/.../{id}/replica (new aircraft, revision)
-      note right of FO
-        Each replica applies the copy only if
-        its revision is more recent
-        (mergeReplica copies the aircraft)
-      end note
     else conflict with that candidate
       Svc -> Svc : tries the next candidate
     end
@@ -64,6 +62,7 @@ Svc -> Svc : log GROUNDING CS-TTB: [...]
 == 5. Result ==
 Svc --> Ctrl : report (one sentence per flight)
 Ctrl --> AC : 200 JSON array of sentences
-AC --> GW : 200
+AC -> AC : keeps only "Flights service notified"\n(the FO report is not forwarded)
+AC --> GW : 200 { aircraft, swapReport }
 GW --> User : 200
 @enduml

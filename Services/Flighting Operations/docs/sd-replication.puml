@@ -1,7 +1,7 @@
 @startuml sd-replication
 skinparam style strictuml
 autonumber
-title SD - Asynchronous replication, retry and synchronization on startup
+title SD - Replication with acknowledgement, retry and synchronization on startup
 
 box "FO-1 (source)" #F4F7FF
 participant "ScheduledFlightService" as Svc1
@@ -14,26 +14,33 @@ box "FO-3" #FFF8F0
 participant "InternalScheduledFlightController\n+ ScheduledFlightService" as FO3
 end box
 
-== Local write and propagation ==
-Svc1 -> Svc1 : save(flight) [rev 1]\n(client already received the response)
-Svc1 -> Rep : replicate(flight)
+== Local write and propagation (scheduling and status change) ==
+Svc1 -> Svc1 : save(flight) [rev 1]
+Svc1 -> Rep : replicateAcknowledged(flight)
 activate Rep
 Rep -> Rep : pending[FO-2][id] = flight\npending[FO-3][id] = flight
-par in background
-  Rep -> FO2 : PUT /internal/scheduled-flights/{id}/replica (X-API-Key)
-  FO2 -> FO2 : applyReplica: does not exist -> creates (rev 1)
-  FO2 --> Rep : 204
-  Rep -> Rep : removes pending FO-2
-else
-  Rep -> FO3 : PUT /internal/scheduled-flights/{id}/replica
-  FO3 --> Rep : fails (FO-3 down / timeout)
-  Rep -> Rep : keeps pending FO-3
-end
+Rep -> FO2 : PUT /internal/scheduled-flights/{id}/replica (X-API-Key)\n[synchronous: waits for the answer]
+FO2 -> FO2 : applyReplica: does not exist -> creates (rev 1)
+FO2 --> Rep : 204
+Rep -> Rep : removes pending FO-2 -> acknowledged = true
+Rep -> FO3 : PUT .../replica (background, not awaited)
+Rep --> Svc1 : true (at least one peer confirmed)
 deactivate Rep
+FO3 --> Rep : fails (FO-3 down / timeout)
+Rep -> Rep : keeps pending FO-3
+
+== If no peer confirms ==
+Svc1 -> Rep : replicateAcknowledged(flight)
+Rep -> FO2 : PUT .../replica
+FO2 --> Rep : fails
+Rep -> FO3 : PUT .../replica
+FO3 --> Rep : fails
+Rep --> Svc1 : false
+Svc1 -> Svc1 : log "AP: accepted without confirmation from any peer"\n(the response is still sent; the copies stay queued)
 
 == State change: only the newest copy remains pending ==
 Svc1 -> Svc1 : changeStatus(DELAYED) [rev 2]
-Svc1 -> Rep : replicate(flight rev 2)
+Svc1 -> Rep : replicateAcknowledged(flight rev 2)
 Rep -> Rep : pending[FO-3][id] = newest(rev 1, rev 2) = rev 2
 Rep -> FO2 : PUT .../replica (rev 2)
 FO2 -> FO2 : mergeReplica: rev 2 > rev 1 -> applies
@@ -58,10 +65,4 @@ FO3 -> FO2 : GET /internal/scheduled-flights
 FO2 --> FO3 : all local flights
 FO3 -> FO3 : applyReplica for each flight\n(only applies newer copies)
 
-note over Svc1, FO3
-  Convergence: a copy is only applied if it has a higher revision
-  (on a tie, most recent lastModifiedAt). Repeated or
-  out-of-order copies do not change the result. The /replica endpoint
-  never propagates again -> no replication cycles.
-end note
 @enduml

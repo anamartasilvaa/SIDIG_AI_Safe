@@ -1,0 +1,58 @@
+@startuml sd-get-flight-forwarding
+skinparam style strictuml
+autonumber
+title SD - Get Scheduled Flight by id (forwarding peer-to-peer)
+
+actor "ATCC / Backoffice / Admin" as User
+box "FO-1 :8081" #F4F7FF
+participant "ScheduledFlightController" as Ctrl
+participant "ScheduledFlightService" as Svc
+participant "ScheduledFlightRepository" as Repo
+participant "PeerClient" as Peers
+participant "RemoteCaller\n(+ CircuitBreaker)" as Caller
+end box
+box "FO-2 :8082" #F4FFF6
+participant "ApiKeyFilter" as F2
+participant "InternalScheduledFlightController" as Int2
+end box
+box "FO-3 :8083" #FFF8F0
+participant "InternalScheduledFlightController" as Int3
+end box
+
+User -> Ctrl : GET /api/scheduled-flights/{id}
+Ctrl -> Svc : findById(id)
+Svc -> Svc : FlightId.of(id)
+Svc -> Repo : findByFlightId_Uuid(id)
+
+alt found locally
+  Repo --> Svc : ScheduledFlight
+  Svc --> Ctrl : ScheduledFlightViewDTO
+  Ctrl --> User : 200 OK (EntityModel)
+else not on this replica: forwarding
+  Repo --> Svc : Optional.empty()
+  Svc -> Peers : findFirst("/internal/scheduled-flights/{id}")
+  par requests in parallel (timeouts 1 s / 2 s, retry, circuit breaker)
+    Peers -> Caller : get(FO-2)
+    Caller -> F2 : GET /internal/... (X-API-Key)
+    F2 -> Int2 : valid key (AUDIT ALLOWED)
+    Int2 --> Caller : 200 ScheduledFlightViewDTO or 404
+    Caller --> Peers : Optional[flight] / empty / failure
+  else
+    Peers -> Caller : get(FO-3)
+    Caller -> Int3 : GET /internal/... (X-API-Key)
+    Int3 --> Caller : 200 or 404 (only sees local data)
+    Caller --> Peers : Optional[flight] / empty / failure
+  end
+  alt some peer has the flight
+    Peers --> Svc : Optional[flight] (first one found)
+    Svc --> Ctrl : ScheduledFlightViewDTO
+    Ctrl --> User : 200 OK (EntityModel)
+  else all peers answered "not found"
+    Peers --> Svc : empty, no unreachable peers
+    Ctrl --> User : 404 Not Found
+  else not found and some peer did not answer
+    Peers --> Svc : empty + unreachablePeers
+    Ctrl --> User : 503 Service Unavailable\n(the flight may exist on that replica: never a false 404)
+  end
+end
+@enduml

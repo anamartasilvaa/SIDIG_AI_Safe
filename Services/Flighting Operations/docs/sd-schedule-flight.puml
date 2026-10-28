@@ -46,6 +46,7 @@ activate Svc
 
 == 2. Aggregate invariants (no remote calls) ==
 Svc -> Svc : new ScheduledFlight(route, aircraft, date, now)
+note right : date in the past / blank fields -> 400
 Svc -> Svc : lock(registration)
 
 == 3. Validation in other services (with user's JWT) ==
@@ -76,8 +77,8 @@ Policy --> Svc : Optional<FlightSlot>
 
 == 5. Result ==
 alt all valid
-  Svc -> Repo : save(flight)
-  Svc -> Rep : replicate(flight)
+  Svc -> Repo : save(flight) (still inside the aircraft lock)
+  Svc -> Rep : replicateAcknowledged(flight)
   Svc --> Ctrl : ScheduleResultDTO
   Ctrl --> GW : 201 Created + Location (https://localhost:8443/...)\n[+ X-Partial-Response-Unreachable-Peers if any peer failed (AP)]
   GW --> User : 201 (X-Served-By: 127.0.0.1:8082)

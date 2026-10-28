@@ -1,0 +1,57 @@
+@startuml sd-check-availability
+skinparam style strictuml
+autonumber
+title SD - Check Aircraft Availability (cross-service)
+
+actor "ATCC / Admin" as User
+box "FO-1 :8081" #F4F7FF
+participant "ScheduledFlightController" as Ctrl
+participant "ScheduledFlightService" as Svc
+participant "FlightAssignmentValidator" as Val
+participant "FlightSchedulingPolicy" as Policy
+participant "ScheduledFlightRepository" as Repo
+participant "PeerClient" as Peers
+end box
+participant "Aircraft\nService" as AC
+participant "FO-2 / FO-3\n/internal" as FO
+
+User -> Ctrl : GET /api/scheduled-flights/availability?registrationNumber=CS-TTA&dateTime=...\nBearer JWT (ATCC or ADMIN, otherwise 403)
+Ctrl -> Svc : checkAvailability(registration, dateTime)
+
+Svc -> Val : findAircraft(registration)
+Val -> AC : GET /api/aircraft/{registration} + Bearer JWT
+alt Aircraft Service available
+  AC --> Val : 200 AircraftInfo (or 404)
+  Val --> Svc : Optional<AircraftCapabilities>
+  alt not registered
+    Svc -> Svc : reason "Aircraft X is not registered."
+  else status != ACTIVE
+    Svc -> Svc : reason "Aircraft X is <status>."
+  end
+else all replicas down / circuit open
+  AC --> Val : failure
+  Val --> Svc : DependencyUnavailableException
+  Svc -> Svc : reason "Aircraft service unavailable:\noperational status could not be confirmed."\n(graceful degradation, not 503)
+end
+
+Svc -> Repo : local flights of the aircraft
+Svc -> Peers : collectAll("/internal/scheduled-flights/aircraft/{reg}")
+par in parallel
+  Peers -> FO : GET (X-API-Key)
+  FO --> Peers : List<ScheduledFlightViewDTO>
+end
+Peers --> Svc : AggregatedResult(items, unreachablePeers)
+Svc -> Svc : merge local + remote (newest revision wins)
+
+Svc -> Policy : findConflict(slots, dateTime)
+Policy --> Svc : Optional<FlightSlot>
+opt conflict found
+  Svc -> Svc : reason "Conflicts with flight <id> at <time>."
+end
+opt some peer did not answer
+  Svc -> Svc : reason "Some replicas did not answer:\nconflicts could not be fully checked."
+end
+
+Svc --> Ctrl : AvailabilityDTO(available = reasons empty, aircraftStatus,\nconflictingFlightId, reasons, unreachablePeers)
+Ctrl --> User : 200 OK
+@enduml
