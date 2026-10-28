@@ -1,0 +1,56 @@
+@startuml sd-change-flight-status
+skinparam style strictuml
+autonumber
+title SD - Change Flight Status (local first; forwarding only if the copy is missing)
+
+actor "ATCC / Admin" as User
+box "FO-1 :8081 (receives the request)" #F4F7FF
+participant "ScheduledFlightController" as Ctrl
+participant "ScheduledFlightService" as Svc
+participant "ScheduledFlightRepository" as Repo
+participant "ScheduledFlight" as Flight
+participant "FlightReplicator" as Rep
+participant "PeerClient" as Peers
+end box
+box "FO-2 :8082" #F4FFF6
+participant "InternalScheduledFlightController\n+ ScheduledFlightService" as FO2
+end box
+participant "FO-3 :8083\n/internal" as FO3
+
+User -> Ctrl : PATCH /api/scheduled-flights/{id}/status {"status":"DELAYED"}\nBearer JWT (ATCC or ADMIN, otherwise 403)
+Ctrl -> Svc : changeStatus(id, "DELAYED")
+Svc -> Svc : FlightId.of(id), FlightStatus.parse("DELAYED")
+Svc -> Repo : findByFlightId_Uuid(id)  [lock per flight]
+
+alt the copy exists on this replica (normal case)
+  Repo --> Svc : ScheduledFlight
+  Svc -> Flight : changeStatus(DELAYED, now)
+  Svc -> Repo : save(flight)
+  Svc -> Rep : replicateAcknowledged(flight)
+  Svc --> Ctrl : ScheduledFlightViewDTO
+  Ctrl --> User : 200 OK (EntityModel)
+else not stored here yet (replication lagging or disabled)
+  Repo --> Svc : Optional.empty()
+  Svc -> Peers : forwardPut("/internal/scheduled-flights/{id}/status")
+  par in parallel
+    Peers -> FO2 : PUT /internal/.../status (X-API-Key)
+    FO2 -> FO2 : applyStatusLocally: change, save,\nreplicateAcknowledged
+    FO2 --> Peers : 200 ScheduledFlightViewDTO
+  else
+    Peers -> FO3 : PUT /internal/.../status (X-API-Key)
+    FO3 --> Peers : 404 (does not have the flight)
+  end
+  Peers --> Svc : Optional[updated flight]
+  alt some replica updated it
+    Svc --> Ctrl : ScheduledFlightViewDTO
+    Ctrl --> User : 200 OK
+  else no replica has the flight
+    Ctrl --> User : 404 Not Found
+  end
+end
+
+note over User, FO3
+  Invalid transition (e.g. IN_FLIGHT -> CANCELED): SchedulingRuleViolation,
+  raised locally or propagated from the replica that applied it -> 409 Conflict.
+end note
+@enduml

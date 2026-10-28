@@ -3,7 +3,7 @@ skinparam classAttributeIconSize 0
 skinparam packageStyle rectangle
 skinparam shadowing false
 hide empty members
-title Flight Operations - Domain Model (distributed bounded context)
+title Flight Operations - Domain Model
 
 package "Scheduled Flight Aggregate" {
     class ScheduledFlight <<Entity>> <<Root>> {
@@ -40,6 +40,10 @@ package "Scheduled Flight Aggregate" {
         COMPLETED
         CANCELED
         --
+        + allowedNext(): Set<FlightStatus>
+        + canTransitionTo(next): boolean
+        + occupiesAircraft(): boolean
+        + {static} parse(text: String): FlightStatus
         + canTransitionTo(next): boolean
         + occupiesAircraft(): boolean
     }
@@ -58,6 +62,7 @@ package "Scheduling Rules (Domain Service)" {
         --
         + checkAssignment(route: RouteRequirements, aircraft: AircraftCapabilities)
         + findConflict(existing: Collection<FlightSlot>, when: LocalDateTime): Optional<FlightSlot>
+        + minimumGap(): Duration
     }
     class RouteRequirements <<Value Object>> {
         routeId: String
@@ -65,12 +70,16 @@ package "Scheduling Rules (Domain Service)" {
         distance: Double
         minimumRange: Double
         minimumCapacity: Integer
+        --
+        + requiredRange(): Double
     }
     class AircraftCapabilities <<Value Object>> {
         registrationNumber: String
         status: String
         maximumRange: Double
         seatingCapacity: Integer
+        --
+        + isOperational(): boolean
     }
     class FlightSlot <<Value Object>> {
         flightId: String
