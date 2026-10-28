@@ -8,6 +8,7 @@ import java.time.Instant;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
@@ -15,7 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.client.RestClientException;
-import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.util.UriComponentsBuilder;
 import pt.isep.psoft.aisafe.airports_routes_service.application.DTO.*;
 import pt.isep.psoft.aisafe.airports_routes_service.api.exception.NotFoundException;
@@ -65,6 +66,7 @@ public class AirportService {
     public AirportViewDTO registerAirport(RegisterAirportDTO dto, boolean isReplication) {
         return registerAirport(dto, isReplication, dto.lastModified(), dto.originNodeId());
     }
+
     @Transactional
     public AirportViewDTO registerAirport(RegisterAirportDTO dto, boolean isReplication, Instant receivedAt, String receivedNode) {
         if (!isReplication && airportRepository.findByIataCodeString(dto.iataCode().toUpperCase()).isPresent()) {
@@ -74,7 +76,7 @@ public class AirportService {
             Optional<Airport> existing = airportRepository.findByIataCodeString(dto.iataCode().toUpperCase());
             if (existing.isPresent()) {
                 Airport current = existing.get();
-                if (isNewer(receivedAt, receivedNode, current.getLastModified(), current.getOriginNodeId())) {
+                if (receivedAt != null && isNewer(receivedAt, receivedNode, current.getLastModified(), current.getOriginNodeId())) {
                     current.applyReplicationData(dto.name(), dto.city(), dto.country(), dto.timezone(),
                             AirportType.valueOf(dto.type().toUpperCase()), new Coordinates(dto.latitude(), dto.longitude()),
                             current.getStatus(), null, null, dto.imageUrl(), null, null);
@@ -101,7 +103,6 @@ public class AirportService {
                     airport.addRunway(new Runway(r.name(), r.length(), r.orientation()))
             );
         }
-
 
         if (dto.imageUrl() != null && !dto.imageUrl().isBlank()) {
             airport.updateImage(dto.imageUrl());
@@ -146,9 +147,13 @@ public class AirportService {
                     .pathSegment("api", "airports", cleanCode)
                     .toUriString();
             try {
-                ResponseEntity<JsonNode> response = restTemplate.exchange(
-                        url, HttpMethod.GET, p2pEntity(hops + 1), JsonNode.class);
-                JsonNode body = response.getBody();
+                ResponseEntity<String> response = restTemplate.exchange(
+                        url, HttpMethod.GET, p2pEntity(hops + 1), String.class);
+                String responseBody = response.getBody();
+                if (responseBody == null || responseBody.isBlank()) {
+                    continue;
+                }
+                JsonNode body = objectMapper.readTree(responseBody);
                 if (body == null || body.isNull()) {
                     continue;
                 }
@@ -156,18 +161,13 @@ public class AirportService {
                 return objectMapper.treeToValue(dtoNode, AirportViewDTO.class);
             } catch (HttpClientErrorException.NotFound exception) {
                 log.debug("Peer airport lookup returned 404 for {}", peerUrl);
-            } catch (RestClientException exception) {
+            } catch (Exception exception) {
                 peerFailure = true;
-                log.warn("Peer airport lookup failed with status {} for {}",
-                        exception instanceof HttpClientErrorException httpException
-                                ? httpException.getStatusCode() : "peer error", peerUrl);
-            } catch (JsonProcessingException exception) {
-                peerFailure = true;
-                log.warn("Invalid airport response from peer {}", peerUrl, exception);
+                log.warn("Peer airport lookup failed for {}", peerUrl, exception);
             }
         }
         if (peerFailure) {
-            throw new ResourceAccessException("One or more peers were unavailable");
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "One or more peers were unavailable");
         }
         throw airportNotFound(cleanCode);
     }
@@ -215,7 +215,6 @@ public class AirportService {
         return new ArrayList<>(unique.values());
     }
 
-    // AI-assisted (GitHub Copilot): keeps the newest representation during P2P aggregation.
     private AirportViewDTO newerAirportVersion(AirportViewDTO current, AirportViewDTO candidate) {
         if (current.lastModified() == null) return candidate;
         if (candidate.lastModified() == null) return current;
@@ -226,11 +225,11 @@ public class AirportService {
         return candidateNode.compareTo(currentNode) > 0 ? candidate : current;
     }
 
-    // US109 - Update Status
     @Transactional
     public AirportViewDTO updateAirportStatus(String iataCode, String status, boolean isReplication) {
         return updateAirportStatus(iataCode, status, isReplication, null, null);
     }
+
     @Transactional
     public AirportViewDTO updateAirportStatus(String iataCode, String status, boolean isReplication,
                                               Instant receivedAt, String receivedNode) {
@@ -242,8 +241,9 @@ public class AirportService {
 
         try {
             AirportStatus newStatus = AirportStatus.valueOf(status.trim().toUpperCase());
-            if (isReplication && !isNewer(receivedAt, receivedNode, airport.getLastModified(), airport.getOriginNodeId()))
+            if (isReplication && receivedAt != null && !isNewer(receivedAt, receivedNode, airport.getLastModified(), airport.getOriginNodeId())) {
                 return mapToDTO(airport);
+            }
             airport.updateStatus(newStatus);
             airport.applyReplicationMetadata(isReplication ? receivedAt : Instant.now(), isReplication ? receivedNode : nodeId);
             Airport saved = airportRepository.save(airport);
@@ -319,17 +319,19 @@ public class AirportService {
     public AirportViewDTO updateAirportDetails(String iataCode, UpdateAirportDetailsDTO dto, boolean isReplication) {
         return updateAirportDetails(iataCode, dto, isReplication, null, null);
     }
+
     @Transactional
     public AirportViewDTO updateAirportDetails(String iataCode, UpdateAirportDetailsDTO dto, boolean isReplication,
-                                                Instant receivedAt, String receivedNode) {
+                                               Instant receivedAt, String receivedNode) {
         Airport airport = airportRepository.findByIataCodeString(iataCode.toUpperCase())
                 .orElseThrow(() -> {
                     auditService.record("UPDATE", iataCode, "ERROR", isReplication);
                     return new NotFoundException("Airport not found: " + iataCode);
                 });
 
-        if (isReplication && !isNewer(receivedAt, receivedNode, airport.getLastModified(), airport.getOriginNodeId()))
+        if (isReplication && receivedAt != null && !isNewer(receivedAt, receivedNode, airport.getLastModified(), airport.getOriginNodeId())) {
             return mapToDTO(airport);
+        }
         airport.updateDetails(dto.operationalHours(), dto.contactInformation());
         airport.applyReplicationMetadata(isReplication ? receivedAt : Instant.now(), isReplication ? receivedNode : nodeId);
         airport = airportRepository.save(airport);
@@ -341,7 +343,6 @@ public class AirportService {
     }
 
     private void replicateCreate(RegisterAirportDTO dto, Airport airport) {
-        // AI-assisted (GitHub Copilot): propagate metadata when Spring has injected the configured node id.
         RegisterAirportDTO payload = "local".equals(nodeId) ? dto : new RegisterAirportDTO(dto.iataCode(), dto.name(), dto.city(), dto.country(),
                 dto.timezone(), dto.type(), dto.latitude(), dto.longitude(), dto.runways(), dto.facilities(),
                 dto.imageUrl(), airport.getLastModified(), airport.getOriginNodeId());
@@ -355,6 +356,7 @@ public class AirportService {
     private void replicateStatus(String iataCode, String status, Instant lastModified, String originNodeId) {
         replicationOutbox.enqueue(peerUrls, "PATCH", "/api/airports/"+iataCode.toUpperCase()+"/status", status, lastModified, originNodeId);
     }
+
     private boolean isNewer(Instant incoming, String incomingNode, Instant current, String currentNode) {
         if (incoming == null) return false;
         if (current == null) return true;
@@ -368,14 +370,6 @@ public class AirportService {
         return new HttpEntity<>(headers);
     }
 
-    private <T> HttpEntity<T> replicationEntity(T body) {
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.set("X-P2P-Sync", "true");
-        return new HttpEntity<>(body, headers);
-    }
-
-    //  US211: View airports grouped by region or country
     @Transactional(readOnly = true)
     public Object getAirportsGrouped(String groupBy) {
         return getAirportsGrouped(groupBy, 0);
@@ -403,9 +397,11 @@ public class AirportService {
 
     private List<AirportViewDTO> fetchPeerAirports(UriComponentsBuilder builder, int hops) {
         try {
-            ResponseEntity<JsonNode> response = restTemplate.exchange(
-                    builder.toUriString(), HttpMethod.GET, p2pEntity(hops + 1), JsonNode.class);
-            JsonNode body = response.getBody();
+            ResponseEntity<String> response = restTemplate.exchange(
+                    builder.toUriString(), HttpMethod.GET, p2pEntity(hops + 1), String.class);
+            String responseBody = response.getBody();
+            if (responseBody == null || responseBody.isBlank()) return List.of();
+            JsonNode body = objectMapper.readTree(responseBody);
             if (body == null || body.isNull()) return List.of();
             JsonNode airportsNode = HalResponseUtils.firstEmbeddedArray(body);
             List<AirportViewDTO> airports = new ArrayList<>();
@@ -415,19 +411,16 @@ public class AirportService {
                 }
             }
             return airports;
-        } catch (HttpClientErrorException.NotFound exception) {
+        } catch (org.springframework.web.client.HttpClientErrorException.NotFound exception) {
+            // O peer respondeu corretamente que não encontrou resultados, NÃO assinalar falha parcial
             return List.of();
-        } catch (HttpClientErrorException | ResourceAccessException exception) {
+        } catch (Exception exception) {
+            // Houve um erro de rede/timeout/Indisponível, assinalar resultado parcial
             PartialResultContext.markPartial();
-            log.warn("Peer airport search failed for {}", builder, exception);
-            return List.of();
-        } catch (JsonProcessingException | RestClientException exception) {
-            PartialResultContext.markPartial();
-            log.warn("Invalid or unavailable airport response from peer {}", builder, exception);
+            log.warn("Peer airport search failed or returned error for {}", builder, exception);
             return List.of();
         }
     }
-
     private String extractRegion(AirportViewDTO dto) {
         if (dto.timezone() != null && dto.timezone().contains("/")) {
             return dto.timezone().split("/")[0];
@@ -435,7 +428,6 @@ public class AirportService {
         return "Unknown Region";
     }
 
-    // US225
     @Transactional
     public List<AirportViewDTO> importAirportsFromCsv(org.springframework.web.multipart.MultipartFile file) {
         if (file.isEmpty()) {

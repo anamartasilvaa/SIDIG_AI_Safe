@@ -4,6 +4,7 @@ import jakarta.validation.Valid;
 import org.springframework.hateoas.CollectionModel;
 import org.springframework.hateoas.EntityModel;
 import org.springframework.hateoas.server.mvc.WebMvcLinkBuilder;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -15,9 +16,6 @@ import pt.isep.psoft.aisafe.airports_routes_service.security.PeerReplicationAuth
 import java.util.List;
 import java.util.stream.Collectors;
 import java.time.Instant;
-
-import static org.springframework.hateoas.server.mvc.WebMvcLinkBuilder.linkTo;
-import static org.springframework.hateoas.server.mvc.WebMvcLinkBuilder.methodOn;
 
 @RestController
 @RequestMapping("/api/airports")
@@ -33,15 +31,16 @@ public class AirportController {
 
     @PostMapping
     public ResponseEntity<EntityModel<AirportViewDTO>> createAirport(@RequestBody RegisterAirportDTO dto,
-                                                                       @RequestHeader(value = "X-P2P-Sync", defaultValue = "false") boolean isReplication,
-                                                                       @RequestHeader(value = "X-Last-Modified", required = false) String lastModified,
-                                                                       @RequestHeader(value = "X-Origin-Node", required = false) String originNode) {
+                                                                     @RequestHeader(value = "X-P2P-Sync", defaultValue = "false") boolean isReplication,
+                                                                     @RequestHeader(value = "X-Last-Modified", required = false) String lastModified,
+                                                                     @RequestHeader(value = "X-Origin-Node", required = false) String originNode) {
+
         boolean authorized = replicationAuthorizer.isAuthorized(isReplication);
-        AirportViewDTO created = authorized
-                ? service.registerAirport(dto, true,
+        boolean effectiveReplication = isReplication && authorized;
+
+        AirportViewDTO created = service.registerAirport(dto, effectiveReplication,
                 lastModified != null ? parseInstant(lastModified) : dto.lastModified(),
-                originNode != null ? originNode : dto.originNodeId())
-                : service.registerAirport(dto, false);
+                originNode != null ? originNode : dto.originNodeId());
 
         EntityModel<AirportViewDTO> resource = EntityModel.of(created);
         resource.add(WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(AirportController.class).getAirport(created.iataCode(), 0)).withSelfRel());
@@ -76,10 +75,15 @@ public class AirportController {
                         WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(AirportController.class).getAirport(dto.iataCode(), 0)).withSelfRel()))
                 .collect(Collectors.toList());
 
-        ResponseEntity.BodyBuilder response = ResponseEntity.ok();
-        if (PartialResultContext.isPartial()) response.header("X-Partial-Result", "true");
-        return response.body(CollectionModel.of(airportResources,
-                WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(AirportController.class).searchAirports(name, city, country, 0)).withSelfRel()));
+        HttpHeaders headers = new HttpHeaders();
+        if (PartialResultContext.isPartial()) {
+            headers.add("X-Partial-Result", "true");
+        }
+
+        return ResponseEntity.ok()
+                .headers(headers)
+                .body(CollectionModel.of(airportResources,
+                        WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(AirportController.class).searchAirports(name, city, country, 0)).withSelfRel()));
     }
 
     @PatchMapping("/{iataCode}/status")
@@ -91,9 +95,9 @@ public class AirportController {
             @RequestHeader(value = "X-Origin-Node", required = false) String originNode) {
 
         boolean authorized = replicationAuthorizer.isAuthorized(isReplication);
-        AirportViewDTO updated = authorized && (lastModified != null || originNode != null)
-                ? service.updateAirportStatus(iataCode, newStatus.replace("\"", ""), true, parseInstant(lastModified), originNode)
-                : service.updateAirportStatus(iataCode, newStatus.replace("\"", ""), authorized);
+        boolean effectiveReplication = isReplication && authorized;
+
+        AirportViewDTO updated = service.updateAirportStatus(iataCode, newStatus.replace("\"", ""), effectiveReplication, parseInstant(lastModified), originNode);
 
         EntityModel<AirportViewDTO> resource = EntityModel.of(updated);
         resource.add(WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(AirportController.class).getAirport(iataCode, 0)).withRel("airport-details"));
@@ -101,15 +105,16 @@ public class AirportController {
         return ResponseEntity.ok(resource);
     }
 
-    /* US207 - Upload an image or map of the airport */
     @PatchMapping(value = "/{iataCode}/image", consumes = "multipart/form-data")
     public ResponseEntity<EntityModel<AirportViewDTO>> updateAirportImage(
             @PathVariable String iataCode,
             @RequestParam("file") org.springframework.web.multipart.MultipartFile file,
             @RequestHeader(value = "X-P2P-Sync", defaultValue = "false") boolean isReplication) {
 
-        AirportViewDTO updatedAirport = service.updateAirportImage(iataCode, file,
-                replicationAuthorizer.isAuthorized(isReplication));
+        boolean authorized = replicationAuthorizer.isAuthorized(isReplication);
+        boolean effectiveReplication = isReplication && authorized;
+
+        AirportViewDTO updatedAirport = service.updateAirportImage(iataCode, file, effectiveReplication);
 
         EntityModel<AirportViewDTO> resource = EntityModel.of(updatedAirport);
 
@@ -121,7 +126,6 @@ public class AirportController {
         return ResponseEntity.ok(resource);
     }
 
-    /* US208 - Update airport details (operational hours and contact) */
     @PatchMapping("/{iataCode}/details")
     public ResponseEntity<EntityModel<AirportViewDTO>> updateAirportDetails(
             @PathVariable String iataCode,
@@ -130,8 +134,10 @@ public class AirportController {
             @RequestHeader(value = "X-Last-Modified", required = false) String lastModified,
             @RequestHeader(value = "X-Origin-Node", required = false) String originNode) {
 
-        AirportViewDTO updatedAirport = service.updateAirportDetails(iataCode, dto,
-                replicationAuthorizer.isAuthorized(isReplication), parseInstant(lastModified), originNode);
+        boolean authorized = replicationAuthorizer.isAuthorized(isReplication);
+        boolean effectiveReplication = isReplication && authorized;
+
+        AirportViewDTO updatedAirport = service.updateAirportDetails(iataCode, dto, effectiveReplication, parseInstant(lastModified), originNode);
 
         EntityModel<AirportViewDTO> resource = EntityModel.of(updatedAirport);
         resource.add(WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(AirportController.class).getAirport(iataCode, 0)).withRel("airport-details"));
@@ -139,15 +145,16 @@ public class AirportController {
 
         return ResponseEntity.ok(resource);
     }
+
     private Instant parseInstant(String value) {
         if (value == null || value.isBlank()) return null;
         try { return Instant.parse(value); } catch (Exception ignored) { return null; }
     }
+
     public ResponseEntity<EntityModel<AirportViewDTO>> updateAirportDetails(String iataCode, UpdateAirportDetailsDTO dto, boolean isReplication) {
         return updateAirportDetails(iataCode, dto, isReplication, null, null);
     }
 
-    /* US211 - View airports grouped by region, country, or both */
     @GetMapping("/grouped")
     public ResponseEntity<Object> getAirportsGrouped(
             @RequestParam(defaultValue = "country") String by,
@@ -159,12 +166,16 @@ public class AirportController {
             return ResponseEntity.noContent().build();
         }
 
-        ResponseEntity.BodyBuilder response = ResponseEntity.ok();
-        if (PartialResultContext.isPartial()) response.header("X-Partial-Result", "true");
-        return response.body(groupedAirports);
+        HttpHeaders headers = new HttpHeaders();
+        if (PartialResultContext.isPartial()) {
+            headers.add("X-Partial-Result", "true");
+        }
+
+        return ResponseEntity.ok()
+                .headers(headers)
+                .body(groupedAirports);
     }
 
-    /* US225 - Import bulk airport data from CSV files */
     @PostMapping(value = "/import", consumes = "multipart/form-data")
     public ResponseEntity<CollectionModel<EntityModel<AirportViewDTO>>> importAirportsFromCsv(
             @RequestParam("file") org.springframework.web.multipart.MultipartFile file) {
