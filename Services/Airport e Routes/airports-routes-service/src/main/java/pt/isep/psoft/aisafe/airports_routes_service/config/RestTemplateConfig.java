@@ -10,6 +10,7 @@ import org.springframework.http.client.ClientHttpRequestInterceptor;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestTemplate;
 import pt.isep.psoft.aisafe.airports_routes_service.security.JwtClientHttpRequestInterceptor;
+import pt.isep.psoft.aisafe.airports_routes_service.security.PeerTokenService;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
@@ -19,7 +20,6 @@ import java.security.KeyStore;
 import java.time.Duration;
 
 @Configuration
-// AI-assisted (GitHub Copilot)
 public class RestTemplateConfig {
 
     @Bean
@@ -32,24 +32,33 @@ public class RestTemplateConfig {
     @Bean
     public RestTemplate restTemplate(@Value("${peer.http.connect-timeout:2000}") int connectTimeout,
                                      @Value("${peer.http.read-timeout:3000}") int readTimeout,
-                                     @Value("${server.ssl.key-store}") String keyStoreLocation,
-                                     @Value("${server.ssl.key-store-password}") String keyStorePassword,
+                                     @Value("${server.ssl.key-store:}") String keyStoreLocation,
+                                     @Value("${server.ssl.key-store-password:}") String keyStorePassword,
                                      @Value("${server.ssl.key-store-type:PKCS12}") String keyStoreType,
                                      ResourceLoader resourceLoader,
-                                     pt.isep.psoft.aisafe.airports_routes_service.security.PeerTokenService peerTokenService) throws Exception {
-        KeyStore trustStore = KeyStore.getInstance(keyStoreType);
-        Resource keyStoreResource = resourceLoader.getResource(keyStoreLocation);
-        try (InputStream inputStream = keyStoreResource.getInputStream()) {
-            trustStore.load(inputStream, keyStorePassword.toCharArray());
+                                     PeerTokenService peerTokenService) throws Exception {
+
+        SSLContext sslContext;
+
+        if (keyStoreLocation != null && !keyStoreLocation.isBlank()) {
+            KeyStore trustStore = KeyStore.getInstance(keyStoreType);
+            Resource keyStoreResource = resourceLoader.getResource(keyStoreLocation);
+            try (InputStream inputStream = keyStoreResource.getInputStream()) {
+                trustStore.load(inputStream, keyStorePassword.toCharArray());
+            }
+
+            TrustManagerFactory trustManagerFactory =
+                    TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+            trustManagerFactory.init(trustStore);
+
+            sslContext = SSLContext.getInstance("TLS");
+            sslContext.init(null, trustManagerFactory.getTrustManagers(), null);
+        } else {
+            // Fallback caso não encontre keystore no perfil ativo
+            sslContext = SSLContext.getDefault();
         }
 
-        TrustManagerFactory trustManagerFactory =
-                TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-        trustManagerFactory.init(trustStore);
-
-        SSLContext sslContext = SSLContext.getInstance("TLS");
-        sslContext.init(null, trustManagerFactory.getTrustManagers(), null);
-
+        // Configuração do HttpClient do Java com timeouts e contexto SSL
         HttpClient httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofMillis(connectTimeout))
                 .sslContext(sslContext)
@@ -60,8 +69,12 @@ public class RestTemplateConfig {
         requestFactory.setReadTimeout(Duration.ofMillis(readTimeout));
 
         RestTemplate restTemplate = new RestTemplate(requestFactory);
-        ClientHttpRequestInterceptor jwtInterceptor = new JwtClientHttpRequestInterceptor(peerTokenService);
-        restTemplate.getInterceptors().add(jwtInterceptor);
+
+        if (peerTokenService != null) {
+            ClientHttpRequestInterceptor jwtInterceptor = new JwtClientHttpRequestInterceptor(peerTokenService);
+            restTemplate.getInterceptors().add(jwtInterceptor);
+        }
+
         return restTemplate;
     }
 }
