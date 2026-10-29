@@ -42,6 +42,23 @@ Cada serviço valida o JWT com a chave pública do Keycloak (JWKS) e aplica RBAC
 
 ---
 
+## Resumo das decisões de desenho
+
+| Tema                | Decisão                                                                                                                                                                        |
+|---------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Decomposição        | 4 serviços independentes, cada um com a sua BD: Aircraft, Maintenance, Airports & Routes, Flight Operations                                                                    |
+| Replicação          | 2 ou 3 réplicas por serviço; o gateway faz round-robin e passa à réplica seguinte se uma falhar                                                                                |
+| Consistência        | Eventual, privilegiando disponibilidade e tolerância a partições (AP do teorema CAP). As escritas são aceites localmente e replicadas de forma assíncrona para os pares.       |
+| Leituras P2P        | Uma réplica que não tem o dado pergunta aos pares (cabeçalho `X-P2P-Hops` contra ciclos), agrega as respostas e devolve uma resposta coerente. Sinaliza os pares inacessíveis. |
+| Tolerância a falhas | Circuit breaker nas chamadas entre serviços, degradação controlada (por exemplo `available=false` se o Aircraft estiver em baixo) e fila de replicação com reenvio             |
+| Autenticação        | JWT RS256 do Keycloak validado em cada serviço; API key nas rotas `/internal/**`; token HS256 entre réplicas do Airports                                                       |
+| Autorização         | RBAC com 5 perfis (ADMIN, ATCC, BACKOFFICE, MAINTENANCE_TECHNICIAN, MAINTENANCE_SUPERVISOR)                                                                                    |
+| Cifra em trânsito   | HTTPS cliente→gateway→serviço→serviço (Modos A e B)                                                                                                                            |
+| Exposição           | O gateway bloqueia `/internal/`, `/actuator/` e `/h2-console/` e limita a 10 pedidos/s por IP                                                                                  |
+| Auditoria           | Logger `AUDIT` em todos os serviços (ver a secção "Auditoria")                                                                                                                 |
+
+---
+
 ## Modo A – IntelliJ + Keycloak e NGINX locais
 
 ### Instalação (uma vez)
@@ -113,6 +130,16 @@ Containers: `keycloak-db`, `keycloak-1`, `keycloak-2`, `aircraft-1`/`-2`, `maint
 
 Simular falhas: `docker compose -f docker-compose.secure.yml stop flight-operations-2` (e `start` para recuperar).
 
+> **Atenção ao reconstruir ou recriar serviços.** O NGINX resolve os nomes dos serviços (`aircraft-1`, `maintenance-2` …)
+> **só quando arranca** e guarda os IPs. Se um serviço for recriado (por exemplo com `up --build`), o Docker pode dar o seu
+> IP antigo a outro container, e o gateway passa a enviar pedidos para o serviço errado (sintoma: `403` ou `404` em
+> `/api/aircraft` ou `/api/maintenance`, ou só uma réplica a responder). Depois de reconstruir ou recriar qualquer serviço,
+> **reiniciar os gateways**:
+> ```powershell
+> docker compose -f docker-compose.secure.yml restart gateway-1 gateway-2
+> ```
+> A forma mais segura de atualizar tudo é `docker compose -f docker-compose.secure.yml down` seguido de `up --build -d`.
+
 Medidas de segurança deste modo:
 - HTTPS cliente→gateway, gateway→serviço (certificado verificado) e serviço→serviço (certificado com SAN dos containers).
 - Tokens do Keycloak (RS256) validados em cada serviço; tokens de teste (HS256) desligados em FO, Aircraft e Maintenance.
@@ -129,6 +156,12 @@ Medidas de segurança deste modo:
 - Cada serviço tolera a falha de uma réplica (round-robin com `proxy_next_upstream`).
 - Certificado autoassinado e sem mTLS entre serviços (a autenticação entre serviços usa API key e JWT).
 - BD H2 em memória e listas de peers estáticas; a fila de replicação pendente fica em memória.
+- Consistência eventual (AP): uma escrita só chega às outras réplicas passado algum tempo (até ~5 s no Airports, que replica
+  de 5 em 5 s). Um pedido que caia noutra réplica nesse intervalo pode ainda não ver o dado (por exemplo, uma rota acabada de
+  criar ou desativada). Os testes automáticos esperam por essa convergência.
+- Os *templates* de manutenção do Maintenance **não são replicados** entre réplicas (só os registos de manutenção são).
+  Um template criado numa réplica só pode ser usado nessa réplica; atravessar o gateway pode falhar com `400` conforme a réplica
+  que atender o pedido. É uma limitação conhecida.
 
 ---
 
@@ -171,11 +204,78 @@ Pasta `tests/` da raiz do repositório:
 
 1. Importar o environment e a coleção do modo em uso; escolher o environment `SIDIS`.
 2. Em *Settings*, desligar **SSL certificate verification** (certificado autoassinado).
-3. *Run collection* nas pastas `00` a `07` com **Delay 100 ms** (a gateway limita a 10 pedidos/s por IP).
-   Os tokens e as datas são gerados automaticamente em cada execução.
-4. A pasta `09` é manual: fazer a ação indicada entre `[ ]` no nome do pedido (parar ou arrancar um serviço) e enviar o pedido.
+3. *Run collection* nas pastas `00` a `07` (por ordem) com **Delay 100 ms** (a gateway limita a 10 pedidos/s por IP).
+   Os tokens, os identificadores de teste (`runId`) e as datas são gerados automaticamente em cada execução, por isso a coleção
+   pode repetir-se sem limpar as bases de dados. Alguns pedidos esperam ~6 s pela replicação do Airports (consistência eventual).
+4. A pasta `09` é manual: fazer a ação indicada entre `[ ]` no nome do pedido (parar ou arrancar um serviço) e enviar o pedido,
+   um a um e não no *Runner*. No Modo A, os pedidos `09.09` a `09.15` são opcionais (exigem reiniciar o FO com variáveis de
+   ambiente específicas). No Modo B, a pasta `09` usa só `docker compose stop/start` (ver "Testes manuais de tolerância a falhas").
+
+Notas por modo:
+- **Modo A:** no Maintenance, os pedidos `07.07`, `07.08` e `07.10` usam a réplica `{{mt1}}` diretamente (e não o gateway),
+  porque os templates não são replicados (ver as limitações do Modo B).
+- **Modo B:** só as gateways estão publicadas; os testes correm todos através delas.
+- Antes de correr, confirmar que **todas** as instâncias estão `UP` (pasta `00b` no Modo A; `docker compose ... ps` no Modo B).
 
 Com Newman: `newman run tests/SIDIS-Modo-A.postman_collection.json -e tests/SIDIS.postman_environment.json --insecure --delay-request 100`
+
+## Testes manuais de tolerância a falhas (Modo B, pasta 09)
+
+Correr cada pedido **um a um** (botão *Send*, não o *Runner*), por ordem, depois de executar o comando indicado.
+Cada `stop`/`start` escreve-se como `docker compose -f docker-compose.secure.yml stop <serviço>`.
+
+| Pedido | Antes de enviar                                                                         | Resultado esperado                                                                                                                                                                                            |
+|--------|-----------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 09.01  | `stop flight-operations-2`                                                              | `201` (AP: a escrita é aceite com uma réplica em baixo)                                                                                                                                                       |
+| 09.02  | (mantém-se parada)                                                                      | `200`/`204` (as leituras continuam disponíveis)                                                                                                                                                               |
+| 09.03  | `start flight-operations-2` e esperar ~30 s (`ps` → healthy)                            | o voo existe nas duas réplicas                                                                                                                                                                                |
+| 09.04  | `stop airports-routes-1 airports-routes-2`                                              | `503` (sem rotas não se agenda)                                                                                                                                                                               |
+| 09.05  | `start airports-routes-1 airports-routes-2` e `stop aircraft-1 aircraft-2`              | `503`                                                                                                                                                                                                         |
+| 09.06  | (aircraft parados)                                                                      | `200` com `available=false` (degradação controlada)                                                                                                                                                           |
+| 09.07  | `start aircraft-1 aircraft-2` e `stop flight-operations-1 flight-operations-2`          | `502`/`503`/`504` no gateway                                                                                                                                                                                  |
+| 09.08  | `start` de tudo e `stop flight-operations-1 airports-routes-1 aircraft-1 maintenance-1` | o sistema continua a responder com uma réplica de cada serviço                                                                                                                                                |
+| 09.09  | `start` de tudo e `stop gateway-1`                                                      | o gateway 2 (`:8444`) continua a servir                                                                                                                                                                       |
+| 09.10  | `start gateway-1` e `stop keycloak-1`                                                   | um novo login continua a funcionar (Keycloak 2); o pedido faz também 16 leituras para pôr a cache de chaves (JWKS) de cada réplica do FO a quente                                                             |
+| 09.11  | `stop keycloak-1 keycloak-2` (logo a seguir ao 09.10)                                   | `200`/`204`: um token emitido antes da falha continua válido, desde que a réplica já tenha as chaves em cache; uma réplica reiniciada depois (cache vazia) devolve `401` enquanto o Keycloak estiver em baixo |
+| 09.12  | (Keycloak parado)                                                                       | `502`/`503`/`504`: um novo login falha; o Keycloak é dependência crítica da autenticação                                                                                                                      |
+| 09.13  | `start` de tudo e esperar healthy                                                       | recuperação total: login, agendar e ler                                                                                                                                                                       |
+
+Se algum serviço for *recriado* (e não só parado e arrancado), reiniciar também os gateways (ver a nota no Modo B).
+SPOF residual: a base de dados do Keycloak (`keycloak-db`) é uma instância única.
+
+## Auditoria (registo de acessos e alterações)
+
+O enunciado pede *controlo de acesso e registo de auditoria*. Cada serviço escreve nos seus logs, com o logger `AUDIT`,
+**quem fez o quê**:
+
+| O que se regista                                                                | Exemplo                                           | Onde                                      |
+|---------------------------------------------------------------------------------|---------------------------------------------------|-------------------------------------------|
+| Escritas de negócio, com o utilizador do token, a ação e o identificador        | `User: atcc.user - Action: CREATE - Target ID: …` | todos os serviços                         |
+| Pedidos recusados (sem token, token inválido ou perfil sem permissão)           | `DENIED POST /api/routes`                         | todos os serviços                         |
+| Acessos às rotas internas `/internal/**` com a API key (permitidos e recusados) | `ALLOWED …` / `DENIED … from=… remote=…`          | Aircraft, Maintenance e Flight Operations |
+
+Para mostrar na defesa, correr uma pasta do Postman e ver os logs:
+```powershell
+# Modo B
+docker compose -f docker-compose.secure.yml logs aircraft-1 maintenance-1 flight-operations-1 airports-routes-1 | Select-String "AUDIT|DENIED|ALLOWED"
+# Modo A: consola de cada serviço no IntelliJ (filtrar por AUDIT / DENIED)
+```
+Um bom exemplo: o pedido `03.01` (matriz de RBAC) deixa muitos `DENIED` nos logs, e o `04.01` deixa o `CREATE` do utilizador `atcc.user`.
+Limitação: o registo é feito em ficheiro/consola de cada instância, sem recolha centralizada.
+
+## Resolução de problemas
+
+| Sintoma                                                                                                         | Causa provável                                                                                              | O que fazer                                                                                                                  |
+|-----------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------|
+| `403`/`404` em `/api/aircraft` ou `/api/maintenance` no Modo B; só uma réplica responde                         | O NGINX guardou IPs antigos depois de os serviços serem recriados                                           | `docker compose -f docker-compose.secure.yml restart gateway-1 gateway-2`                                                    |
+| Airports: `PlaceholderResolutionException: JWT_SECRET` ao arrancar                                              | A variável `JWT_SECRET` não está definida                                                                   | Definir `JWT_SECRET` (mínimo 32 bytes, igual nas 3 instâncias) ou usar o valor por omissão do `application.properties`       |
+| Airports: rota criada numa instância dá `404` noutra; `401` nos logs de replicação (`ReplicationTaskScheduler`) | As instâncias do Airports não partilham o mesmo `JWT_SECRET` ou o token entre réplicas está a ser rejeitado | Usar o mesmo `JWT_SECRET` nas 3 instâncias e correr a versão atual do `PeerTokenService` (token entre réplicas sempre HS256) |
+| `503` no gateway para o Airports no Modo A                                                                      | O `keystore.p12` do Airports não é o certificado do grupo; o NGINX recusa-o (`proxy_ssl_verify on`)         | Usar o mesmo `keystore.p12` dos restantes serviços                                                                           |
+| `Port 8091/8092/8093 was already in use`                                                                        | Instância antiga ainda a correr (IntelliJ ou `mvnw`)                                                        | Parar essa instância; não misturar IntelliJ e `mvnw` para as mesmas instâncias                                               |
+| `mvnw ... -Dspring-boot.run.profiles=inst1` falha com `Unknown lifecycle phase`                                 | O PowerShell parte o argumento no ponto                                                                     | Pôr entre aspas: `.\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=inst1"`                                             |
+| `429` nos testes                                                                                                | Limite de 10 pedidos/s por IP no gateway                                                                    | Correr o *Runner* com **Delay 100 ms**                                                                                       |
+| `ENOTFOUND {{gateway}}` no Postman                                                                              | Nenhum environment selecionado                                                                              | Escolher o environment `SIDIS`                                                                                               |
+| Os testes do FO dão `409` ao repetir uma pasta                                                                  | Voos de uma corrida anterior mantêm o avião ocupado nas mesmas datas                                        | As datas são geradas de novo no início das pastas 04, 05 e 07; reexecutar a partir do início da pasta                        |
 
 ## Utilizadores de teste (realm `aisafe`)
 | Utilizador      | Password      | Perfil                 |
@@ -206,8 +306,6 @@ app.security.jwt.accept-dev-tokens=${ACCEPT_DEV_TOKENS:true}   # tokens HS256 de
 Dependência Maven: `spring-boot-starter-oauth2-resource-server`.
 Novo serviço: copiar `security/TokenDecoders.java` e `security/JwtAuthenticationFilter.java`
 e acrescentar o `upstream` e a `location` respetivos no `gateway/nginx.conf`.
-
-**APAGAR?**
 
 ## O que NÃO vai para o Git
 Chaves e certificados (`*.key`, `*.pem`, pastas `certs/`) e o ficheiro `.env` do Modo B – são gerados localmente
