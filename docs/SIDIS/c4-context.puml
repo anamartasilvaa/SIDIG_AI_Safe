@@ -9,7 +9,7 @@ Person(backoffice, "Backoffice Operator", "Gere aeroportos, rotas e avioes; cons
 Person(atcc, "ATCC", "Agenda voos, atribui avioes a rotas e acompanha o estado dos voos.")
 Person(maint, "Maintenance Technician / Supervisor", "Regista e valida manutencoes dos avioes.")
 
-System(aisafe, "AISafe Flight Management System", "Sistema distribuido: API Gateway + 4 servicos (Aircraft, Maintenance, Airports & Routes, Flight Operations), 3 replicas cada.")
+System(aisafe, "AISafe Flight Management System", "Sistema distribuido: API Gateway + 4 servicos (Aircraft, Maintenance, Airports & Routes, Flight Operations), 2 a 3 replicas cada (3 no modo IntelliJ, 2 no modo Docker).")
 System_Ext(idp, "Keycloak (realm aisafe)", "Fornecedor de identidade: autentica os utilizadores e emite JWT assinados (RS256) com o perfil.")
 
 Rel(admin, aisafe, "Usa", "HTTPS/REST, JSON")

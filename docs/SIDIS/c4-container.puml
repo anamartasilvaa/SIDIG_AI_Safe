@@ -2,7 +2,7 @@
 !include <C4/C4_Container>
 LAYOUT_TOP_DOWN()
 
-title AISafe - C4 Level 2 (Containers), deployment with no single points of failure
+title AISafe - C4 Level 2 (Containers), docker-compose.secure.yml: no single point of failure in the application tier
 
 Person(user, "AISafe User", "Admin, Backoffice, ATCC, Maintenance Technician/Supervisor")
 
@@ -13,8 +13,8 @@ System_Boundary(aisafe, "AISafe Flight Management System") {
 
     Container(fo, "Flight Operations Service", "Java 17, Spring Boot 4", "Scheduling, aircraft-route assignment, availability, flight lifecycle, aircraft reassignment (grounding). Replicas with asynchronous replication.")
     Container(ar, "Airports & Routes Service", "Java 17, Spring Boot 4", "Airports, runways, certifications, routes and history. Replicas with replication outbox.")
-    Container(ac, "Aircraft Service", "Java 17, Spring Boot 4", "Aircraft models and instances, operational status. Replicas.")
-    Container(mt, "Maintenance Service", "Java 17, Spring Boot 4", "Maintenance templates and records. Replicas.")
+    Container(ac, "Aircraft Service", "Java 17, Spring Boot 4", "Aircraft models and instances, operational status. Replicas with asynchronous replication.")
+    Container(mt, "Maintenance Service", "Java 17, Spring Boot 4", "Maintenance templates and records. Replicas; only the records are replicated (templates stay on the replica that created them).")
 
     ContainerDb(fodb, "Flight Ops DB", "H2 (one per replica)", "Scheduled flights (replicated)")
     ContainerDb(ardb, "Airports & Routes DB", "H2 (one per replica)", "Airports and routes")
@@ -34,9 +34,12 @@ Rel(fo, ar, "Validates route (active, capacity), failover between replicas", "HT
 Rel(fo, ac, "Validates aircraft (ACTIVE, range, capacity), failover between replicas", "HTTPS GET /api/aircraft/{reg}, user's JWT")
 Rel(mt, ac, "Updates operational status", "HTTPS /internal/aircraft/instances/{reg}/maintenance-status, X-API-Key")
 Rel(ac, fo, "Aircraft grounded: requests reassignment of future flights", "HTTPS POST /internal/.../grounding, X-API-Key")
-Rel(fo, kc, "Public key to validate the JWT", "JWKS")
+Rel(fo, kc, "Public key to validate the JWT (every service does the same and caches the keys)", "JWKS")
 Rel_L(fo, fo, "Replication and forwarding between replicas", "HTTPS /internal/..., X-API-Key")
 Rel_L(ar, ar, "Replication (outbox) and forwarding between replicas", "HTTPS, HS256 peer token")
+Rel_L(ac, ac, "Asynchronous replication and forwarding between replicas", "HTTPS /internal/..., X-API-Key")
+Rel_L(mt, mt, "Replication of maintenance records between replicas", "HTTPS /internal/..., X-API-Key")
+Rel(ac, ar, "Route data for the compatible-routes query, failover between replicas", "HTTPS GET /api/routes, user's JWT")
 
 Rel(fo, fodb, "Reads/Writes", "JPA")
 Rel(ar, ardb, "Reads/Writes", "JPA")

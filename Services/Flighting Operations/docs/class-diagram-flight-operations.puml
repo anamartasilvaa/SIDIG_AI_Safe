@@ -44,8 +44,6 @@ package "Scheduled Flight Aggregate" {
         + canTransitionTo(next): boolean
         + occupiesAircraft(): boolean
         + {static} parse(text: String): FlightStatus
-        + canTransitionTo(next): boolean
-        + occupiesAircraft(): boolean
     }
 
     ScheduledFlight "1" *-- "1" FlightId : identified by >

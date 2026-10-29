@@ -1,31 +1,49 @@
-@startuml
+@startuml peer-to-peer
+title AISafe - Peer-to-peer query resolution (reads that miss on the replica that received them)
+skinparam shadowing false
 skinparam sequenceArrowThickness 2
+autonumber
 
 actor Client
-participant "API Gateway" as Gateway
-box "Aircraft Service Cluster" #LightBlue
-participant "Instance 1\n(Port 8081)" as R1
-participant "Instance 2\n(Port 8082)" as R2
+participant "API Gateway" as GW
+box "Service replicas (example: Flight Operations, 2 or 3 replicas)" #F4F7FF
+participant "Replica 1\n(receives the request)" as R1
+participant "Replica 2" as R2
+participant "Replica 3" as R3
 end box
 
-Client -> Gateway : GET /aircraft/*
-Gateway -> R1 : Route Request (Load Balanced)
+== A. Single item (GET /api/scheduled-flights/{id}): forward until found ==
+Client -> GW : GET /api/scheduled-flights/{id} (Bearer JWT)
+GW -> R1 : round-robin
+R1 -> R1 : not found in the local database
+par parallel queries (timeouts, retry, circuit breaker)
+  R1 -> R2 : GET /internal/scheduled-flights/{id}\nX-API-Key (never forwards again)
+  R2 --> R1 : 200 flight / 404
+else
+  R1 -> R3 : GET /internal/scheduled-flights/{id}\nX-API-Key
+  R3 --> R1 : 200 flight / 404 / no answer
+end
+alt some peer has it
+  R1 --> GW : 200 (first answer found)
+else all answered "not found"
+  R1 --> GW : 404
+else not found and some peer did not answer
+  R1 --> GW : 503 (never a false 404: the item may be on that replica)
+end
+GW --> Client : response
 
-activate R1
-note over R1: Checks local database
-R1 -> R1 : Data not found locally
+== B. Collection (GET /api/scheduled-flights/route-utilization): aggregate ==
+Client -> GW : GET /api/scheduled-flights/route-utilization
+GW -> R1 : round-robin
+par parallel queries
+  R1 -> R2 : GET /internal/scheduled-flights
+  R2 --> R1 : local flights
+else
+  R1 -> R3 : GET /internal/scheduled-flights
+  R3 -[#red]-> R1 : no answer (replica down / circuit open)
+end
+R1 -> R1 : merges with its own data by id\n(newest revision wins, no duplicates)
+R1 --> GW : 200 aggregated result\n+ X-Partial-Response-Unreachable-Peers: replica 3
+GW --> Client : 200 (the client is warned that the result is partial: AP choice)
 
-note over R1: Triggers peer-to-peer query resolution
-R1 -> R2 : Forward HTTP GET /aircraft/*
-activate R2
-
-note over R2: Checks local database
-R2 --> R1 : Return Data JSON
-deactivate R2
-
-note over R1: Aggregates response for client
-R1 --> Gateway : Return HTTP 200 OK (Data)
-deactivate R1
-
-Gateway --> Client : Return HTTP 200 OK (Data)
 @enduml

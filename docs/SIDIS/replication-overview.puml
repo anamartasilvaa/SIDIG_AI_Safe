@@ -1,0 +1,51 @@
+@startuml replication-overview
+title AISafe - Replication and consistency per service (eventual consistency, AP)
+skinparam shadowing false
+skinparam defaultFontSize 12
+skinparam packageStyle rectangle
+skinparam nodesep 60
+skinparam ranksep 40
+left to right direction
+
+rectangle "Flight Operations\n(2 or 3 replicas)" as FO {
+  component "replica A" as FA
+  component "replica B" as FB
+}
+rectangle "Airports & Routes\n(2 or 3 replicas)" as AR {
+  component "replica A" as RA
+  component "replica B" as RB
+}
+rectangle "Aircraft\n(2 or 3 replicas)" as AC {
+  component "replica A" as CA
+  component "replica B" as CB
+}
+rectangle "Maintenance\n(2 or 3 replicas)" as MT {
+  component "replica A" as MA
+  component "replica B" as MB
+}
+
+FA <--> FB
+RA <--> RB
+CA <--> CB
+MA <--> MB
+
+note right of FB
+  Flight Operations: a write is copied synchronously to at least one peer
+  and to the others in the background; pending copies are retried every 5 s;
+  a restarted replica syncs from its peers; the newest revision wins.
+end note
+note right of RB
+  Airports & Routes: replication outbox with retry every 5 s
+  (up to about 5 s of inconsistency); a GET that misses is
+  forwarded to the peers (header X-P2P-Hops limits the hops).
+end note
+note right of CB
+  Aircraft: asynchronous copy of each write to the peers;
+  a GET that misses locally is forwarded to the peers.
+end note
+note right of MB
+  Maintenance: only the maintenance records are replicated;
+  templates stay on the replica that created them.
+end note
+
+@enduml

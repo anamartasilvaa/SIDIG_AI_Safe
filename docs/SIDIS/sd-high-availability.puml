@@ -11,6 +11,7 @@ participant "keycloak-1" as K1
 participant "keycloak-2" as K2
 participant "aircraft-1" as A1
 participant "aircraft-2" as A2
+participant "flight-operations-1" as F1
 
 == 1. Gateway failure ==
 C -> G1 : request
@@ -42,4 +43,26 @@ G2 --> C : 200
 == 4. All replicas of a service down ==
 C -> G2 : GET /api/aircraft/CS-TTA
 G2 -[#red]-> C : 503 {"title":"Service Unavailable"}\n(other services continue to respond)
+== 5. Both Keycloak nodes down ==
+C -> G2 : POST /realms/... (new login)
+G2 -[#red]-> C : 503 "No replica of the requested service is available."
+note over C, F1 : Keycloak is the critical dependency for new logins
+C -> G2 : GET /api/scheduled-flights/... (token issued before the outage)
+G2 -> F1 : proxy
+F1 -> F1 : validates the token with the cached JWKS (no call to Keycloak)
+F1 --> G2 : 200
+G2 --> C : 200
+note over F1 : valid only on replicas that already cached the keys;\na replica restarted during the outage cannot validate tokens (401)
+
+== 6. A dependency of Flight Operations is down ==
+C -> G2 : POST /api/scheduled-flights (Airports & Routes or Aircraft down)
+G2 -> F1 : proxy
+F1 -[#red]-> A1 : validation (all replicas unreachable, circuit open)
+F1 --> G2 : 503 "Service ... unavailable (all replicas down)"
+G2 --> C : 503
+C -> G2 : GET /api/scheduled-flights/availability (Aircraft down)
+G2 -> F1 : proxy
+F1 --> G2 : 200 available=false, aircraftStatus=UNKNOWN\n(graceful degradation: reads keep working)
+G2 --> C : 200
+
 @enduml

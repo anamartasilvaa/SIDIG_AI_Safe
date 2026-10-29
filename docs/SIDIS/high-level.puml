@@ -1,45 +1,57 @@
-@startuml
+@startuml high-level
+title AISafe - High-level view
+skinparam shadowing false
 
 actor Client
 
 package "AISafe" {
-    
-    [API Gateway]
-    
-    node "Aircraft Component" {
-        [Aircraft Service]
-        database "Aircraft DB"
+
+    [API Gateway (x2)] as GW
+
+    node "Identity" {
+        [Keycloak (x2)] as KC
+        database "Keycloak DB" as KCDB
     }
-    
-    node "Maintenance Component" {
-            [Maintenance Service]
-        database "Maintenance DB"
+
+    node "Aircraft Component (replicas)" {
+        [Aircraft Service] as AC
+        database "Aircraft DB" as ACDB
     }
-    
-    node "Airports & Routes Component" {
-        [Airports Service]
-        database "Airports DB"
+
+    node "Maintenance Component (replicas)" {
+        [Maintenance Service] as MT
+        database "Maintenance DB" as MTDB
     }
-    
-    node "Flight Operations Component" {
-        [Flights Service]
-        database "Flights DB"
+
+    node "Airports & Routes Component (replicas)" {
+        [Airports & Routes Service] as AR
+        database "Airports DB" as ARDB
+    }
+
+    node "Flight Operations Component (replicas)" {
+        [Flight Operations Service] as FO
+        database "Flight Ops DB" as FODB
     }
 }
 
-Client --> [API Gateway] : HTTPS/REST
-[API Gateway] --> [Aircraft Service]
-[API Gateway] --> [Maintenance Service]
-[API Gateway] --> [Airports Service]
-[API Gateway] --> [Flights Service]
+Client --> GW : HTTPS/REST (Bearer JWT)
+GW --> KC : /realms/... (login, JWKS)
+KC --> KCDB
 
-[Aircraft Service] -down-> "Aircraft DB"
-[Maintenance Service] -down-> "Maintenance DB"
-[Airports Service] -down-> "Airports DB"
-[Flights Service] -down-> "Flights DB"
+GW --> AC
+GW --> MT
+GW --> AR
+GW --> FO
 
-[Maintenance Service] .up.> [Aircraft Service] : HTTPS (Status Updates)
-[Flights Service] .up.> [Aircraft Service] : HTTPS (Availability)
-[Flights Service] .up.> [Airports Service] : HTTPS (Route Validation)
+AC -down-> ACDB
+MT -down-> MTDB
+AR -down-> ARDB
+FO -down-> FODB
+
+MT .up.> AC : HTTPS (maintenance status)
+FO .up.> AC : HTTPS (aircraft validation, availability)
+FO .up.> AR : HTTPS (route validation)
+AC .up.> FO : HTTPS (grounding: reassign flights)
+AC .up.> AR : HTTPS (compatible routes)
 
 @enduml
