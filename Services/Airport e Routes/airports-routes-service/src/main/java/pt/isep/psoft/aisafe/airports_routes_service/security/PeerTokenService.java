@@ -1,11 +1,11 @@
 package pt.isep.psoft.aisafe.airports_routes_service.security;
 
 import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.security.Keys;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import javax.crypto.SecretKey;
+import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Date;
@@ -23,7 +23,7 @@ public class PeerTokenService {
         if (secretBytes.length < 32) {
             throw new IllegalArgumentException("jwt.secret must contain at least 32 UTF-8 bytes");
         }
-        this.signingKey = Keys.hmacShaKeyFor(secretBytes);
+        this.signingKey = new SecretKeySpec(secretBytes, "HmacSHA256");
         this.subject = "peer-" + serverPort;
     }
 
@@ -34,7 +34,7 @@ public class PeerTokenService {
                 .claim("roles", List.of("PEER"))
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plusSeconds(60)))
-                .signWith(signingKey)
+                .signWith(signingKey, Jwts.SIG.HS256)
                 .compact();
     }
 }

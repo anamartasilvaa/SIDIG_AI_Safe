@@ -1,14 +1,16 @@
 package pt.isep.psoft.aisafe.maintenance.application.DTO;
 
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import pt.isep.psoft.aisafe.maintenance.domain.ComponentCategory;
 
 public record RegisterMaintenanceDTO(
-        String registrationNumber,
+        @NotBlank String registrationNumber,
         String modelName,
         String description,
         Integer expectedDuration,
         ComponentCategory componentCategory,
-        String startDate,
+        @NotBlank String startDate,
         Double cost,
-        Long templateId) {
+        @NotNull Long templateId) {
 }

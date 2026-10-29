@@ -1,5 +1,6 @@
 package pt.isep.psoft.aisafe.airports_routes_service.security;
 
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.*;
@@ -13,6 +14,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+@Disabled("Manual integration test: needs Keycloak on :8180 and uses fixed port 8091 (clashes with a running instance). Remove @Disabled to run it by hand.")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.DEFINED_PORT)
 @TestPropertySource(properties = {
         "JWT_SECRET=0XBmn80sWuBF+EA5agPTIvn2OSePDUdEWGbQTh4Mlls=",

@@ -88,7 +88,8 @@ public class AircraftService {
                 new RegistrationNumber(dto.registrationNumber()), model,
                 dto.manufacturingDate(), dto.seatingCapacity(), dto.features()
         );
-        aircraftRepository.save(aircraft);
+        Aircraft saved = aircraftRepository.save(aircraft);
+        replicator.replicate(mapToViewDTO(saved));   // push the new aircraft to the peer replicas
     }
 
     public AircraftViewDTO getAircraftByRegistrationNumber(String regNum, boolean isPeerRequest) {
@@ -168,6 +169,7 @@ public class AircraftService {
         AircraftStatus newStatus = AircraftStatus.valueOf(dto.status().toUpperCase());
         aircraft.updateStatus(newStatus);
         aircraftRepository.save(aircraft);
+        replicator.replicate(mapToViewDTO(aircraft));   // push the new status to the peer replicas
 
         List<String> swapLogs = new ArrayList<>();
         if (newStatus == AircraftStatus.UNDER_MAINTENANCE || newStatus == AircraftStatus.INACTIVE) {
@@ -279,8 +281,14 @@ public class AircraftService {
     } // FIXED: Added missing closing brace
 
     public Double getAircraftRange(String regNum) {
-        return aircraftRepository.findByRegistrationNumber(new RegistrationNumber(regNum.trim().toUpperCase()))
-                .orElseThrow(() -> new IllegalArgumentException("Aircraft not found: " + regNum))
-                .getAircraftModel().getMaximumRange();
+        String reg = regNum.trim().toUpperCase();
+        Optional<Aircraft> local = aircraftRepository.findByRegistrationNumber(new RegistrationNumber(reg));
+        if (local.isPresent()) return local.get().getAircraftModel().getMaximumRange();
+        // Not replicated here (yet): find it on the peers and read the range from the (shared) model.
+        AircraftViewDTO remote = peerClient.forwardGetAircraftByRegNum(reg)
+                .orElseThrow(() -> new IllegalArgumentException("Aircraft not found: " + regNum));
+        return modelRepository.findByModelName(new ModelName(remote.modelName()))
+                .orElseThrow(() -> new IllegalArgumentException("Aircraft model not found: " + remote.modelName()))
+                .getMaximumRange();
     }
 }

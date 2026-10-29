@@ -10,6 +10,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.client.HttpClientErrorException;
 import pt.isep.psoft.aisafe.maintenance.infrastructure.DependencyUnavailableException;
 
+import java.time.format.DateTimeParseException;
+
 @RestControllerAdvice
 public class GlobalExceptionHandler {
     @ExceptionHandler(IllegalArgumentException.class)
@@ -23,6 +25,11 @@ public class GlobalExceptionHandler {
                 .map(error -> error.getField() + " " + error.getDefaultMessage())
                 .reduce((left, right) -> left + "; " + right).orElse("Invalid request");
         return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, detail);
+    }
+
+    @ExceptionHandler(DateTimeParseException.class)
+    ProblemDetail invalidDate(DateTimeParseException exception) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, "Invalid date/time: " + exception.getParsedString());
     }
 
     @ExceptionHandler(HttpMessageNotReadableException.class)

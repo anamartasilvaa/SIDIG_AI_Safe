@@ -46,6 +46,7 @@ public class SecurityConfig {
                         // 1. Permitir os reencaminhamentos internos de erro para evitar que o 403 vire 401
                         .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                         .requestMatchers("/error").permitAll()
+                        .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
 
                         .requestMatchers("/h2-console/**", "/v3/api-docs/**",
                                 "/swagger-ui/**", "/swagger-ui.html").permitAll()
