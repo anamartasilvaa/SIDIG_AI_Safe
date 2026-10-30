@@ -20,23 +20,6 @@ import static pt.isep.psoft.aisafe.flight_operations.security.Roles.ADMIN;
 import static pt.isep.psoft.aisafe.flight_operations.security.Roles.ATCC;
 import static pt.isep.psoft.aisafe.flight_operations.security.Roles.BACKOFFICE;
 
-/**
- * Seguranca da API publica (RBAC com JWT, sem sessao).
- *
- *  Endpoint                                      Perfis                    User story
- *  POST  /api/scheduled-flights                  ATCC, ADMIN               US212
- *  PATCH /api/scheduled-flights/{id}/status      ATCC, ADMIN               ciclo de vida do voo
- *  GET   /api/scheduled-flights/aircraft/{reg}   ATCC, ADMIN               US213
- *  GET   /api/scheduled-flights/availability     ATCC, ADMIN               US205
- *  GET   /api/scheduled-flights/route-utilization BACKOFFICE, ADMIN        US229
- *  GET   /api/scheduled-flights/{id}             ATCC, BACKOFFICE, ADMIN   consulta
- *  /internal/**                                  replicas com X-API-Key (ApiKeyFilter), sem JWT
- *  /actuator/health                              aberto (monitorizacao)
- *  tudo o resto                                  negado (deny by default)
- *
- * Os utilizadores e os logins vivem no Keycloak (emite o JWT, RS256); aqui so se valida o token
- * com a chave publica do Keycloak. Tokens HS256 de desenvolvimento so com ACCEPT_DEV_TOKENS=true.
- */
 @Configuration
 public class SecurityConfig {
 

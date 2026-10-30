@@ -50,7 +50,7 @@ Serviços com que este serviço colabora:
 
 No Docker cada serviço tem 2 réplicas (ver secção 4.6).
 
-Diagramas (pasta `Documentos/`):
+Diagramas (pasta `docs/` deste serviço):
 - `c4-component-flight-operations`: C4 nível 3 deste serviço
 - `class-diagram-flight-operations`: modelo de domínio
 - `sd-schedule-flight`: agendamento de ponta a ponta (login → gateway → validação → replicação)
@@ -61,7 +61,7 @@ Diagramas (pasta `Documentos/`):
 - `sd-check-availability`: disponibilidade de um avião
 - `sd-aircraft-grounding`: reatribuição de voos
 
-Os C4 de contexto e de contentores e as vistas físicas estão em `docs/SISDIG`.
+Os C4 de contexto e de contentores e as vistas físicas estão em `docs/SIDIS`.
 
 ---
 
@@ -204,9 +204,12 @@ cd ..
 docker compose -f docker-compose.secure.yml up --build
 ```
 
+Antes de arrancar, **parar o Modo A** (incluindo o NGINX e o Keycloak locais): ambos usam as portas 8443 e 8180.
+
 Entrada: `https://localhost:8443` (gateway 1) ou `https://localhost:8444` (gateway 2). O FO corre em `flight-operations-1`
 e `flight-operations-2`, que se conhecem como pares pelo nome do container. Parar: `docker compose -f
-docker-compose.secure.yml down`. Pormenores em `infrastructure/README.md`.
+docker-compose.secure.yml down`. Depois de reconstruir ou recriar serviços, reiniciar as gateways (o NGINX guarda os IPs
+no arranque). Pormenores em `infrastructure/README.md`.
 
 ---
 
@@ -353,6 +356,8 @@ responsabilidade do Aircraft.
 | Alterações concorrentes ao mesmo voo em réplicas diferentes    | Convergem para a mais recente (`revision`, `lastModifiedAt`)                       |
 | Grounding aplicado numa réplica                                | A revisão incrementada e o novo avião são replicados às outras réplicas            |
 | Uma gateway ou um nó Keycloak em baixo (Modo Docker)           | O cliente usa a outra gateway (8444); o outro nó Keycloak continua a emitir tokens |
+| Os dois nós Keycloak em baixo                                  | Tokens já emitidos continuam válidos nas réplicas com as chaves em cache; novos logins falham |
+| Réplica reiniciada com o Keycloak em baixo                     | Sem chaves em cache, recusa os tokens (401) até o Keycloak voltar                  |
 
 ---
 
@@ -410,30 +415,40 @@ Perfis do AISafe: **Admin, Backoffice, ATCC, Maintenance Technician, Maintenance
 
 Executar: botão direito em `src/test/java` → **Run 'All Tests'**, ou `mvn test`.
 
-**VER ESTA PARTE**
 
 
-### 9.2 Postman – `tests/AISafe-Gateway-Keycloak.postman_collection.json`
+### 9.2 Postman – coleções `SIDIS-Modo-A` e `SIDIS-Modo-B`
 
-Todos os pedidos passam pela gateway, com tokens do Keycloak, e **todos têm testes**. Os tokens são obtidos e
-renovados automaticamente, e cada execução usa datas únicas.
+Pasta `tests/` da raiz do repositório:
 
-| Pasta | Conteúdo                                                                                                                     |
-|-------|------------------------------------------------------------------------------------------------------------------------------|
-| 00    | Login dos 5 perfis, password errada, JWKS                                                                                    |
-| 01    | Gateway: round-robin, bloqueio de endpoints internos, 404, HTTPS e cabeçalhos, rate limiting                                 |
-| 02    | Autenticação: sem token, mal formado, forjado, `alg: none`, expirado, outro segredo, sem perfis                              |
-| 03    | RBAC: 6 endpoints × 5 perfis                                                                                                 |
-| 04    | Regras de negócio: conflitos de 2 h, manutenção, capacidade, rota inativa, validações, disponibilidade, ciclo de vida, US229 |
-| 05    | Replicação: cópia local em cada réplica, propagação de alterações, API interna protegida                                     |
-| 06    | Airports & Routes através da gateway                                                                                         |
-| 07    | **Manual:** falhas (FO-2, Airports, Aircraft), forwarding com replicação desligada, modo CP                                  |
+| Ficheiro                               | Para                                                       |
+|----------------------------------------|------------------------------------------------------------|
+| `SIDIS-Modo-A.postman_collection.json` | Modo A (IntelliJ): inclui acesso direto às réplicas        |
+| `SIDIS-Modo-B.postman_collection.json` | Modo B (Docker seguro): só através das gateways            |
+
+Os tokens do Keycloak são obtidos e renovados automaticamente, e cada execução gera um `runId` e datas novas, pelo que as
+coleções podem repetir-se sem limpar as bases de dados. Pastas com testes deste serviço:
+
+| Pasta | Conteúdo                                                                                                                      |
+|-------|-------------------------------------------------------------------------------------------------------------------------------|
+| 00    | Login dos 5 perfis e arranque                                                                                                 |
+| 02    | Autenticação: sem token, mal formado, forjado, `alg: none`, expirado, outro segredo                                           |
+| 03    | RBAC: 15 endpoints (FO, Aircraft e Maintenance) × 5 perfis                                                                    |
+| 04    | Regras de negócio do FO: conflitos de 2 h, capacidade, rota inativa, validações, disponibilidade, ciclo de vida, US229        |
+| 05    | Replicação e P2P (Modo A: acesso direto às 3 réplicas; Modo B: através da gateway, 2 réplicas)                                |
+| 07    | Ponta a ponta entre 3 serviços: agendar, imobilizar o avião (grounding), reatribuir o voo, registar e concluir uma manutenção |
+| 09    | **Manual:** tolerância a falhas (Modo A: 15 pedidos; Modo B: 13 pedidos)                                                      |
 
 Executar:
-1. Importar a coleção.
+1. Importar o environment e a coleção do modo em uso, e escolher o environment `SIDIS`.
 2. Em **Settings → General**, desligar **SSL certificate verification**.
-3. Abrir o **Collection Runner**, selecionar as pastas **00–06** e pôr **Delay 100 ms**.
-4. A pasta 07 corre-se pedido a pedido: o nome de cada pedido diz o que parar ou ligar antes.
+3. Abrir o **Collection Runner**, selecionar as pastas **00 a 07** e pôr **Delay 100 ms** (a gateway limita a 10 pedidos/s).
+4. A pasta 09 corre-se pedido a pedido, não no Runner: o nome de cada pedido diz o que parar ou ligar antes.
+   No Modo A, os pedidos `09.09` a `09.15` são opcionais e exigem reiniciar o FO com variáveis de ambiente específicas
+   (replicação desligada, modo CP). No Modo B, a pasta 09 usa só `docker compose stop/start`.
+
+Antes de correr, confirmar que todas as instâncias estão `UP` e que o outro modo está parado. A lista completa dos
+pedidos 09 do Modo B e as respostas esperadas estão em `infrastructure/README.md`.
 
 ---
 
@@ -471,6 +486,5 @@ src/main/java/pt/isep/psoft/aisafe/flight_operations/
 src/main/resources/   application.properties, keystore.p12
 src/test/java/...     testes JUnit (incl. AircraftReassignmentTest), DevTokenGenerator
 docs/                 diagramas PlantUML do serviço
-tests/                coleção Postman
 certs/                truststore.p12 (local, não submetido)
 ```

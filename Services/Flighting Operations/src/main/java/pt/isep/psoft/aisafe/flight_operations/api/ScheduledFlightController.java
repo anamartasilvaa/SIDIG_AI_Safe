@@ -56,7 +56,6 @@ public class ScheduledFlightController {
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
-    /** Muda o estado do voo (ex.: DELAYED, IN_FLIGHT, COMPLETED, CANCELED), em qualquer replica. */
     @PatchMapping("/{id}/status")
     public ResponseEntity<EntityModel<ScheduledFlightViewDTO>> changeStatus(
             @PathVariable String id, @Valid @RequestBody ChangeFlightStatusDTO dto) {
