@@ -10,5 +10,6 @@ import java.util.Optional;
 @Repository
 public interface MaintenanceTemplateRepository extends JpaRepository<MaintenanceTemplate, Long> {
     Optional<MaintenanceTemplate> findByTemplateName(String templateName);
+    Optional<MaintenanceTemplate> findByGlobalId(String globalId);
     List<MaintenanceTemplate> findByAppliesToModelNamesContaining(String modelName);
 }

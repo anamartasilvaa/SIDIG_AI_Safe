@@ -2,15 +2,14 @@ package pt.isep.psoft.aisafe.maintenance.infrastructure;
 
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.web.util.UriComponentsBuilder;
-import pt.isep.psoft.aisafe.maintenance.application.DTO.MaintenanceRecordViewDTO;
 import pt.isep.psoft.aisafe.maintenance.application.DTO.AggregatedResult;
+import pt.isep.psoft.aisafe.maintenance.application.DTO.MaintenanceRecordViewDTO;
+import pt.isep.psoft.aisafe.maintenance.application.DTO.MaintenanceTemplateViewDTO;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
+import java.util.concurrent.*;
 
 public class MaintenancePeerClient {
     private final RemoteCaller caller;
@@ -25,34 +24,36 @@ public class MaintenancePeerClient {
 
     public AggregatedResult<MaintenanceRecordViewDTO> forwardHistory(String registrationNumber) {
         String path = UriComponentsBuilder.fromPath("/internal/maintenance/records/{registrationNumber}")
-                .buildAndExpand(registrationNumber.trim().toUpperCase())
-                .encode()
-                .toUriString();
-        return collect(path);
+                .buildAndExpand(registrationNumber.trim().toUpperCase()).encode().toUriString();
+        return collect(path, new ParameterizedTypeReference<>() {});
     }
 
-    public AggregatedResult<MaintenanceRecordViewDTO> forwardSearch(String registrationNumber, String category, String fromDate, String toDate) {
+    public AggregatedResult<MaintenanceRecordViewDTO> forwardSearch(String registrationNumber, String category,
+                                                                      String fromDate, String toDate) {
         UriComponentsBuilder builder = UriComponentsBuilder.fromPath("/internal/maintenance/records");
         if (registrationNumber != null && !registrationNumber.isBlank()) builder.queryParam("registrationNumber", registrationNumber);
         if (category != null && !category.isBlank()) builder.queryParam("category", category);
         if (fromDate != null && !fromDate.isBlank()) builder.queryParam("fromDate", fromDate);
         if (toDate != null && !toDate.isBlank()) builder.queryParam("toDate", toDate);
-        return collect(builder.build().encode().toUriString());
+        return collect(builder.build().encode().toUriString(), new ParameterizedTypeReference<>() {});
     }
 
     public AggregatedResult<MaintenanceRecordViewDTO> collectAll() {
-        return collect("/internal/maintenance/records");
+        return collect("/internal/maintenance/records", new ParameterizedTypeReference<>() {});
     }
 
-    private AggregatedResult<MaintenanceRecordViewDTO> collect(String path) {
-        Map<String, Future<List<MaintenanceRecordViewDTO>>> futures = new java.util.LinkedHashMap<>();
+    public AggregatedResult<MaintenanceTemplateViewDTO> collectTemplates() {
+        return collect("/internal/maintenance/templates", new ParameterizedTypeReference<>() {});
+    }
+
+    private <T> AggregatedResult<T> collect(String path, ParameterizedTypeReference<List<T>> type) {
+        Map<String, Future<List<T>>> futures = new java.util.LinkedHashMap<>();
         for (String peer : peers) {
-            futures.put(peer, executor.submit(() -> caller.get(peer + path,
-                    new ParameterizedTypeReference<List<MaintenanceRecordViewDTO>>() {}).orElse(List.of())));
+            futures.put(peer, executor.submit(() -> caller.get(peer + path, type).orElse(List.of())));
         }
-        List<MaintenanceRecordViewDTO> all = new ArrayList<>();
+        List<T> all = new ArrayList<>();
         List<String> unreachable = new ArrayList<>();
-        for (Map.Entry<String, Future<List<MaintenanceRecordViewDTO>>> entry : futures.entrySet()) {
+        for (Map.Entry<String, Future<List<T>>> entry : futures.entrySet()) {
             try {
                 all.addAll(entry.getValue().get());
             } catch (InterruptedException e) {

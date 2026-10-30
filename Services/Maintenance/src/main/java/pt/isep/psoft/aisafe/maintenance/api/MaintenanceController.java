@@ -80,7 +80,7 @@ public class MaintenanceController {
     }
 
     @PatchMapping("/records/{id}/complete")
-    public ResponseEntity<EntityModel<MaintenanceRecordViewDTO>> completeMaintenance(@PathVariable Long id, @Valid @RequestBody CompleteMaintenanceDTO dto) {
+    public ResponseEntity<EntityModel<MaintenanceRecordViewDTO>> completeMaintenance(@PathVariable String id, @Valid @RequestBody CompleteMaintenanceDTO dto) {
         MaintenanceRecordViewDTO record = maintenanceService.completeMaintenance(id, dto);
         AuditLog.record("COMPLETE_MAINTENANCE", String.valueOf(id));
         EntityModel<MaintenanceRecordViewDTO> resource = EntityModel.of(record);
