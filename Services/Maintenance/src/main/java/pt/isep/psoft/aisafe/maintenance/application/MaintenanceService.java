@@ -25,6 +25,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.time.Instant;
 import java.util.stream.Collectors;
 
 @Service
@@ -65,7 +66,12 @@ public class MaintenanceService {
         Checklist checklist = new Checklist(dto.checklistTitle(), dto.checklistVersion(), items);
         List<String> modelNames = dto.applicableModelNames() == null ? List.of() : dto.applicableModelNames().stream().map(String::trim).filter(s -> !s.isBlank()).distinct().toList();
         MaintenanceTemplate template = new MaintenanceTemplate(dto.templateName(), dto.templateType(), dto.flightHoursInterval(), dto.calendarDaysInterval(), checklist, modelNames);
-        return toTemplateView(templateRepository.save(template));
+        MaintenanceTemplateViewDTO view = toTemplateView(templateRepository.save(template));
+        if (!replicator.replicateTemplateAcknowledged(view)) {
+            log.warn("Maintenance template {} accepted without peer acknowledgement; it remains queued for retry",
+                    view.globalId());
+        }
+        return view;
     }
 
     @Transactional
@@ -73,10 +79,10 @@ public class MaintenanceService {
         String registrationNumber = dto.registrationNumber().trim().toUpperCase();
         String modelName = Optional.ofNullable(dto.modelName()).map(String::trim).filter(s -> !s.isBlank())
                 .orElseGet(() -> aircraftClient.getAircraftModelName(registrationNumber));
-        audit.info("REGISTER_MAINTENANCE reg={} model={} template={}", registrationNumber, modelName, dto.templateId());
+        audit.info("REGISTER_MAINTENANCE reg={} model={} templateGlobalId={}",
+                registrationNumber, modelName, dto.templateGlobalId());
 
-        MaintenanceTemplate template = templateRepository.findById(dto.templateId())
-                .orElseThrow(() -> new IllegalArgumentException("Maintenance template not found with ID: " + dto.templateId()));
+        MaintenanceTemplate template = resolveTemplate(dto);
 
         LocalDateTime startDate = LocalDateTime.parse(dto.startDate());
         MaintenanceRecord record = new MaintenanceRecord(registrationNumber, modelName, dto.description(), dto.expectedDuration(),
@@ -89,7 +95,10 @@ public class MaintenanceService {
             log.warn("Aircraft service update failed, but maintenance record was created: {}", e.getMessage());
         }
         MaintenanceRecordViewDTO view = toRecordView(saved);
-        replicator.replicate(view);
+        if (!replicator.replicateAcknowledged(view)) {
+            log.warn("Maintenance record {} accepted without peer acknowledgement; it remains queued for retry",
+                    view.globalId());
+        }
         return view;
     }
 
@@ -131,7 +140,6 @@ public class MaintenanceService {
                 recordRepository.save(local);
                 log.info("REPLICA maintenance {} updated to revision {}", replica.globalId(), replica.revision());
             }
-
         }, () -> {
             MaintenanceRecord created = MaintenanceRecord.fromReplica(
                     replica.globalId(), replica.registrationNumber(), replica.modelName(), replica.templateName(),
@@ -141,6 +149,28 @@ public class MaintenanceService {
             recordRepository.save(created);
             log.info("REPLICA maintenance {} created at revision {}", replica.globalId(), replica.revision());
         });
+    }
+
+    @Transactional
+    public void applyTemplateReplica(MaintenanceTemplateViewDTO replica) {
+        Checklist checklist = new Checklist(replica.checklistTitle(), replica.checklistVersion(),
+                replica.checklistItems() == null ? List.of() : replica.checklistItems().stream()
+                        .map(item -> new ChecklistItem(item.taskDescription(), item.isMandatory())).toList());
+        templateRepository.findByGlobalId(replica.globalId()).ifPresentOrElse(local -> {
+            if (local.mergeReplica(replica.templateType(), replica.flightHoursInterval(),
+                    replica.calendarDaysInterval(), checklist, replica.appliesToModelNames(),
+                    replica.revision(), replica.lastModified())) {
+                templateRepository.save(local);
+            }
+        }, () -> templateRepository.save(MaintenanceTemplate.fromReplica(replica.globalId(),
+                replica.templateName(), replica.templateType(), replica.flightHoursInterval(),
+                replica.calendarDaysInterval(), checklist, replica.appliesToModelNames(),
+                replica.revision(), replica.lastModified())));
+    }
+
+    @Transactional(readOnly = true)
+    public List<MaintenanceTemplateViewDTO> findLocalTemplates() {
+        return templateRepository.findAll().stream().map(this::toTemplateView).toList();
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -153,6 +183,7 @@ public class MaintenanceService {
             return;
         }
         remote.items().forEach(this::applyReplica);
+        peerClient.collectTemplates().items().forEach(this::applyTemplateReplica);
         log.info("Maintenance startup sync applied {} record(s); unreachable peers: {}",
                 remote.items().size(), remote.unreachablePeers());
     }
@@ -184,9 +215,8 @@ public class MaintenanceService {
     }
 
     @Transactional
-    public MaintenanceRecordViewDTO completeMaintenance(Long recordId, CompleteMaintenanceDTO dto) {
-        MaintenanceRecord record = recordRepository.findById(recordId)
-                .orElseThrow(() -> new IllegalArgumentException("Maintenance record not found with ID: " + recordId));
+    public MaintenanceRecordViewDTO completeMaintenance(String recordId, CompleteMaintenanceDTO dto) {
+        MaintenanceRecord record = resolveRecord(recordId);
         record.complete(dto.completionNotes());
         MaintenanceRecord saved = recordRepository.save(record);
         try {
@@ -194,10 +224,52 @@ public class MaintenanceService {
         } catch (IllegalStateException e) {
             log.warn("Could not reactivate aircraft {} after maintenance: {}", record.getRegistrationNumber(), e.getMessage());
         }
-        audit.info("COMPLETE_MAINTENANCE id={} reg={}", recordId, record.getRegistrationNumber());
+        audit.info("COMPLETE_MAINTENANCE id={} reg={}", record.getGlobalId(), record.getRegistrationNumber());
         MaintenanceRecordViewDTO view = toRecordView(saved);
-        replicator.replicate(view);
+        if (!replicator.replicateAcknowledged(view)) {
+            log.warn("Completed maintenance record {} has no peer acknowledgement; it remains queued for retry",
+                    view.globalId());
+        }
         return view;
+    }
+
+    private MaintenanceTemplate resolveTemplate(RegisterMaintenanceDTO dto) {
+        if (dto.templateGlobalId() != null && !dto.templateGlobalId().isBlank()) {
+            Optional<MaintenanceTemplate> local = templateRepository.findByGlobalId(dto.templateGlobalId());
+            if (local.isPresent()) return local.get();
+            peerClient.collectTemplates().items().stream()
+                    .filter(template -> dto.templateGlobalId().equals(template.globalId()))
+                    .findFirst()
+                    .ifPresent(this::applyTemplateReplica);
+            return templateRepository.findByGlobalId(dto.templateGlobalId())
+                    .orElseThrow(() -> new IllegalArgumentException(
+                            "Maintenance template not found with global ID: " + dto.templateGlobalId()));
+        }
+        if (dto.templateId() == null) {
+            throw new IllegalArgumentException("Either templateGlobalId or templateId is required");
+        }
+        return templateRepository.findById(dto.templateId())
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Maintenance template not found with local ID: " + dto.templateId()
+                                + "; use templateGlobalId for cross-replica requests"));
+    }
+
+    private MaintenanceRecord resolveRecord(String identifier) {
+        Optional<MaintenanceRecord> local = recordRepository.findByGlobalId(identifier);
+        if (local.isPresent()) return local.get();
+        try {
+            local = recordRepository.findById(Long.valueOf(identifier));
+        } catch (NumberFormatException ignored) {
+            local = Optional.empty();
+        }
+        if (local.isPresent()) return local.get();
+
+        peerClient.collectAll().items().stream()
+                .filter(record -> identifier.equals(record.globalId()))
+                .findFirst()
+                .ifPresent(this::applyReplica);
+        return recordRepository.findByGlobalId(identifier)
+                .orElseThrow(() -> new IllegalArgumentException("Maintenance record not found with global ID: " + identifier));
     }
 
     public List<MaintenanceRecordViewDTO> getOngoingMaintenances() {
@@ -283,6 +355,7 @@ public class MaintenanceService {
                 template.getChecklist() == null ? null : template.getChecklist().getTitle(),
                 template.getChecklist() == null ? null : template.getChecklist().getVersion(),
                 checklistItems,
-                template.getAppliesToModelNames());
+                new java.util.ArrayList<>(template.getAppliesToModelNames()), template.getGlobalId(), template.getRevision(),
+                template.getLastModified());
     }
 }

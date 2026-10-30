@@ -4,6 +4,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import pt.isep.psoft.aisafe.maintenance.application.MaintenanceService;
 import pt.isep.psoft.aisafe.maintenance.application.DTO.MaintenanceRecordViewDTO;
+import pt.isep.psoft.aisafe.maintenance.application.DTO.MaintenanceTemplateViewDTO;
 
 import java.util.List;
 
@@ -37,6 +38,19 @@ public class InternalMaintenanceController {
                                                 @RequestBody MaintenanceRecordViewDTO replica) {
         if (!globalId.equals(replica.globalId())) throw new IllegalArgumentException("Replica id mismatch");
         maintenanceService.applyReplica(replica);
+        return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/templates")
+    public List<MaintenanceTemplateViewDTO> searchLocalTemplates() {
+        return maintenanceService.findLocalTemplates();
+    }
+
+    @PutMapping("/templates/{globalId}/replica")
+    public ResponseEntity<Void> receiveTemplateReplica(@PathVariable String globalId,
+                                                       @RequestBody MaintenanceTemplateViewDTO replica) {
+        if (!globalId.equals(replica.globalId())) throw new IllegalArgumentException("Template replica id mismatch");
+        maintenanceService.applyTemplateReplica(replica);
         return ResponseEntity.noContent().build();
     }
 }

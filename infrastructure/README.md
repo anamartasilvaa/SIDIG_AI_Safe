@@ -156,12 +156,7 @@ Medidas de segurança deste modo:
 - Cada serviço tolera a falha de uma réplica (round-robin com `proxy_next_upstream`).
 - Certificado autoassinado e sem mTLS entre serviços (a autenticação entre serviços usa API key e JWT).
 - BD H2 em memória e listas de peers estáticas; a fila de replicação pendente fica em memória.
-- Consistência eventual (AP): uma escrita só chega às outras réplicas passado algum tempo (até ~5 s no Airports, que replica
-  de 5 em 5 s). Um pedido que caia noutra réplica nesse intervalo pode ainda não ver o dado (por exemplo, uma rota acabada de
-  criar ou desativada). Os testes automáticos esperam por essa convergência.
-- Os *templates* de manutenção do Maintenance **não são replicados** entre réplicas (só os registos de manutenção são).
-  Um template criado numa réplica só pode ser usado nessa réplica; atravessar o gateway pode falhar com `400` conforme a réplica
-  que atender o pedido. É uma limitação conhecida.
+- Consistência eventual (AP): as escritas são aceites localmente e ficam numa fila de replicação com reenvio.
 
 ---
 
@@ -212,8 +207,7 @@ Pasta `tests/` da raiz do repositório:
    ambiente específicas). No Modo B, a pasta `09` usa só `docker compose stop/start` (ver "Testes manuais de tolerância a falhas").
 
 Notas por modo:
-- **Modo A:** no Maintenance, os pedidos `07.07`, `07.08` e `07.10` usam a réplica `{{mt1}}` diretamente (e não o gateway),
-  porque os templates não são replicados (ver as limitações do Modo B).
+
 - **Modo B:** só as gateways estão publicadas; os testes correm todos através delas.
 - Antes de correr, confirmar que **todas** as instâncias estão `UP` (pasta `00b` no Modo A; `docker compose ... ps` no Modo B).
 
