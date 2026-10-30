@@ -191,23 +191,27 @@ disponíveis na rede, evitando escolher uma rota pior ou com demasiadas escalas.
 
 Perfis do AISafe suportados: **Admin, ATCC, Backoffice**.
 
-* **Autenticação Dupla:**
-Suporta JWTs nativos do utilizador logado no Keycloak (com assinatura **RS256**) 
-e suporta tokens locais entre microsserviços (com assinatura **HS256**), validados dinamicamente pelo `JwtAuthenticationFilter`.
+- **Dupla Autenticação:** 
+
+O sistema aceita e valida de forma segura dois tipos de acesso: 
+os acessos dos utilizadores reais (geridos pelo Keycloak) 
+e as comunicações automáticas internas entre os próprios servidores.
 
 
-* **Autorização (RBAC):** 
-Regras de acesso bloqueadas por endpoint e método, garantindo modelo *deny by default*.
+- **Controlo de Acessos (RBAC):** 
+O sistema funciona com uma política de segurança máxima onde tudo está bloqueado por defeito. 
+Apenas os utilizadores com as permissões certas conseguem aceder e usar cada funcionalidade.
 
 
-* **Proteção HATEOAS:**
-Links gerados não expõem detalhes da rede interna; 
-utilizam domínios da gateway recebidos por cabeçalhos padrão (`X-Forwarded-Host`).
+- **Proteção de Links de Navegação:**
+Os links da API que o sistema devolve aos utilizadores são seguros 
+e nunca revelam os endereços verdadeiros nem a estrutura da rede interna.
 
 
-* **Registo de Auditoria (`MDC`):** 
-Todas as mutações e ingestões (CSV incluído) emitem *logs* cruzados e invioláveis:
-`[CorrelationID: 8f3c...] User: admin - Action: IMPORT_CSV - Target: AIRPORTS - Status: SUCCESS`.
+- **Registo de Auditoria:** 
+Qualquer alteração de dados no sistema (incluindo a importação de ficheiros CSV) 
+gera um registo automático e seguro no histórico. 
+Este registo guarda de forma clara quem fez a alteração, o que foi feito e se a ação teve sucesso.
 
 ---
 
