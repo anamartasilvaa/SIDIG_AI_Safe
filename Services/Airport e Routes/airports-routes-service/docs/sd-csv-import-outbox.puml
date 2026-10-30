@@ -1,0 +1,46 @@
+@startuml sd-csv-import-outbox
+skinparam style strictuml
+autonumber
+title SD - Mass Import of Airports from CSV (Multipart Form)
+
+actor "Backoffice" as User
+box "A&R Replica" #F4F7FF
+participant "AirportController" as Ctrl
+participant "AirportService" as Svc
+participant "CSVParser\n(Apache Commons)" as CSV
+participant "AirportRepository" as Repo
+participant "AuditService" as Audit
+participant "ReplicationOutbox" as Outbox
+end box
+
+User -> Ctrl : POST /api/airports/import (MultipartFile file)
+activate Ctrl
+Ctrl -> Svc : importAirportsFromCsv(file)
+activate Svc
+
+Svc -> CSV : parse(file)
+activate CSV
+CSV --> Svc : List<CSVRecord>
+deactivate CSV
+
+loop for each CSVRecord
+    Svc -> Svc : registerAirport(dto, isReplication=false)
+    activate Svc
+
+    Svc -> Repo : save(Airport)
+    Repo --> Svc : Saved Airport
+
+    Svc -> Outbox : enqueue(peers, "POST", "/api/airports", dto)
+    Outbox -> Outbox : save(ReplicationTask)
+
+    Svc -> Audit : record("CREATE", iata, "SUCCESS")
+    deactivate Svc
+end
+
+Svc -> Audit : record("CREATE", "CSV", "SUCCESS")
+Svc --> Ctrl : List<AirportViewDTO>
+deactivate Svc
+Ctrl --> User : 201 Created (CollectionModel + HATEOAS)
+deactivate Ctrl
+
+@enduml

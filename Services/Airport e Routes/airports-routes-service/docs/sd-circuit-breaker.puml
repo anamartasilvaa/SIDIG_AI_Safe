@@ -1,0 +1,50 @@
+@startuml sd-circuit-breaker
+skinparam style strictuml
+autonumber
+title SD - Peer Resilience Interceptor (Circuit Breaker)
+
+participant "ReplicationTaskScheduler" as Sched
+participant "RestTemplate" as Rest
+participant "PeerResilienceInterceptor" as Interceptor
+participant "Circuit" as Circuit
+participant "Peer Replica" as Peer
+
+Sched -> Rest : exchange(url, POST, payload)
+activate Rest
+
+Rest -> Interceptor : intercept(request, body, execution)
+activate Interceptor
+
+Interceptor -> Circuit : tryAcquire()
+activate Circuit
+alt Circuit is OPEN (openedAt != 0 and within openDurationMillis)
+    Circuit --> Interceptor : false
+    Interceptor --> Rest : throw ResourceAccessException("Circuit is open")
+    Rest --> Sched : RestClientException
+else Circuit is CLOSED or HALF-OPEN
+    Circuit --> Interceptor : true
+    deactivate Circuit
+
+    Interceptor -> Peer : execute(request)
+
+    alt Peer times out or returns 5xx
+        Peer --> Interceptor : Timeout / 502 Bad Gateway
+        Interceptor -> Circuit : failure()
+        activate Circuit
+        Circuit -> Circuit : failures++
+        opt failures >= failureThreshold (3)
+            Circuit -> Circuit : openedAt = currentTime
+            note right: Circuit transitions to OPEN state\nfor 10 seconds.
+        end
+        deactivate Circuit
+        Interceptor --> Rest : throw exception
+    else Peer responds successfully
+        Peer --> Interceptor : 200 OK / 2xx
+        Interceptor -> Circuit : success() (reset failures)
+        Interceptor --> Rest : ClientHttpResponse
+    end
+end
+
+deactivate Interceptor
+deactivate Rest
+@enduml

@@ -1,0 +1,125 @@
+@startuml class-diagram-airports-routes
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing false
+hide empty members
+title Airports & Routes Service - Domain Model
+
+package "Airport Aggregate" {
+    class Airport <<Entity>> <<Root>> {
+- pk: Long
+- version: Long
+- lastModified: Instant
+- originNodeId: String
+- name: String
+- city: String
+- country: String
+- timezone: String
+- imageUrl: String
+- operationalHours: String
+- contactInformation: String
+
+        --
+        + updateDetails(hours, contact)
+        + updateImage(url)
+        + updateStatus(status)
+        + applyReplicationData(...)
+        + applyReplicationMetadata(time, node)
+    }
+    class IATACode <<Value Object>> {
+- code: String
+    }
+    enum AirportType <<Enumeration>> {
+        INTERNATIONAL, REGIONAL, DOMESTIC
+    }
+    enum AirportStatus <<Enumeration>> {
+        OPERATIONAL, CLOSED, UNDER_MAINTENANCE
+    }
+    class Coordinates <<Value Object>> {
+- latitude: Double
+- longitude: Double
+    }
+    class Runway <<Entity>> {
+- name: String
+- length: Double
+- orientation: String
+    }
+    class Facility <<Value Object>> {
+- type: String
+- description: String
+    }
+
+    Airport "1" *-- "1" IATACode : identified by >
+    Airport "1" *-- "1" Coordinates : located at >
+    Airport "1" --> "1" AirportStatus : has >
+    Airport "1" --> "1" AirportType : is of type >
+    Airport "1" *-- "*" Runway : contains >
+    Airport "1" *-- "*" Facility : has >
+}
+
+package "Route Aggregate" {
+    class Route <<Entity>> <<Root>> {
+- pk: Long
+- version: Long
+- lastModified: Instant
+- originNodeId: String
+- estimatedFlightTime: Integer
+- minimumRange: Double
+- minimumCapacity: Integer
+
+        --
+        + deactivate()
+        + updateParameters(time, range, capacity)
+        + applyReplicationData(...)
+        + applyReplicationMetadata(time, node)
+    }
+    class RouteId <<Value Object>> {
+- id: String
+    }
+    enum RouteStatus <<Enumeration>> {
+        ACTIVE, INACTIVE
+    }
+
+    Route "1" *-- "1" RouteId : identified by >
+    Route "1" --> "1" RouteStatus : has >
+    Route "*" --> "1" Airport : origin (by ID) >
+    Route "*" --> "1" Airport : destination (by ID) >
+}
+
+package "Route History" {
+    class RouteHistory <<Entity>> {
+- pk: Long
+- routeId: String
+- action: String
+- startDate: LocalDateTime
+- endDate: LocalDateTime
+
+        --
+        + closeHistory(endDate)
+    }
+    Route ..> RouteHistory : tracks history
+}
+
+package "Replication Infrastructure" {
+    class ReplicationTask <<Infrastructure Entity>> {
+- id: Long
+- peerUrl: String
+- httpMethod: String
+- path: String
+- payload: String
+- attempts: int
+- nextAttemptAt: Instant
+- originalUser: String
+
+        --
+        + markDone()
+        + fail(nextInstant)
+    }
+
+    enum Status <<Enumeration>> {
+        PENDING, DONE, FAILED
+    }
+    ReplicationTask "1" --> "1" Status
+}
+
+@enduml

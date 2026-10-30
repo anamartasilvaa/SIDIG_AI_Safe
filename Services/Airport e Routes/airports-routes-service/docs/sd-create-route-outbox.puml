@@ -1,0 +1,59 @@
+@startuml sd-create-route-outbox
+skinparam style strictuml
+autonumber
+title SD - Create Route with Asynchronous Outbox Replication (US110)
+
+actor "Backoffice" as User
+participant "RouteController" as Ctrl
+participant "RouteService" as Svc
+participant "AirportRepository" as AR
+participant "RouteRepository" as RR
+participant "RouteHistoryRepository" as RHR
+participant "ReplicationOutbox" as Outbox
+participant "ReplicationTaskRepository" as TR
+participant "ReplicationTaskScheduler" as Sched
+participant "PeerClient\n(RestTemplate)" as Http
+participant "Peer Replica" as Peer
+
+User -> Ctrl : POST /api/routes (CreateRouteDTO)
+activate Ctrl
+Ctrl -> Svc : createRoute(dto, isReplication=false)
+activate Svc
+
+Svc -> AR : findByIataCodeString(origin)
+AR --> Svc : origin Airport
+Svc -> AR : findByIataCodeString(destination)
+AR --> Svc : destination Airport
+
+Svc -> Svc : new Route(origin, destination, ...)
+Svc -> RR : save(route)
+Svc -> RHR : save(new RouteHistory("CREATED"))
+
+Svc -> Outbox : enqueue(peers, "POST", "/api/routes", payload)
+activate Outbox
+Outbox -> TR : save(new ReplicationTask(PENDING))
+deactivate Outbox
+
+Svc --> Ctrl : RouteViewDTO
+Ctrl --> User : 201 Created
+deactivate Svc
+deactivate Ctrl
+
+== Background Thread (runs every 5 seconds) ==
+Sched -> Sched : sendPendingTasks()
+activate Sched
+Sched -> TR : findTop100ByStatus(PENDING)
+TR --> Sched : List<ReplicationTask>
+
+loop for each task
+    Sched -> Http : exchange(POST, "/api/routes", X-P2P-Sync=true)
+    activate Http
+    Http -> Peer : POST /api/routes
+    Peer --> Http : 201 Created
+    deactivate Http
+    Sched -> Sched : task.markDone()
+    Sched -> TR : save(task)
+end
+deactivate Sched
+
+@enduml
