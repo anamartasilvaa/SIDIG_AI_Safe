@@ -14,7 +14,7 @@ System_Boundary(aisafe, "AISafe Flight Management System") {
     Container(fo, "Flight Operations Service", "Java 17, Spring Boot 4", "Scheduling, aircraft-route assignment, availability, flight lifecycle, aircraft reassignment (grounding). Replicas with asynchronous replication.")
     Container(ar, "Airports & Routes Service", "Java 17, Spring Boot 4", "Airports, runways, certifications, routes and history. Replicas with replication outbox.")
     Container(ac, "Aircraft Service", "Java 17, Spring Boot 4", "Aircraft models and instances, operational status. Replicas with asynchronous replication.")
-    Container(mt, "Maintenance Service", "Java 17, Spring Boot 4", "Maintenance templates and records. Replicas; only the records are replicated (templates stay on the replica that created them).")
+    Container(mt, "Maintenance Service", "Java 17, Spring Boot 4", "Maintenance templates and records. Replicas; templates and records are both replicated to the peers by global id.")
 
     ContainerDb(fodb, "Flight Ops DB", "H2 (one per replica)", "Scheduled flights (replicated)")
     ContainerDb(ardb, "Airports & Routes DB", "H2 (one per replica)", "Airports and routes")

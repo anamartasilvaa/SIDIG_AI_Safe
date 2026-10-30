@@ -355,7 +355,7 @@ public class MaintenanceService {
                 template.getChecklist() == null ? null : template.getChecklist().getTitle(),
                 template.getChecklist() == null ? null : template.getChecklist().getVersion(),
                 checklistItems,
-                template.getAppliesToModelNames(), template.getGlobalId(), template.getRevision(),
+                new java.util.ArrayList<>(template.getAppliesToModelNames()), template.getGlobalId(), template.getRevision(),
                 template.getLastModified());
     }
 }

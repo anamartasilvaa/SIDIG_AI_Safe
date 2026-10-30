@@ -44,8 +44,7 @@ note right of CB
   a GET that misses locally is forwarded to the peers.
 end note
 note right of MB
-  Maintenance: only the maintenance records are replicated;
-  templates stay on the replica that created them.
+  Maintenance: maintenance records and templates are replicated
+  by global id (revision, retry every 5 s, sync on startup).
 end note
-
 @enduml
