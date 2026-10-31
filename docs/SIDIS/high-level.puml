@@ -49,9 +49,8 @@ AR -down-> ARDB
 FO -down-> FODB
 
 MT .up.> AC : HTTPS (maintenance status)
-FO .up.> AC : HTTPS (aircraft validation, availability)
+FO <.up.> AC : HTTPS: aircraft validation and availability (FO to AC);\ngrounding, reassign flights (AC to FO)
 FO .up.> AR : HTTPS (route validation)
-AC .up.> FO : HTTPS (grounding: reassign flights)
 AC .up.> AR : HTTPS (compatible routes)
 
 @enduml
