@@ -14,6 +14,23 @@ regras de acesso por perfil (**RBAC**). Toda a comunicação usa **HTTPS**.
 
 ---
 
+## Início rápido (Modo B – Docker seguro)
+
+Requisitos: Docker Desktop. A partir da raiz do repositório (PowerShell):
+
+```powershell
+cd infrastructure\docker
+.\gen-certs.ps1          # uma vez: cria o .env (segredos aleatórios) e os certificados
+cd ..
+docker compose -f docker-compose.secure.yml up --build
+```
+
+Quando todos os containers estiverem `healthy`, o sistema fica disponível em `https://localhost:8443` (gateway 1) e
+`https://localhost:8444` (gateway 2). Para testar, importar a coleção `tests/SIDIS-Modo-B.postman_collection.json` e o
+environment `SIDIS` (secção 9.2). Outros modos de execução: secção 4.
+
+---
+
 ## 1. Arquitetura
 
 | Componente                                  | Responsabilidade                                                                                                                                                |
@@ -117,9 +134,9 @@ Outras propriedades:
 
 ## 4. Como executar
 
-Há três modos (ver `infrastructure/README.md`): **Modo A** (serviços no IntelliJ, secções 4.1 a 4.5), **Modo Docker
-dos serviços** (`docker-compose.services.yml`, sem gateway nem Keycloak) e **Modo Docker seguro**
-(`docker-compose.secure.yml`, secção 4.6). Não correr dois modos ao mesmo tempo.
+Há três modos (ver `infrastructure/README.md`): **Modo A** (serviços no IntelliJ, secções 4.1 a 4.5), **Modo B**
+(Docker seguro, `docker-compose.secure.yml`, secção 4.6) e **Modo C** (só os serviços em Docker,
+`docker-compose.services.yml`, sem gateway nem Keycloak). Não correr dois modos ao mesmo tempo.
 
 ### 4.1 Certificados (uma vez só)
 
@@ -190,10 +207,20 @@ Utilizadores de teste (realm `aisafe`):
 | tech.user       | tech123       | MAINTENANCE_TECHNICIAN |
 | supervisor.user | supervisor123 | MAINTENANCE_SUPERVISOR |
 
+Utilizadores e passwords do realm de teste, só para desenvolvimento.
+
 Para testar sem Keycloak, `src/test/java/.../DevTokenGenerator.java` gera tokens HS256 de desenvolvimento
 (aceites só com `ACCEPT_DEV_TOKENS=true`).
 
-### 4.6 Modo Docker seguro
+Exemplo de execução (Modo B):
+
+![Agendamento de um voo através da gateway (201 Created)](docs/screenshots/fo-01-agendar-voo.png)
+
+![Grounding: log do Flight Operations com a reatribuição do voo](docs/screenshots/fo-02-grounding-log.png)
+
+As restantes capturas (arranque, RBAC, replicação, falhas e testes) estão em `infrastructure/README.md`.
+
+### 4.6 Modo B – Docker seguro
 
 Stack completa em containers, com 2 réplicas de cada serviço, 2 gateways e Keycloak em 2 nós:
 
@@ -297,8 +324,8 @@ chamando o endpoint interno diretamente.
 
 Fluxo ponta a ponta: o ATCC ou ADMIN muda o estado do avião no Aircraft
 (`PATCH /api/aircraft-models/instances/{registo}/status`) e, se o avião deixou de estar `ACTIVE`, o Aircraft chama este
-endpoint no FO. No log do FO aparecem `ALLOWED POST /internal/.../grounding`, `GROUNDING <avião>: [...]` e, por cada
-voo, `Voo <id> reatribuido ao aviao <avião> (rev N)`.
+endpoint no FO. No log do FO aparecem `ALLOWED POST /internal/.../grounding` e `GROUNDING <avião>: [...]`, com uma frase por
+voo afetado (por exemplo, `Flight <id> (RT-OPOLIS, 2037-02-04T09:00) reassigned from CS-G6364 to CS-TTA.`).
 
 Limitações do grounding: só verifica **conflitos de horário** no candidato. A capacidade e o alcance da rota não são
 revalidados, pelo que a escolha de candidatos adequados (mesmo modelo, `ACTIVE`, lugares suficientes) é
@@ -338,26 +365,27 @@ responsabilidade do Aircraft.
 
 ## 7. Tolerância a falhas
 
-| Cenário                                                        | Comportamento                                                                      |
-|----------------------------------------------------------------|------------------------------------------------------------------------------------|
-| Uma réplica FO em baixo (pedido pela gateway)                  | A gateway tenta a seguinte (failover) e salta-a durante 10 s                       |
-| Voo ainda não replicado para esta réplica                      | Forwarding em paralelo; 404 só se **todos** responderem que não existe             |
-| Voo não encontrado e algum peer sem resposta                   | 503: o voo pode existir nessa réplica (nunca um 404 falso)                         |
-| Réplica onde o voo foi criado em baixo                         | As outras têm a cópia: o voo continua disponível                                   |
-| Uma réplica em baixo (leitura agregada)                        | Resposta com os restantes dados + header de resposta parcial                       |
-| Uma réplica em baixo (agendamento)                             | AP: 201 com header de resposta parcial; a cópia é entregue quando ela voltar       |
-| Nenhum par confirma a cópia (agendamento ou mudança de estado) | AP: o voo é aceite, fica um aviso no log e a cópia em fila para nova tentativa     |
-| Réplica reinicia (BD em memória vazia)                         | Sincronização no arranque com as outras réplicas                                   |
-| Réplica falha repetidamente                                    | Circuit breaker: deixa de ser contactada durante 10 s                              |
-| Uma réplica de outro serviço em baixo                          | Failover para a seguinte                                                           |
-| Todas as réplicas de outro serviço em baixo                    | Agendamento → 503; disponibilidade → 200 com `available: false` e o motivo         |
-| Dois pedidos simultâneos para o mesmo avião (mesma réplica)    | Lock por avião: só um é aceite, o outro recebe 409                                 |
-| Conflito entre réplicas diferentes durante uma partição        | Ambos aceites (AP); conflito detetado e registado quando convergem                 |
-| Alterações concorrentes ao mesmo voo em réplicas diferentes    | Convergem para a mais recente (`revision`, `lastModifiedAt`)                       |
-| Grounding aplicado numa réplica                                | A revisão incrementada e o novo avião são replicados às outras réplicas            |
-| Uma gateway ou um nó Keycloak em baixo (Modo Docker)           | O cliente usa a outra gateway (8444); o outro nó Keycloak continua a emitir tokens |
-| Os dois nós Keycloak em baixo                                  | Tokens já emitidos continuam válidos nas réplicas com as chaves em cache; novos logins falham |
-| Réplica reiniciada com o Keycloak em baixo                     | Sem chaves em cache, recusa os tokens (401) até o Keycloak voltar                  |
+| Cenário                                                        | Comportamento                                                                                                                                                            |
+|----------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Uma réplica FO em baixo (pedido pela gateway)                  | A gateway tenta a seguinte (failover) e salta-a durante 10 s                                                                                                             |
+| Voo ainda não replicado para esta réplica                      | Forwarding em paralelo; 404 só se **todos** responderem que não existe                                                                                                   |
+| Voo não encontrado e algum peer sem resposta                   | 503: o voo pode existir nessa réplica (nunca um 404 falso)                                                                                                               |
+| Réplica onde o voo foi criado em baixo                         | As outras têm a cópia: o voo continua disponível                                                                                                                         |
+| Uma réplica em baixo (leitura agregada)                        | Resposta com os restantes dados + header de resposta parcial                                                                                                             |
+| Uma réplica em baixo (agendamento)                             | AP: 201 com header de resposta parcial; a cópia é entregue quando ela voltar                                                                                             |
+| Nenhum par confirma a cópia (agendamento ou mudança de estado) | AP: o voo é aceite, fica um aviso no log e a cópia em fila para nova tentativa                                                                                           |
+| Réplica reinicia (BD em memória vazia)                         | Sincronização no arranque com as outras réplicas                                                                                                                         |
+| Réplica falha repetidamente                                    | Circuit breaker: deixa de ser contactada durante 10 s                                                                                                                    |
+| Uma réplica de outro serviço em baixo                          | Failover para a seguinte                                                                                                                                                 |
+| Todas as réplicas de outro serviço em baixo                    | Agendamento → 503; disponibilidade → 200 com `available: false` e o motivo                                                                                               |
+| Dois pedidos simultâneos para o mesmo avião (mesma réplica)    | Lock por avião: só um é aceite, o outro recebe 409                                                                                                                       |
+| Conflito entre réplicas diferentes durante uma partição        | Ambos aceites (AP); conflito detetado e registado quando convergem                                                                                                       |
+| Alterações concorrentes ao mesmo voo em réplicas diferentes    | Convergem para a mais recente (`revision`, `lastModifiedAt`)                                                                                                             |
+| Grounding aplicado numa réplica                                | A revisão incrementada e o novo avião são replicados às outras réplicas                                                                                                  |
+| Uma gateway ou um nó Keycloak em baixo (Modo Docker)           | O cliente usa a outra gateway (8444); o outro nó Keycloak continua a emitir tokens                                                                                       |
+| Os dois nós Keycloak em baixo                                  | Tokens já emitidos continuam válidos nas réplicas com as chaves em cache; novos logins falham                                                                            |
+| Réplica reiniciada com o Keycloak em baixo                     | Sem chaves em cache, recusa os tokens (401) até o Keycloak voltar                                                                                                        |
+| Réplica de outro serviço reiniciada com o Keycloak em baixo    | O FO devolve 502 («Downstream service rejected the request: 401»): essa réplica não tem chaves em cache e recusa o JWT reencaminhado. Resolve-se quando o Keycloak volta |
 
 ---
 
