@@ -2,20 +2,20 @@
 !include <C4/C4_Context>
 LAYOUT_TOP_DOWN()
 
-title AISafe Flight Management System - C4 Nivel 1 (System Context)
+title AISafe Flight Management System - C4 Level 1 (System Context)
 
-Person(admin, "Admin", "Gere utilizadores e tem acesso a todas as operacoes.")
-Person(backoffice, "Backoffice Operator", "Gere aeroportos, rotas e avioes; consulta relatorios de utilizacao.")
-Person(atcc, "ATCC", "Agenda voos, atribui avioes a rotas e acompanha o estado dos voos.")
-Person(maint, "Maintenance Technician / Supervisor", "Regista e valida manutencoes dos avioes.")
+Person(admin, "Admin", "Manages users and has access to all operations.")
+Person(backoffice, "Backoffice Operator", "Manages airports, routes and aircraft; reads utilization reports.")
+Person(atcc, "ATCC", "Schedules flights, assigns aircraft to routes and follows flight status.")
+Person(maint, "Maintenance Technician / Supervisor", "Registers and validates aircraft maintenance.")
 
-System(aisafe, "AISafe Flight Management System", "Sistema distribuido: API Gateway + 4 servicos (Aircraft, Maintenance, Airports & Routes, Flight Operations), 2 a 3 replicas cada (3 no modo IntelliJ, 2 no modo Docker).")
-System_Ext(idp, "Keycloak (realm aisafe)", "Fornecedor de identidade: autentica os utilizadores e emite JWT assinados (RS256) com o perfil.")
+System(aisafe, "AISafe Flight Management System", "Distributed system: API Gateway + 4 services (Aircraft, Maintenance, Airports & Routes, Flight Operations), 2 to 3 replicas each (3 in Mode A, 2 in Mode B).")
+System_Ext(idp, "Keycloak (aisafe realm)", "Identity provider: authenticates users and issues signed JWTs (RS256) carrying the profile.")
 
-Rel(admin, aisafe, "Usa", "HTTPS/REST, JSON")
-Rel(backoffice, aisafe, "Usa", "HTTPS/REST, JSON")
-Rel(atcc, aisafe, "Usa", "HTTPS/REST, JSON")
-Rel(maint, aisafe, "Usa", "HTTPS/REST, JSON")
-Rel(aisafe, idp, "Login (via gateway) e chave publica para validar tokens", "OpenID Connect / JWKS")
+Rel(admin, aisafe, "Uses", "HTTPS/REST, JSON")
+Rel(backoffice, aisafe, "Uses", "HTTPS/REST, JSON")
+Rel(atcc, aisafe, "Uses", "HTTPS/REST, JSON")
+Rel(maint, aisafe, "Uses", "HTTPS/REST, JSON")
+Rel(aisafe, idp, "Login (via gateway) and public key to validate tokens", "OpenID Connect / JWKS")
 
 @enduml

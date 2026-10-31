@@ -11,10 +11,10 @@ System_Boundary(aisafe, "AISafe Flight Management System") {
     Container(kc, "Keycloak (x2, cluster)", "Keycloak 26, aisafe realm, :8180", "Login (OpenID Connect) and issuance of RS256 JWT with the profile (roles). Two nodes in a cluster (jdbc-ping) that publish the public key (JWKS).")
     ContainerDb(kcdb, "Keycloak DB", "PostgreSQL", "Realm, users and sessions (shared by the 2 nodes)")
 
-    Container(fo, "Flight Operations Service", "Java 17, Spring Boot 4", "Scheduling, aircraft-route assignment, availability, flight lifecycle, aircraft reassignment (grounding). Replicas with asynchronous replication.")
+    Container(fo, "Flight Operations Service", "Java 17, Spring Boot 4", "Scheduling, aircraft-route assignment, availability, flight lifecycle, aircraft reassignment (grounding). Replicas; each write is acknowledged by at least one peer and copied to the others in the background.")
     Container(ar, "Airports & Routes Service", "Java 17, Spring Boot 4", "Airports, runways, certifications, routes and history. Replicas with replication outbox.")
     Container(ac, "Aircraft Service", "Java 17, Spring Boot 4", "Aircraft models and instances, operational status. Replicas with asynchronous replication.")
-    Container(mt, "Maintenance Service", "Java 17, Spring Boot 4", "Maintenance templates and records. Replicas; templates and records are both replicated to the peers by global id.")
+    Container(mt, "Maintenance Service", "Java 17, Spring Boot 4", "Maintenance templates and records. Replicas; templates and records are replicated by global id, each write acknowledged by at least one peer.")
 
     ContainerDb(fodb, "Flight Ops DB", "H2 (one per replica)", "Scheduled flights (replicated)")
     ContainerDb(ardb, "Airports & Routes DB", "H2 (one per replica)", "Airports and routes")
@@ -38,7 +38,7 @@ Rel(fo, kc, "Public key to validate the JWT (every service does the same and cac
 Rel_L(fo, fo, "Replication and forwarding between replicas", "HTTPS /internal/..., X-API-Key")
 Rel_L(ar, ar, "Replication (outbox) and forwarding between replicas", "HTTPS, HS256 peer token")
 Rel_L(ac, ac, "Asynchronous replication and forwarding between replicas", "HTTPS /internal/..., X-API-Key")
-Rel_L(mt, mt, "Replication of maintenance records between replicas", "HTTPS /internal/..., X-API-Key")
+Rel_L(mt, mt, "Replication of maintenance records and templates between replicas", "HTTPS /internal/..., X-API-Key")
 Rel(ac, ar, "Route data for the compatible-routes query, failover between replicas", "HTTPS GET /api/routes, user's JWT")
 
 Rel(fo, fodb, "Reads/Writes", "JPA")
