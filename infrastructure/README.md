@@ -211,7 +211,7 @@ docker compose -f infrastructure/docker-compose.services.yml down
 
 ## Testes automáticos (Postman)
 
-Pasta `tests/` da raiz do repositório:
+Pasta `tests(postman)/` da raiz do repositório:
 
 | Ficheiro                               | Para                                                       |
 |----------------------------------------|------------------------------------------------------------|
@@ -239,7 +239,7 @@ Resultado esperado nas pastas `00` a `07`, sem falhas: **Modo A: 365 testes; Mod
 
 ![Collection Runner do Modo B: 348 testes, 0 falhas](../docs/SIDIS/screenshots/02-modo-b-postman-runner.png)
 
-Com Newman: `newman run tests/SIDIS-Modo-A.postman_collection.json -e tests/SIDIS.postman_environment.json --insecure --delay-request 100`
+Com Newman: `newman run "tests(postman)/SIDIS-Modo-A.postman_collection.json" -e "tests(postman)/SIDIS.postman_environment.json" --insecure --delay-request 100`
 
 ## Testes manuais de tolerância a falhas (Modo B, pasta 09)
 

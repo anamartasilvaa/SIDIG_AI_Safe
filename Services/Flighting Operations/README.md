@@ -26,7 +26,7 @@ docker compose -f docker-compose.secure.yml up --build
 ```
 
 Quando todos os containers estiverem `healthy`, o sistema fica disponível em `https://localhost:8443` (gateway 1) e
-`https://localhost:8444` (gateway 2). Para testar, importar a coleção `tests/SIDIS-Modo-B.postman_collection.json` e o
+`https://localhost:8444` (gateway 2). Para testar, importar a coleção `tests(postman)/SIDIS-Modo-B.postman_collection.json` e o
 environment `SIDIS` (secção 9.2). Outros modos de execução: secção 4.
 
 ---
@@ -214,9 +214,9 @@ Para testar sem Keycloak, `src/test/java/.../DevTokenGenerator.java` gera tokens
 
 Exemplo de execução (Modo B):
 
-![Agendamento de um voo através da gateway (201 Created)](docs/screenshots/fo-01-agendar-voo.png)
+![Agendamento de um voo através da gateway (201 Created)](docs/Screenshots/fo-01-agendar-voo.png)
 
-![Grounding: log do Flight Operations com a reatribuição do voo](docs/screenshots/fo-02-grounding-log.png)
+![Grounding: log do Flight Operations com a reatribuição do voo](docs/Screenshots/fo-02-grounding-log.png)
 
 As restantes capturas (arranque, RBAC, replicação, falhas e testes) estão em `infrastructure/README.md`.
 
@@ -447,7 +447,7 @@ Executar: botão direito em `src/test/java` → **Run 'All Tests'**, ou `mvn tes
 
 ### 9.2 Postman – coleções `SIDIS-Modo-A` e `SIDIS-Modo-B`
 
-Pasta `tests/` da raiz do repositório:
+Pasta `tests(postman)/` da raiz do repositório:
 
 | Ficheiro                               | Para                                                       |
 |----------------------------------------|------------------------------------------------------------|

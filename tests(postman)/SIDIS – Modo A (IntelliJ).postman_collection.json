@@ -1,0 +1,3686 @@
+{
+  "info": {
+    "_postman_id": "4c085a92-9625-44df-9f19-04ccd73a85de",
+    "name": "SIDIS – Modo A (IntelliJ)",
+    "description": "AISafe distributed system, Mode A: services running in IntelliJ with local Keycloak and NGINX (gateway [https://localhost:8443](https://localhost:8443); FO 8081-8083, Aircraft 8071-8073, Maintenance 8075-8077, Airports 8091-8093).\n\nUse with the SIDIS environment. Turn off 'SSL certificate verification' in Postman (or use newman --insecure).  \nRole of each request: tag {ADMIN} {ATCC} {BACKOFFICE} {TECH} {SUPERVISOR} {NONE} in the name (default ATCC). The expected status is also in the name ('→ 200'). Tokens and dates are generated automatically (request 00.00 starts a new run).  \nFolders 00 to 07: automatic (Collection Runner / Newman with 100 ms delay). Folder 09: manual, request by request, performing the action between \\[ \\] first.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "51362888",
+    "_collection_link": "https://go.postman.co/collection/51362888-4c085a92-9625-44df-9f19-04ccd73a85de?source=collection_link"
+  },
+  "item": [
+    {
+      "name": "00 Startup and login",
+      "item": [
+        {
+          "name": "00.00 Keycloak realm is reachable – starts a new run {NONE} → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Realm info matches the configured realm', () => pm.expect(pm.response.json().realm).to.eql(pm.environment.get('realm')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/realms/{{realm}}",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "realms",
+                "{{realm}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "00.01 Keycloak public keys (JWKS) {NONE} → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('JWKS exposes an RS256 signing key', () => pm.expect(pm.response.json().keys.some(k => k.alg === 'RS256')).to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/realms/{{realm}}/protocol/openid-connect/certs",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "realms",
+                "{{realm}}",
+                "protocol",
+                "openid-connect",
+                "certs"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "00.02 Login ADMIN → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Response has an access_token', () => pm.expect(j.access_token).to.be.a('string'));",
+                  "pm.test('Token type is Bearer', () => pm.expect(j.token_type).to.eql('Bearer'));",
+                  "pm.environment.set('tokenAdmin', j.access_token); pm.environment.set('expAdmin', String(Date.now() + j.expires_in * 1000));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "type": "text",
+                  "value": "password",
+                  "key": "grant_type"
+                },
+                {
+                  "type": "text",
+                  "value": "{{clientId}}",
+                  "key": "client_id"
+                },
+                {
+                  "type": "text",
+                  "value": "admin.user",
+                  "key": "username"
+                },
+                {
+                  "type": "text",
+                  "value": "{{pwdAdmin}}",
+                  "key": "password"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{gateway}}/realms/{{realm}}/protocol/openid-connect/token",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "realms",
+                "{{realm}}",
+                "protocol",
+                "openid-connect",
+                "token"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "00.03 Login ATCC → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Response has an access_token', () => pm.expect(j.access_token).to.be.a('string'));",
+                  "pm.test('Token type is Bearer', () => pm.expect(j.token_type).to.eql('Bearer'));",
+                  "pm.environment.set('tokenAtcc', j.access_token); pm.environment.set('expAtcc', String(Date.now() + j.expires_in * 1000));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "type": "text",
+                  "value": "password",
+                  "key": "grant_type"
+                },
+                {
+                  "type": "text",
+                  "value": "{{clientId}}",
+                  "key": "client_id"
+                },
+                {
+                  "type": "text",
+                  "value": "atcc.user",
+                  "key": "username"
+                },
+                {
+                  "type": "text",
+                  "value": "{{pwdAtcc}}",
+                  "key": "password"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{gateway}}/realms/{{realm}}/protocol/openid-connect/token",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "realms",
+                "{{realm}}",
+                "protocol",
+                "openid-connect",
+                "token"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "00.04 Login BACKOFFICE → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Response has an access_token', () => pm.expect(j.access_token).to.be.a('string'));",
+                  "pm.test('Token type is Bearer', () => pm.expect(j.token_type).to.eql('Bearer'));",
+                  "pm.environment.set('tokenBackoffice', j.access_token); pm.environment.set('expBackoffice', String(Date.now() + j.expires_in * 1000));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "value": "password",
+                  "key": "grant_type",
+                  "type": "text"
+                },
+                {
+                  "value": "{{clientId}}",
+                  "key": "client_id",
+                  "type": "text"
+                },
+                {
+                  "value": "backoffice.user",
+                  "key": "username",
+                  "type": "text"
+                },
+                {
+                  "value": "{{pwdBackoffice}}",
+                  "key": "password",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{gateway}}/realms/{{realm}}/protocol/openid-connect/token",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "realms",
+                "{{realm}}",
+                "protocol",
+                "openid-connect",
+                "token"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "00.05 Login MAINTENANCE_TECHNICIAN → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Response has an access_token', () => pm.expect(j.access_token).to.be.a('string'));",
+                  "pm.test('Token type is Bearer', () => pm.expect(j.token_type).to.eql('Bearer'));",
+                  "pm.environment.set('tokenTech', j.access_token); pm.environment.set('expTech', String(Date.now() + j.expires_in * 1000));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "type": "text",
+                  "value": "password"
+                },
+                {
+                  "key": "client_id",
+                  "type": "text",
+                  "value": "{{clientId}}"
+                },
+                {
+                  "key": "username",
+                  "type": "text",
+                  "value": "tech.user"
+                },
+                {
+                  "key": "password",
+                  "type": "text",
+                  "value": "{{pwdTech}}"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{gateway}}/realms/{{realm}}/protocol/openid-connect/token",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "realms",
+                "{{realm}}",
+                "protocol",
+                "openid-connect",
+                "token"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "00.06 Login MAINTENANCE_SUPERVISOR → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Response has an access_token', () => pm.expect(j.access_token).to.be.a('string'));",
+                  "pm.test('Token type is Bearer', () => pm.expect(j.token_type).to.eql('Bearer'));",
+                  "pm.environment.set('tokenSupervisor', j.access_token); pm.environment.set('expSupervisor', String(Date.now() + j.expires_in * 1000));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "type": "text",
+                  "value": "password",
+                  "key": "grant_type"
+                },
+                {
+                  "type": "text",
+                  "value": "{{clientId}}",
+                  "key": "client_id"
+                },
+                {
+                  "type": "text",
+                  "value": "supervisor.user",
+                  "key": "username"
+                },
+                {
+                  "type": "text",
+                  "value": "{{pwdSupervisor}}",
+                  "key": "password"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{gateway}}/realms/{{realm}}/protocol/openid-connect/token",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "realms",
+                "{{realm}}",
+                "protocol",
+                "openid-connect",
+                "token"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "00.07 Login with a wrong password {NONE} → 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 400 or 401 (Keycloak answers invalid_grant)', () => pm.expect(pm.response.code).to.be.oneOf([400, 401]));",
+                  "pm.test('Error is invalid_grant', () => pm.expect(pm.response.json().error).to.eql('invalid_grant'));",
+                  "pm.test('No access token is issued', () => pm.expect(pm.response.json()).to.not.have.property('access_token'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "password",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "username",
+                  "value": "atcc.user",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "wrong-password",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{gateway}}/realms/{{realm}}/protocol/openid-connect/token",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "realms",
+                "{{realm}}",
+                "protocol",
+                "openid-connect",
+                "token"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "00b Replica health checks (direct access)",
+      "item": [
+        {
+          "name": "00b.01 FO-1 health {NONE} → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Health status is UP', () => pm.expect(pm.response.json().status).to.eql('UP'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{fo1}}/actuator/health",
+              "host": [
+                "{{fo1}}"
+              ],
+              "path": [
+                "actuator",
+                "health"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "00b.02 FO-2 health {NONE} → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Health status is UP', () => pm.expect(pm.response.json().status).to.eql('UP'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{fo2}}/actuator/health",
+              "host": [
+                "{{fo2}}"
+              ],
+              "path": [
+                "actuator",
+                "health"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "00b.03 FO-3 health {NONE} → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Health status is UP', () => pm.expect(pm.response.json().status).to.eql('UP'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{fo3}}/actuator/health",
+              "host": [
+                "{{fo3}}"
+              ],
+              "path": [
+                "actuator",
+                "health"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "00b.04 Aircraft-1 health {NONE} → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Health status is UP', () => pm.expect(pm.response.json().status).to.eql('UP'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{ac1}}/actuator/health",
+              "host": [
+                "{{ac1}}"
+              ],
+              "path": [
+                "actuator",
+                "health"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "00b.05 Aircraft-2 health {NONE} → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Health status is UP', () => pm.expect(pm.response.json().status).to.eql('UP'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{ac2}}/actuator/health",
+              "host": [
+                "{{ac2}}"
+              ],
+              "path": [
+                "actuator",
+                "health"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "00b.06 Aircraft-3 health {NONE} → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Health status is UP', () => pm.expect(pm.response.json().status).to.eql('UP'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{ac3}}/actuator/health",
+              "host": [
+                "{{ac3}}"
+              ],
+              "path": [
+                "actuator",
+                "health"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "00b.07 Maintenance-1 health {NONE} → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Health status is UP', () => pm.expect(pm.response.json().status).to.eql('UP'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{mt1}}/actuator/health",
+              "host": [
+                "{{mt1}}"
+              ],
+              "path": [
+                "actuator",
+                "health"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "00b.08 Maintenance-2 health {NONE} → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Health status is UP', () => pm.expect(pm.response.json().status).to.eql('UP'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{mt2}}/actuator/health",
+              "host": [
+                "{{mt2}}"
+              ],
+              "path": [
+                "actuator",
+                "health"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "00b.09 Maintenance-3 health {NONE} → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Health status is UP', () => pm.expect(pm.response.json().status).to.eql('UP'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{mt3}}/actuator/health",
+              "host": [
+                "{{mt3}}"
+              ],
+              "path": [
+                "actuator",
+                "health"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "00b.10 Airports-1 health {NONE} → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Health status is UP', () => pm.expect(pm.response.json().status).to.eql('UP'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{ar1}}/actuator/health",
+              "host": [
+                "{{ar1}}"
+              ],
+              "path": [
+                "actuator",
+                "health"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "00b.11 Airports-2 health {NONE} → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Health status is UP', () => pm.expect(pm.response.json().status).to.eql('UP'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{ar2}}/actuator/health",
+              "host": [
+                "{{ar2}}"
+              ],
+              "path": [
+                "actuator",
+                "health"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "00b.12 Airports-3 health {NONE} → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Health status is UP', () => pm.expect(pm.response.json().status).to.eql('UP'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{ar3}}/actuator/health",
+              "host": [
+                "{{ar3}}"
+              ],
+              "path": [
+                "actuator",
+                "health"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "01 Gateway",
+      "item": [
+        {
+          "name": "01.01 Round-robin: 9 requests are served by at least 2 FO replicas {NONE}",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const L = eval(pm.collectionVariables.get('lib'));",
+                  "const seen = {};",
+                  "for (let i = 0; i < 9; i++) { const r = await L.call('GET', '/api/scheduled-flights/route-utilization', null, 'BACKOFFICE'); const s = r.headers.get('X-Served-By'); seen[s] = (seen[s] || 0) + 1; pm.test('Request ' + (i + 1) + ' returns 200 or 204', () => pm.expect(r.code).to.be.oneOf([200, 204])); }",
+                  "console.log('X-Served-By', JSON.stringify(seen));",
+                  "pm.test('Load is spread over at least 2 replicas: ' + Object.keys(seen).join(', '), () => pm.expect(Object.keys(seen).length).to.be.at.least(2));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/realms/{{realm}}",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "realms",
+                "{{realm}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "01.02 Internal endpoints are blocked at the gateway, even with an API key {NONE} → 403",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Gateway blocks /internal even with a valid API key', () => pm.expect(pm.response.text()).to.not.include('routeId'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gateway}}/internal/scheduled-flights",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "internal",
+                "scheduled-flights"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "01.03 Actuator is blocked at the gateway {NONE} → 403",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Actuator is not exposed through the gateway', () => pm.expect(pm.response.text()).to.not.include('\"status\":\"UP\"'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/actuator/health",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "actuator",
+                "health"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "01.04 H2 console is blocked at the gateway {NONE} → 403",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 403', () => pm.response.to.have.status(403));",
+                  "pm.test('H2 console is not exposed through the gateway', () => pm.expect(pm.response.text().toLowerCase()).to.not.include('h2 console'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/h2-console/",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "h2-console",
+                ""
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "01.05 Unknown path returns 404 {ATCC} → 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 404', () => pm.response.to.have.status(404));",
+                  "pm.test('Gateway answers unknown paths without leaking its version', () => pm.expect(pm.response.headers.get('Server') || '').to.not.match(/\\d+\\.\\d+/));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/anything-else",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "anything-else"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "01.06 Rate limiting: a burst of 40 requests triggers some 429 {BACKOFFICE} → 200|204",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('A normal request is accepted (200 or 204)', () => pm.expect(pm.response.code).to.be.oneOf([200, 204]));",
+                  "const total = 40, codes = {};",
+                  "const url = pm.variables.replaceIn('{{gateway}}/api/scheduled-flights/route-utilization'), tk = pm.environment.get('tokenBackoffice');",
+                  "await Promise.all(Array.from({length: total}, () => new Promise(r => pm.sendRequest({url, method: 'GET', header: {Authorization: 'Bearer ' + tk}}, (e, res) => { const c = e ? 'error' : res.code; codes[c] = (codes[c] || 0) + 1; r(); }))));",
+                  "console.log('Rate limit', JSON.stringify(codes));",
+                  "pm.test('A burst of ' + total + ' requests triggers 429 ' + JSON.stringify(codes), () => pm.expect(codes[429] || 0).to.be.above(0));",
+                  "await new Promise(r => setTimeout(r, 2500));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/scheduled-flights/route-utilization",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "route-utilization"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "02 JWT authentication",
+      "item": [
+        {
+          "name": "02.01 No token {NONE} → 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Response carries no business data', () => pm.expect(pm.response.text()).to.not.include('routeId'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/scheduled-flights/route-utilization",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "route-utilization"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "02.02 Malformed token {NONE} → 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Response carries no business data', () => pm.expect(pm.response.text()).to.not.include('routeId'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer abc.def.ghi"
+              }
+            ],
+            "url": {
+              "raw": "{{gateway}}/api/scheduled-flights/route-utilization",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "route-utilization"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "02.03 Tampered Keycloak token (ATCC to ADMIN, invalid signature) {ATCC} → 401",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const t = pm.environment.get('tokenAtcc').split('.');",
+                  "const dec = s => JSON.parse(atob(s.replace(/-/g, '+').replace(/_/g, '/')));",
+                  "const enc = o => btoa(JSON.stringify(o)).replace(/=+$/, '').replace(/\\+/g, '-').replace(/\\//g, '_');",
+                  "const p = dec(t[1]); p.realm_access = {roles: ['ADMIN']}; p.roles = ['ADMIN'];",
+                  "pm.request.headers.upsert({key: 'Authorization', value: 'Bearer ' + t[0] + '.' + enc(p) + '.' + t[2]});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 401', () => pm.response.to.have.status(401));",
+                  "pm.test('A forged role claim does not grant access', () => pm.expect(pm.response.text()).to.not.include('routeId'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/scheduled-flights/route-utilization",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "route-utilization"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "02.04 Token with alg=none {NONE} → 401",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const enc = o => btoa(JSON.stringify(o)).replace(/=+$/, '').replace(/\\+/g, '-').replace(/\\//g, '_');",
+                  "pm.request.headers.upsert({key: 'Authorization', value: 'Bearer ' + enc({alg: 'none', typ: 'JWT'}) + '.' + enc({sub: 'x', username: 'x', roles: ['ADMIN'], exp: Math.floor(Date.now() / 1000) + 3600}) + '.'});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Unsigned (alg=none) tokens are rejected', () => pm.expect(pm.response.text()).to.not.include('routeId'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/scheduled-flights/route-utilization",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "route-utilization"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "02.05 Tampered token with an expired exp claim {ATCC} → 401",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const t = pm.environment.get('tokenAtcc').split('.');",
+                  "const dec = s => JSON.parse(atob(s.replace(/-/g, '+').replace(/_/g, '/')));",
+                  "const enc = o => btoa(JSON.stringify(o)).replace(/=+$/, '').replace(/\\+/g, '-').replace(/\\//g, '_');",
+                  "const p = dec(t[1]); p.exp = 1;",
+                  "pm.request.headers.upsert({key: 'Authorization', value: 'Bearer ' + t[0] + '.' + enc(p) + '.' + t[2]});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 401', () => pm.response.to.have.status(401));",
+                  "pm.test('A token with an expired exp claim is rejected', () => pm.expect(pm.response.text()).to.not.include('routeId'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/scheduled-flights/route-utilization",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "route-utilization"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "02.06 Development HS256 token signed with the shared secret (ACCEPT_DEV_TOKENS=true) {NONE} → 200|204",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const L = eval(pm.collectionVariables.get('lib'));",
+                  "pm.request.headers.upsert({key: 'Authorization', value: 'Bearer ' + L.hs(pm.collectionVariables.get('jwtSecret'), {sub: 'dev.backoffice', username: 'dev.backoffice', roles: ['BACKOFFICE']})});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200 or 204', () => pm.expect(pm.response.code).to.be.oneOf([200, 204]));",
+                  "pm.test('Development HS256 token is accepted (ACCEPT_DEV_TOKENS=true)', () => pm.expect(pm.response.code).to.not.eql(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/scheduled-flights/route-utilization",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "route-utilization"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "02.07 HS256 token signed with a different secret {NONE} → 401",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const L = eval(pm.collectionVariables.get('lib'));",
+                  "pm.request.headers.upsert({key: 'Authorization', value: 'Bearer ' + L.hs('a-different-secret-that-is-also-longer-than-32-bytes!', {sub: 'intruder', username: 'intruder', roles: ['ADMIN']})});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 401', () => pm.response.to.have.status(401));",
+                  "pm.test('A token signed with another secret is rejected', () => pm.expect(pm.response.text()).to.not.include('routeId'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/scheduled-flights/route-utilization",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "route-utilization"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "02.08 Valid HS256 token with no roles {NONE} → 403",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const L = eval(pm.collectionVariables.get('lib'));",
+                  "pm.request.headers.upsert({key: 'Authorization', value: 'Bearer ' + L.hs(pm.collectionVariables.get('jwtSecret'), {sub: 'no.role', username: 'no.role', roles: []})});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 403', () => pm.response.to.have.status(403));",
+                  "pm.test('A valid token without roles is authenticated but not authorized', () => pm.expect(pm.response.code).to.not.eql(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/scheduled-flights/route-utilization",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "route-utilization"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "03 RBAC (FO + Aircraft + Maintenance)",
+      "item": [
+        {
+          "name": "03.01 RBAC matrix: 15 endpoints x 5 roles {NONE}",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const L = eval(pm.collectionVariables.get('lib'));",
+                  "const Z = '00000000-0000-0000-0000-000000000000';",
+                  "const rows = [",
+                  "  ['POST', '/api/scheduled-flights', '{}', 'ATCC,ADMIN'],",
+                  "  ['PATCH', '/api/scheduled-flights/' + Z + '/status', {status: 'DELAYED'}, 'ATCC,ADMIN'],",
+                  "  ['GET', '/api/scheduled-flights/route-utilization', null, 'BACKOFFICE,ADMIN'],",
+                  "  ['GET', '/api/scheduled-flights/availability?registrationNumber=CS-TTA&dateTime=2031-01-01T10:00:00', null, 'ATCC,ADMIN'],",
+                  "  ['GET', '/api/scheduled-flights/aircraft/CS-TTA', null, 'ATCC,ADMIN'],",
+                  "  ['GET', '/api/scheduled-flights/' + Z, null, 'ATCC,BACKOFFICE,ADMIN'],",
+                  "  ['POST', '/api/aircraft-models', '{}', 'BACKOFFICE,ADMIN'],",
+                  "  ['POST', '/api/aircraft-models/instances', '{}', 'ATCC,ADMIN'],",
+                  "  ['PATCH', '/api/aircraft-models/instances/CS-NOTEX/status', {status: 'ACTIVE'}, 'ATCC,ADMIN'],",
+                  "  ['GET', '/api/aircraft-models/instances', null, 'ATCC,BACKOFFICE,ADMIN'],",
+                  "  ['GET', '/api/aircraft/CS-TTA', null, 'ATCC,BACKOFFICE,ADMIN'],",
+                  "  ['POST', '/api/maintenance/templates', '{}', 'SUPERVISOR,ADMIN'],",
+                  "  ['POST', '/api/maintenance/records', '{}', 'TECH,SUPERVISOR,ADMIN'],",
+                  "  ['PATCH', '/api/maintenance/records/999999/complete', {completionNotes: 'x'}, 'SUPERVISOR,ADMIN'],",
+                  "  ['GET', '/api/maintenance/records/ongoing', null, 'ATCC,BACKOFFICE,TECH,SUPERVISOR,ADMIN']",
+                  "];",
+                  "for (const [m, p, b, a] of rows) for (const role of Object.keys(L.U)) {",
+                  "  const r = await L.call(m, p, b, role); const allowed = a.split(',').includes(role);",
+                  "  pm.test(m + ' ' + p.split('?')[0].replace(Z, '{id}') + ' as ' + role + (allowed ? ' is allowed' : ' is forbidden (403)'), () => { if (allowed) { pm.expect(r.code).to.not.be.oneOf([401, 403, 429]); pm.expect(r.code).to.be.below(500); } else pm.expect(r.code).to.eql(403); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/realms/{{realm}}",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "realms",
+                "{{realm}}"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "04 Flight Operations – business rules",
+      "item": [
+        {
+          "name": "04.01 Schedule a flight: 12 business-rule cases {NONE}",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// New test dates on every run: flights from a previous run keep CS-TTA busy on the old dates (409).",
+                  "const base = Date.UTC(2031 + Math.floor(Math.random() * 8), Math.floor(Math.random() * 12), 1 + Math.floor(Math.random() * 25));",
+                  "[0, 1, 2, 3].forEach(i => pm.environment.set('day' + i, new Date(base + i * 86400000).toISOString().slice(0, 10)));"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const L = eval(pm.collectionVariables.get('lib'));",
+                  "const d = pm.environment.get('day0');",
+                  "const B = (r, a, t) => ({routeId: r, registrationNumber: a, scheduledDateTime: t});",
+                  "const cases = [",
+                  "  ['valid flight', B('RT-OPOLIS', 'CS-TTA', d + 'T08:00:00'), 201],",
+                  "  ['conflict: same aircraft 1 h later', B('RT-OPOLIS', 'CS-TTA', d + 'T09:00:00'), 409],",
+                  "  ['conflict: same aircraft 1 h 30 min earlier', B('RT-OPOLIS', 'CS-TTA', d + 'T06:30:00'), 409],",
+                  "  ['boundary: exactly 2 h later is allowed', B('RT-OPOLIS', 'CS-TTA', d + 'T10:00:00'), 201],",
+                  "  ['aircraft under maintenance (CS-TTM)', B('RT-OPOLIS', 'CS-TTM', d + 'T08:00:00'), 409],",
+                  "  ['aircraft capacity too small for the route', B('RT-LISLHR', 'CS-TTB', d + 'T08:00:00'), 409],",
+                  "  ['unknown route', B('RT-NOTEXIST', 'CS-TTA', d + 'T08:00:00'), 409],",
+                  "  ['unknown aircraft', B('RT-OPOLIS', 'CS-NOTEXIST', d + 'T08:00:00'), 409],",
+                  "  ['date in the past', B('RT-OPOLIS', 'CS-TTA', '2020-01-01T08:00:00'), 400],",
+                  "  ['invalid date format', B('RT-OPOLIS', 'CS-TTA', 'tomorrow at 8'), 400],",
+                  "  ['missing required fields', {}, 400],",
+                  "  ['malformed JSON', '{\"routeId\": \"RT-OPOLIS\", \"registrationNumber\": ', 400]",
+                  "];",
+                  "for (const [i, [n, b, s]] of cases.entries()) {",
+                  "  const r = await L.call('POST', '/api/scheduled-flights', b, 'ATCC');",
+                  "  pm.test('Schedule flight: ' + n + ' returns ' + s, () => pm.expect(r.code).to.eql(s));",
+                  "  if (i === 0 && r.code === 201) pm.environment.set('flightId', r.json().id);",
+                  "  if (i === 3 && r.code === 201) pm.environment.set('flightId2', r.json().id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/realms/{{realm}}",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "realms",
+                "{{realm}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "04.02 Get the created flight {ATCC} → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Flight data is correct', () => { pm.expect(j.routeId).to.eql('RT-OPOLIS'); pm.expect(j.registrationNumber).to.eql('CS-TTA'); pm.expect(j.status).to.eql('SCHEDULED'); pm.expect(j.revision).to.be.at.least(1); });",
+                  "pm.test('HATEOAS links point to the gateway (:8443)', () => pm.expect(JSON.stringify(j._links || {})).to.include('8443'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/scheduled-flights/{{flightId}}",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "{{flightId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "04.03 [Airports] Create a temporary route {ADMIN} → 201",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 201', () => pm.response.to.have.status(201));",
+                  "const j = pm.response.json();",
+                  "pm.test('Route is created and ACTIVE', () => { pm.expect(j.routeId).to.eql('RT-T' + pm.environment.get('runId')); pm.expect(j.status).to.eql('ACTIVE'); });",
+                  "pm.environment.set('tempRouteId', j.routeId);",
+                  "// Airports replicates asynchronously (outbox runs every 5 s, eventual consistency / AP).",
+                  "// Wait for the new route to reach the other replicas before the next request lands on one of them.",
+                  "const L = eval(pm.collectionVariables.get('lib'));",
+                  "await L.sleep(6500);"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// New id on every run, so re-running this folder never collides with the previous run's data",
+                  "pm.environment.set('runId', String(1000 + Math.floor(Math.random() * 9000)));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"routeId\": \"RT-T{{runId}}\",\n  \"originIata\": \"LIS\",\n  \"destinationIata\": \"OPO\",\n  \"estimatedFlightTime\": 50,\n  \"minimumRange\": 300,\n  \"minimumCapacity\": 50\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gateway}}/api/routes",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "routes"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "04.04 [Airports] Deactivate the temporary route {ADMIN} → 200",
+          "event": [
+            {
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Response refers to the deactivated route', () => pm.expect(pm.response.json().routeId).to.eql(pm.environment.get('tempRouteId')));",
+                  "// The Airports replicas converge asynchronously (outbox every 5 s). Flight Operations reads the route status from",
+                  "// the replicas in round-robin, so wait for the deactivation to reach all of them before the next request.",
+                  "const L = eval(pm.collectionVariables.get('lib'));",
+                  "await L.sleep(6500);"
+                ]
+              },
+              "listen": "test"
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/routes/{{tempRouteId}}/deactivate",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "routes",
+                "{{tempRouteId}}",
+                "deactivate"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "04.05 Schedule a flight on an inactive route {ATCC} → 409",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 409', () => pm.response.to.have.status(409));",
+                  "pm.test('No flight is created on an inactive route', () => pm.expect(pm.response.text()).to.not.include('SCHEDULED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"routeId\":\"{{tempRouteId}}\",\"registrationNumber\":\"CS-TTA\",\"scheduledDateTime\":\"{{day0}}T20:00:00\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gateway}}/api/scheduled-flights",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "04.06 Queries and availability: 9 cases {NONE}",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const L = eval(pm.collectionVariables.get('lib'));",
+                  "const d = pm.environment.get('day0'), Z = '00000000-0000-0000-0000-000000000000';",
+                  "const av = (reg, t) => '/api/scheduled-flights/availability?registrationNumber=' + reg + '&dateTime=' + t;",
+                  "const rows = [",
+                  "  ['/api/scheduled-flights/abc', 400], ['/api/scheduled-flights/' + Z, 404],",
+                  "  ['/api/scheduled-flights/aircraft/CS-TTA', 200], ['/api/scheduled-flights/aircraft/CS-NOFLIGHTS', 204],",
+                  "  [av('CS-TTA', d + 'T08:30:00'), 200, false], [av('CS-TTA', d + 'T16:00:00'), 200, true],",
+                  "  [av('CS-TTM', d + 'T16:00:00'), 200, false], [av('CS-NOTEXIST', d + 'T16:00:00'), 200, false],",
+                  "  [av('CS-TTA', 'yesterday'), 400]",
+                  "];",
+                  "for (const [p, s, a] of rows) {",
+                  "  const r = await L.call('GET', p, null, 'ATCC');",
+                  "  pm.test('GET ' + p.replace(Z, '{id}').replace(d, 'day0') + ' returns ' + s, () => pm.expect(r.code).to.eql(s));",
+                  "  if (a !== undefined) pm.test('Availability flag is ' + a, () => pm.expect(r.json().available).to.eql(a));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/realms/{{realm}}",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "realms",
+                "{{realm}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "04.07 Flight life cycle and aircraft release on cancel {NONE}",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const L = eval(pm.collectionVariables.get('lib'));",
+                  "const f = pm.environment.get('flightId'), f2 = pm.environment.get('flightId2'), d = pm.environment.get('day0'), Z = '00000000-0000-0000-0000-000000000000';",
+                  "const st = (id, s) => ['PATCH', '/api/scheduled-flights/' + id + '/status', {status: s}];",
+                  "const steps = [",
+                  "  ['SCHEDULED to DELAYED', ...st(f, 'DELAYED'), 200], ['DELAYED to IN_FLIGHT', ...st(f, 'IN_FLIGHT'), 200],",
+                  "  ['invalid transition IN_FLIGHT to SCHEDULED', ...st(f, 'SCHEDULED'), 409], ['IN_FLIGHT to COMPLETED', ...st(f, 'COMPLETED'), 200],",
+                  "  ['final state COMPLETED to CANCELED', ...st(f, 'CANCELED'), 409], ['unknown status LANDED', ...st(f, 'LANDED'), 400],",
+                  "  ['unknown flight', ...st(Z, 'DELAYED'), 404], ['cancel the 2nd flight', ...st(f2, 'CANCELED'), 200],",
+                  "  ['a canceled flight releases the aircraft: schedule at 10:30', 'POST', '/api/scheduled-flights', {routeId: 'RT-OPOLIS', registrationNumber: 'CS-TTA', scheduledDateTime: d + 'T10:30:00'}, 201]",
+                  "];",
+                  "for (const [n, m, p, b, s] of steps) { const r = await L.call(m, p, b, 'ATCC'); pm.test('Life cycle: ' + n + ' returns ' + s, () => pm.expect(r.code).to.eql(s)); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/realms/{{realm}}",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "realms",
+                "{{realm}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "04.08 Route utilization report (US229) {BACKOFFICE} → 200|204",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200 or 204', () => pm.expect(pm.response.code).to.be.oneOf([200, 204]));",
+                  "if (pm.response.code === 200) pm.test('Report is valid JSON', () => pm.expect(() => pm.response.json()).to.not.throw());"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/scheduled-flights/route-utilization",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "route-utilization"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "05 Replication and P2P (direct access to replicas)",
+      "item": [
+        {
+          "name": "05.01 Create a flight through the gateway {ATCC} → 201",
+          "event": [
+            {
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// New test dates on every run: flights from a previous run keep the aircraft busy on the old dates (409).",
+                  "const base = Date.UTC(2031 + Math.floor(Math.random() * 8), Math.floor(Math.random() * 12), 1 + Math.floor(Math.random() * 25));",
+                  "[0, 1, 2, 3].forEach(i => pm.environment.set('day' + i, new Date(base + i * 86400000).toISOString().slice(0, 10)));"
+                ]
+              },
+              "listen": "prerequest"
+            },
+            {
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 201', () => pm.response.to.have.status(201));",
+                  "const j = pm.response.json();",
+                  "pm.test('Flight id is returned', () => pm.expect(j.id).to.be.a('string'));",
+                  "pm.environment.set('repFlightId', j.id);"
+                ]
+              },
+              "listen": "test"
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"routeId\":\"RT-OPOLIS\",\"registrationNumber\":\"CS-TTA\",\"scheduledDateTime\":\"{{day1}}T08:00:00\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gateway}}/api/scheduled-flights",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "05.02 The flight reaches all 3 FO replicas (within 15 s) {NONE}",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const L = eval(pm.collectionVariables.get('lib'));",
+                  "const id = pm.environment.get('repFlightId'), key = pm.environment.get('apiKey');",
+                  "for (const n of ['fo1', 'fo2', 'fo3']) { let r; for (let i = 0; i < 15; i++) { r = await L.call('GET', '/internal/scheduled-flights/' + id, null, 'NONE', pm.environment.get(n), {'X-API-Key': key}); if (r.code === 200) break; await L.sleep(1000); } pm.test(n + ' holds a local copy of the flight (200)', () => pm.expect(r.code).to.eql(200)); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/realms/{{realm}}",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "realms",
+                "{{realm}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "05.03 Change the status to DELAYED {ATCC} → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Flight status is DELAYED in the response', () => pm.expect(pm.response.json().status).to.eql('DELAYED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"status\":\"DELAYED\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gateway}}/api/scheduled-flights/{{repFlightId}}/status",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "{{repFlightId}}",
+                "status"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "05.04 Eventual consistency: 3 replicas show DELAYED with the same revision {NONE}",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const L = eval(pm.collectionVariables.get('lib'));",
+                  "const id = pm.environment.get('repFlightId'), key = pm.environment.get('apiKey'), revs = [];",
+                  "for (const n of ['fo1', 'fo2', 'fo3']) { let j = {}; for (let i = 0; i < 15; i++) { const r = await L.call('GET', '/internal/scheduled-flights/' + id, null, 'NONE', pm.environment.get(n), {'X-API-Key': key}); if (r.code === 200) { j = r.json(); if (j.status === 'DELAYED') break; } await L.sleep(1000); } pm.test(n + ' converged to DELAYED', () => pm.expect(j.status).to.eql('DELAYED')); revs.push(j.revision); }",
+                  "pm.test('All 3 replicas hold the same revision (' + revs.join(', ') + ')', () => { pm.expect(new Set(revs).size).to.eql(1); pm.expect(revs[0]).to.be.at.least(2); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/realms/{{realm}}",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "realms",
+                "{{realm}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "05.05 Public API on each replica: the JWT is validated locally {NONE}",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const L = eval(pm.collectionVariables.get('lib'));",
+                  "const id = pm.environment.get('repFlightId');",
+                  "for (const n of ['fo1', 'fo2', 'fo3']) { const base = pm.environment.get(n); const a = await L.call('GET', '/api/scheduled-flights/' + id, null, 'ATCC', base); const b = await L.call('GET', '/api/scheduled-flights/' + id, null, 'NONE', base); pm.test(n + ' public API with JWT returns 200', () => pm.expect(a.code).to.eql(200)); pm.test(n + ' public API without JWT returns 401', () => pm.expect(b.code).to.eql(401)); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/realms/{{realm}}",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "realms",
+                "{{realm}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "05.06 Internal API without an API key {NONE} → 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 401', () => pm.response.to.have.status(401));",
+                  "pm.test('No flight data is returned without an API key', () => pm.expect(pm.response.text()).to.not.include('registrationNumber'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{fo1}}/internal/scheduled-flights",
+              "host": [
+                "{{fo1}}"
+              ],
+              "path": [
+                "internal",
+                "scheduled-flights"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "05.07 Internal API with a wrong API key {NONE} → 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 401', () => pm.response.to.have.status(401));",
+                  "pm.test('No flight data is returned with a wrong API key', () => pm.expect(pm.response.text()).to.not.include('registrationNumber'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "wrong-key"
+              }
+            ],
+            "url": {
+              "raw": "{{fo1}}/internal/scheduled-flights",
+              "host": [
+                "{{fo1}}"
+              ],
+              "path": [
+                "internal",
+                "scheduled-flights"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "05.08 Internal API with the correct API key {NONE} → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Response lists the local flights as JSON', () => pm.expect(pm.response.json()).to.be.an('array'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{fo1}}/internal/scheduled-flights",
+              "host": [
+                "{{fo1}}"
+              ],
+              "path": [
+                "internal",
+                "scheduled-flights"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "05.09 Aggregation without duplicates: flights of CS-TTA {ATCC} → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "const ids = pm.response.text().match(/\"id\"\\s*:\\s*\"[0-9a-f-]{36}\"/g) || [];",
+                  "pm.test('The response lists flights (' + ids.length + ')', () => pm.expect(ids.length).to.be.above(0));",
+                  "pm.test('Aggregation returns no duplicate flights', () => pm.expect(new Set(ids).size).to.eql(ids.length));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/scheduled-flights/aircraft/CS-TTA",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "aircraft",
+                "CS-TTA"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "05.10 [Aircraft] Register CS-R<runId> {ATCC} → 201",
+          "event": [
+            {
+              "script": {
+                "exec": [
+                  "// New id on every run, so re-running this folder never collides with the previous run's data",
+                  "pm.environment.set('runId', String(1000 + Math.floor(Math.random() * 9000)));"
+                ],
+                "type": "text/javascript"
+              },
+              "listen": "prerequest"
+            },
+            {
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Created aircraft has the requested registration', () => pm.expect(pm.response.json().registrationNumber).to.eql('CS-R' + pm.environment.get('runId')));"
+                ],
+                "type": "text/javascript"
+              },
+              "listen": "test"
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"registrationNumber\":\"CS-R{{runId}}\",\"modelName\":\"A320\",\"manufacturingDate\":\"2020-01-01\",\"seatingCapacity\":180,\"features\":\"replication\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gateway}}/api/aircraft-models/instances",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "aircraft-models",
+                "instances"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "05.11 [Aircraft] The aircraft is visible on all 3 AC replicas (within 15 s) {NONE}",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const L = eval(pm.collectionVariables.get('lib'));",
+                  "const reg = 'CS-R' + pm.environment.get('runId');",
+                  "for (const n of ['ac1', 'ac2', 'ac3']) { let r; for (let i = 0; i < 15; i++) { r = await L.call('GET', '/api/aircraft/' + reg, null, 'ADMIN', pm.environment.get(n)); if (r.code === 200) break; await L.sleep(1000); } pm.test(n + ' returns ' + reg + ' (200)', () => pm.expect(r.code).to.eql(200)); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/realms/{{realm}}",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "realms",
+                "{{realm}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "05.12 [Airports] RT-OPOLIS is available on all 3 instances {NONE}",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const L = eval(pm.collectionVariables.get('lib'));",
+                  "for (const n of ['ar1', 'ar2', 'ar3']) { const r = await L.call('GET', '/api/routes/RT-OPOLIS', null, 'ADMIN', pm.environment.get(n)); pm.test(n + ' returns RT-OPOLIS (200)', () => pm.expect(r.code).to.eql(200)); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/realms/{{realm}}",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "realms",
+                "{{realm}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "05.13 [Maintenance] Direct query on all 3 replicas {NONE}",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const L = eval(pm.collectionVariables.get('lib'));",
+                  "for (const n of ['mt1', 'mt2', 'mt3']) { const r = await L.call('GET', '/api/maintenance/records/ongoing', null, 'SUPERVISOR', pm.environment.get(n)); pm.test(n + ' records/ongoing returns 200', () => pm.expect(r.code).to.eql(200)); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/realms/{{realm}}",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "realms",
+                "{{realm}}"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "06 Airports and Routes (through the gateway)",
+      "item": [
+        {
+          "name": "06.01 Route RT-OPOLIS {ATCC} → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Route id is RT-OPOLIS', () => pm.expect(pm.response.json().routeId).to.eql('RT-OPOLIS'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/routes/RT-OPOLIS",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "routes",
+                "RT-OPOLIS"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "06.02 Search routes departing from OPO {BACKOFFICE} → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Search result mentions OPO', () => pm.expect(pm.response.text()).to.include('OPO'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/routes?origin=OPO",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "routes"
+              ],
+              "query": [
+                {
+                  "key": "origin",
+                  "value": "OPO"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "06.03 Airport OPO {ADMIN} → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Airport response mentions OPO', () => pm.expect(pm.response.text()).to.include('OPO'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/airports/OPO",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "airports",
+                "OPO"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "06.04 Unknown route {ATCC} → 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 404', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/routes/RT-NOTEXIST",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "routes",
+                "RT-NOTEXIST"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "06.05 MAINTENANCE_TECHNICIAN cannot read routes {TECH} → 403",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 403', () => pm.response.to.have.status(403));",
+                  "pm.test('MAINTENANCE_TECHNICIAN cannot read routes (no route data in the body)', () => { const t = pm.response.text(); pm.expect(t).to.not.include('routeId'); pm.expect(t).to.not.include('originIata'); pm.expect(t).to.not.include('destinationIata'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/routes/RT-OPOLIS",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "routes",
+                "RT-OPOLIS"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "06.06 Routes without a token {NONE} → 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/routes/RT-OPOLIS",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "routes",
+                "RT-OPOLIS"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "06b Aircraft and Maintenance (through the gateway)",
+      "item": [
+        {
+          "name": "06b.01 Aircraft CS-TTA {ATCC} → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('CS-TTA has 180 seats', () => { pm.expect(j.registrationNumber).to.eql('CS-TTA'); pm.expect(j.capacity).to.eql(180); });",
+                  "pm.test('CS-TTA is available to schedule flights', () => pm.expect(String(j.status).toUpperCase()).to.eql('ACTIVE'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/aircraft/CS-TTA",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "aircraft",
+                "CS-TTA"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "06b.02 MAINTENANCE_TECHNICIAN cannot read aircraft {TECH} → 403",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/aircraft/CS-TTA",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "aircraft",
+                "CS-TTA"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "06b.03 Aircraft without a token {NONE} → 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/aircraft/CS-TTA",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "aircraft",
+                "CS-TTA"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "06b.04 Unknown aircraft {ATCC} → 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 404', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/aircraft/CS-NOTEX",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "aircraft",
+                "CS-NOTEX"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "06b.05 Ongoing maintenance records {SUPERVISOR} → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Response is valid JSON', () => pm.expect(() => pm.response.json()).to.not.throw());"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/maintenance/records/ongoing",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "maintenance",
+                "records",
+                "ongoing"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "06b.06 Maintenance history of CS-TTA {TECH} → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Response is valid JSON', () => pm.expect(() => pm.response.json()).to.not.throw());"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/maintenance/records/aircraft/CS-TTA",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "maintenance",
+                "records",
+                "aircraft",
+                "CS-TTA"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "06b.07 Maintenance without a token {NONE} → 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/maintenance/records/ongoing",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "maintenance",
+                "records",
+                "ongoing"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "07 E2E: grounding and maintenance (3 services)",
+      "item": [
+        {
+          "name": "07.01 Register the test aircraft CS-G<runId> {ATCC} → 201",
+          "event": [
+            {
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// New id and new dates on every run, so re-running this folder never collides with the previous run's data",
+                  "pm.environment.set('runId', String(1000 + Math.floor(Math.random() * 9000)));",
+                  "pm.environment.set('groundReg', 'CS-G' + pm.environment.get('runId'));",
+                  "const base = Date.UTC(2031 + Math.floor(Math.random() * 8), Math.floor(Math.random() * 12), 1 + Math.floor(Math.random() * 25));",
+                  "[0, 1, 2, 3].forEach(i => pm.environment.set('day' + i, new Date(base + i * 86400000).toISOString().slice(0, 10)));"
+                ]
+              },
+              "listen": "prerequest"
+            },
+            {
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Test aircraft is registered', () => pm.expect(pm.response.json().registrationNumber).to.eql(pm.environment.get('groundReg')));"
+                ]
+              },
+              "listen": "test"
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"registrationNumber\":\"{{groundReg}}\",\"modelName\":\"A320\",\"manufacturingDate\":\"2020-01-01\",\"seatingCapacity\":180,\"features\":\"E2E\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gateway}}/api/aircraft-models/instances",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "aircraft-models",
+                "instances"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "07.02 Schedule a flight on the test aircraft {ATCC} → 201",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 201', () => pm.response.to.have.status(201));",
+                  "const j = pm.response.json();",
+                  "pm.test('Flight is scheduled on the test aircraft', () => pm.expect(j.registrationNumber).to.eql(pm.environment.get('groundReg')));",
+                  "pm.environment.set('groundFlightId', j.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"routeId\":\"RT-OPOLIS\",\"registrationNumber\":\"{{groundReg}}\",\"scheduledDateTime\":\"{{day2}}T09:00:00\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gateway}}/api/scheduled-flights",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "07.03 Wait for the flight to replicate to all 3 FO replicas {NONE}",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const L = eval(pm.collectionVariables.get('lib'));",
+                  "const id = pm.environment.get('groundFlightId'), key = pm.environment.get('apiKey');",
+                  "for (const n of ['fo1', 'fo2', 'fo3']) { let r; for (let i = 0; i < 15; i++) { r = await L.call('GET', '/internal/scheduled-flights/' + id, null, 'NONE', pm.environment.get(n), {'X-API-Key': key}); if (r.code === 200) break; await L.sleep(1000); } pm.test(n + ' holds the flight before the grounding (200)', () => pm.expect(r.code).to.eql(200)); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/realms/{{realm}}",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "realms",
+                "{{realm}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "07.04 Ground the aircraft (UNDER_MAINTENANCE) {ATCC} → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Response includes a swapReport', () => pm.expect(pm.response.json()).to.have.property('swapReport'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"status\":\"UNDER_MAINTENANCE\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gateway}}/api/aircraft-models/instances/{{groundReg}}/status",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "aircraft-models",
+                "instances",
+                "{{groundReg}}",
+                "status"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "07.05 The flight was reassigned to another aircraft {ATCC}",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const L = eval(pm.collectionVariables.get('lib'));",
+                  "const reg = pm.environment.get('groundReg'), id = pm.environment.get('groundFlightId'); let j = {};",
+                  "for (let i = 0; i < 10; i++) { const r = await L.call('GET', '/api/scheduled-flights/' + id, null, 'ATCC'); if (r.code === 200) { j = r.json(); if (j.registrationNumber !== reg) break; } await L.sleep(1000); }",
+                  "pm.test('The flight was reassigned to another aircraft (now ' + j.registrationNumber + ')', () => pm.expect(j.registrationNumber).to.not.eql(reg));",
+                  "pm.test('The flight revision was incremented', () => pm.expect(j.revision).to.be.at.least(2));",
+                  "pm.test('The flight is still SCHEDULED', () => pm.expect(j.status).to.eql('SCHEDULED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/realms/{{realm}}",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "realms",
+                "{{realm}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "07.06 Restore the aircraft to ACTIVE {ATCC} → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"status\":\"ACTIVE\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gateway}}/api/aircraft-models/instances/{{groundReg}}/status",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "aircraft-models",
+                "instances",
+                "{{groundReg}}",
+                "status"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "07.07 [Maintenance] Create a template {SUPERVISOR} → 201",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 201', () => pm.response.to.have.status(201));",
+                  "const response = pm.response.json();",
+                  "const j = response.content || response;",
+                  "pm.test('Template has a stable globalId', () => pm.expect(j.globalId).to.be.a('string').and.not.empty);",
+                  "pm.environment.set('templateGlobalId', j.globalId);",
+                  "// Template replication: every Maintenance replica must end up with the template (checked directly on each replica)",
+                  "const L = eval(pm.collectionVariables.get('lib'));",
+                  "const key = pm.environment.get('apiKey');",
+                  "for (const n of ['mt1', 'mt2', 'mt3']) {",
+                  "  let found = false;",
+                  "  for (let i = 0; i < 15 && !found; i++) {",
+                  "    const r = await L.call('GET', '/internal/maintenance/templates', null, 'NONE', pm.environment.get(n), {'X-API-Key': key});",
+                  "    if (r.code === 200) found = (r.json() || []).some(t => t.globalId === j.globalId);",
+                  "    if (!found) await L.sleep(1000);",
+                  "  }",
+                  "  pm.test(n + ' holds the template (replicated)', () => pm.expect(found).to.eql(true));",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"templateName\":\"TPL-{{runId}}\",\"templateType\":\"PREVENTIVE\",\"flightHoursInterval\":500,\"calendarDaysInterval\":90,\"checklistTitle\":\"A-Check\",\"checklistVersion\":\"1.0\",\"checklistItems\":[{\"taskDescription\":\"Visual inspection\",\"isMandatory\":true}],\"applicableModelNames\":[\"A320\"]}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gateway}}/api/maintenance/templates",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "maintenance",
+                "templates"
+              ]
+            },
+            "description": "Sent through the gateway (any replica). The test then checks directly on mt1, mt2 and mt3 (/internal, API key) that the template was replicated (templates are identified by globalId)."
+          },
+          "response": []
+        },
+        {
+          "name": "07.08 [Maintenance] Register maintenance on the test aircraft {TECH} → 201",
+          "event": [
+            {
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 201', () => pm.response.to.have.status(201));",
+                  "const response = pm.response.json();",
+                  "const j = response.content || response;",
+                  "pm.test('Record has a stable globalId', () => pm.expect(j.globalId).to.be.a('string').and.not.empty);",
+                  "pm.test('Record belongs to the test aircraft', () => pm.expect(j.registrationNumber).to.eql(pm.environment.get('groundReg')));",
+                  "pm.environment.set('recordGlobalId', j.globalId);"
+                ]
+              },
+              "listen": "test"
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"registrationNumber\":\"{{groundReg}}\",\"modelName\":\"A320\",\"description\":\"E2E overhaul\",\"expectedDuration\":4,\"componentCategory\":\"ENGINE\",\"startDate\":\"{{day2}}T06:00:00\",\"cost\":1000.0,\"templateGlobalId\":\"{{templateGlobalId}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gateway}}/api/maintenance/records",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "maintenance",
+                "records"
+              ]
+            },
+            "description": "Sent through the gateway; the template is referenced by templateGlobalId, so any replica can serve the request."
+          },
+          "response": []
+        },
+        {
+          "name": "07.09 Maintenance to Aircraft: the aircraft becomes UNDER_MAINTENANCE {NONE}",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const L = eval(pm.collectionVariables.get('lib'));",
+                  "const reg = pm.environment.get('groundReg'); let j = {};",
+                  "for (let i = 0; i < 12; i++) { const r = await L.call('GET', '/api/aircraft/' + reg, null, 'ATCC'); if (r.code === 200) { j = r.json(); if (j.status === 'UNDER_MAINTENANCE') break; } await L.sleep(1000); }",
+                  "pm.test('Maintenance to Aircraft: ' + reg + ' is UNDER_MAINTENANCE', () => pm.expect(j.status).to.eql('UNDER_MAINTENANCE'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/realms/{{realm}}",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "realms",
+                "{{realm}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "07.10 [Maintenance] Complete the maintenance {SUPERVISOR} → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Record has a completion date', () => pm.expect(pm.response.json().completionDate).to.not.equal(null));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"completionNotes\":\"E2E ok\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gateway}}/api/maintenance/records/{{recordGlobalId}}/complete",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "maintenance",
+                "records",
+                "{{recordGlobalId}}",
+                "complete"
+              ]
+            },
+            "description": "Sent through the gateway; the record is referenced by globalId, so any replica can serve the request."
+          },
+          "response": []
+        },
+        {
+          "name": "07.11 Maintenance to Aircraft: the aircraft is ACTIVE again {NONE}",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const L = eval(pm.collectionVariables.get('lib'));",
+                  "const reg = pm.environment.get('groundReg'); let j = {};",
+                  "for (let i = 0; i < 12; i++) { const r = await L.call('GET', '/api/aircraft/' + reg, null, 'ATCC'); if (r.code === 200) { j = r.json(); if (j.status === 'ACTIVE') break; } await L.sleep(1000); }",
+                  "pm.test('Maintenance to Aircraft: ' + reg + ' is ACTIVE again', () => pm.expect(j.status).to.eql('ACTIVE'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/realms/{{realm}}",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "realms",
+                "{{realm}}"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "09 MANUAL – fault tolerance and SPOF (Mode A)",
+      "item": [
+        {
+          "name": "09.01 [STOP FO-2] Schedule a flight with one replica down (AP) {ATCC} → 201",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 201', () => pm.response.to.have.status(201));",
+                  "pm.environment.set('failFlightId', pm.response.json().id);",
+                  "pm.test('Partial response is flagged (X-Partial-Response-Unreachable-Peers)', () => pm.expect(pm.response.headers.has('X-Partial-Response-Unreachable-Peers')).to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"routeId\":\"RT-OPOLIS\",\"registrationNumber\":\"CS-TTA\",\"scheduledDateTime\":\"{{day3}}T08:00:00\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gateway}}/api/scheduled-flights",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "09.02 [FO-2 stopped] Reads stay available {BACKOFFICE} → 200|204",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200 or 204', () => pm.expect(pm.response.code).to.be.oneOf([200, 204]));",
+                  "pm.test('Reads keep working with one FO replica down', () => pm.expect(pm.response.code).to.be.below(500));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/scheduled-flights/route-utilization",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "route-utilization"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "09.03 [START FO-2 and wait ~15 s] FO-2 recovered the flight {NONE} → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('FO-2 recovered the flight created while it was down', () => pm.expect(pm.response.json().id).to.eql(pm.environment.get('failFlightId')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{fo2}}/internal/scheduled-flights/{{failFlightId}}",
+              "host": [
+                "{{fo2}}"
+              ],
+              "path": [
+                "internal",
+                "scheduled-flights",
+                "{{failFlightId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "09.04 [STOP all 3 Airports instances] Schedule without routes available {ATCC} → 503",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 503', () => pm.response.to.have.status(503));",
+                  "pm.test('The error explains the failure (no stack trace)', () => pm.expect(pm.response.text()).to.not.match(/\\.java:\\d+/));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"routeId\":\"RT-OPOLIS\",\"registrationNumber\":\"CS-TTA\",\"scheduledDateTime\":\"{{day3}}T12:00:00\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gateway}}/api/scheduled-flights",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "09.05 [START Airports; STOP all 3 Aircraft] Schedule without aircraft available {ATCC} → 503",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 503', () => pm.response.to.have.status(503));",
+                  "pm.test('The error explains the failure (no stack trace)', () => pm.expect(pm.response.text()).to.not.match(/\\.java:\\d+/));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"routeId\":\"RT-OPOLIS\",\"registrationNumber\":\"CS-TTA\",\"scheduledDateTime\":\"{{day3}}T12:00:00\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gateway}}/api/scheduled-flights",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "09.06 [Aircraft stopped] Availability degrades to available=false {ATCC} → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Availability degrades gracefully to available=false', () => pm.expect(pm.response.json().available).to.eql(false));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/scheduled-flights/availability?registrationNumber=CS-TTA&dateTime={{day3}}T20:00:00",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "availability"
+              ],
+              "query": [
+                {
+                  "key": "registrationNumber",
+                  "value": "CS-TTA"
+                },
+                {
+                  "key": "dateTime",
+                  "value": "{{day3}}T20:00:00"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "09.07 [START Aircraft; STOP all 3 FO] Gateway without FO backends {BACKOFFICE} → 502|503|504",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 502, 503 or 504', () => pm.expect(pm.response.code).to.be.oneOf([502, 503, 504]));",
+                  "pm.test('The gateway reports the outage without a stack trace', () => pm.expect(pm.response.text()).to.not.match(/\\.java:\\d+/));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/scheduled-flights/route-utilization",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "route-utilization"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "09.08 [START everything; STOP ONE replica of EACH service] The system keeps serving {NONE}",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const L = eval(pm.collectionVariables.get('lib'));",
+                  "const t = [['FO', '/api/scheduled-flights/route-utilization', 'BACKOFFICE'], ['Airports', '/api/routes/RT-OPOLIS', 'ATCC'], ['Aircraft', '/api/aircraft/CS-TTA', 'ATCC'], ['Maintenance', '/api/maintenance/records/ongoing', 'SUPERVISOR']];",
+                  "for (const [n, p, role] of t) for (let i = 0; i < 4; i++) { const r = await L.call('GET', p, null, role); pm.test(n + ' request ' + (i + 1) + ' returns 200 or 204', () => pm.expect(r.code).to.be.oneOf([200, 204])); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/realms/{{realm}}",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "realms",
+                "{{realm}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "09.09 [Start the 3 FO with REPLICATION_ENABLED=false] Create a flight directly on FO-1 {ATCC} → 201",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 201', () => pm.response.to.have.status(201));",
+                  "pm.environment.set('isolatedFlightId', pm.response.json().id);",
+                  "pm.test('A flight id is returned', () => pm.expect(pm.environment.get('isolatedFlightId')).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"routeId\":\"RT-OPOLIS\",\"registrationNumber\":\"CS-TTA\",\"scheduledDateTime\":\"{{day3}}T14:00:00\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{fo1}}/api/scheduled-flights",
+              "host": [
+                "{{fo1}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "09.10 [FORWARDING] FO-3 has no local copy {NONE} → 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 404', () => pm.response.to.have.status(404));",
+                  "pm.test('FO-3 has no local copy (replication is disabled)', () => pm.expect(pm.response.text()).to.not.include(pm.environment.get('isolatedFlightId')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{fo3}}/internal/scheduled-flights/{{isolatedFlightId}}",
+              "host": [
+                "{{fo3}}"
+              ],
+              "path": [
+                "internal",
+                "scheduled-flights",
+                "{{isolatedFlightId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "09.11 [FORWARDING] FO-3 public API finds the flight on its peers {ATCC} → 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('FO-3 found the flight on a peer (P2P forwarding)', () => pm.expect(pm.response.json().id).to.eql(pm.environment.get('isolatedFlightId')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{fo3}}/api/scheduled-flights/{{isolatedFlightId}}",
+              "host": [
+                "{{fo3}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "{{isolatedFlightId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "09.12 [CP: REQUIRE_COMPLETE_CONFLICT_CHECK=true and FO-2 stopped] Scheduling is refused {ATCC} → 503",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 503', () => pm.response.to.have.status(503));",
+                  "pm.test('CP mode refuses to schedule without a complete conflict check', () => pm.expect(pm.response.code).to.not.eql(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"routeId\":\"RT-OPOLIS\",\"registrationNumber\":\"CS-TTA\",\"scheduledDateTime\":\"{{day3}}T16:00:00\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{gateway}}/api/scheduled-flights",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "09.13 [STOP Keycloak] A token issued before the outage is still valid {ATCC} → 200|204",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200 or 204', () => pm.expect(pm.response.code).to.be.oneOf([200, 204]));",
+                  "pm.test('A token issued before the outage is still accepted', () => pm.expect(pm.response.code).to.not.eql(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/api/scheduled-flights/availability?registrationNumber=CS-TTA&dateTime={{day3}}T20:00:00",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "availability"
+              ],
+              "query": [
+                {
+                  "key": "registrationNumber",
+                  "value": "CS-TTA"
+                },
+                {
+                  "key": "dateTime",
+                  "value": "{{day3}}T20:00:00"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "09.14 [Keycloak stopped] A new login fails {NONE} → 502|503|504",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 502, 503 or 504', () => pm.expect(pm.response.code).to.be.oneOf([502, 503, 504]));",
+                  "pm.test('No access token is issued while Keycloak is down', () => pm.expect(pm.response.text()).to.not.include('access_token'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "value": "password",
+                  "type": "text",
+                  "key": "grant_type"
+                },
+                {
+                  "value": "{{clientId}}",
+                  "type": "text",
+                  "key": "client_id"
+                },
+                {
+                  "value": "atcc.user",
+                  "type": "text",
+                  "key": "username"
+                },
+                {
+                  "value": "{{pwdAtcc}}",
+                  "type": "text",
+                  "key": "password"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{gateway}}/realms/{{realm}}/protocol/openid-connect/token",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "realms",
+                "{{realm}}",
+                "protocol",
+                "openid-connect",
+                "token"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "09.15 [STOP the gateway – SPOF in Mode A] FO-1 keeps serving directly {BACKOFFICE} → 200|204",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200 or 204', () => pm.expect(pm.response.code).to.be.oneOf([200, 204]));",
+                  "pm.test('FO-1 keeps serving directly while the gateway is down (the gateway is the SPOF in Mode A)', () => pm.expect(pm.response.code).to.be.below(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{fo1}}/api/scheduled-flights/route-utilization",
+              "host": [
+                "{{fo1}}"
+              ],
+              "path": [
+                "api",
+                "scheduled-flights",
+                "route-utilization"
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "Run request by request, in order, performing the action between [ ] before sending each one. Before starting: run folders 00 and 04 (tokens are valid for 5 minutes and base data is created)."
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const name = pm.info.requestName, env = k => pm.environment.get(k);",
+          "if (!env('runId') || name.startsWith('00.00')) {",
+          "  const base = Date.UTC(2031 + Math.floor(Math.random() * 8), Math.floor(Math.random() * 12), 1 + Math.floor(Math.random() * 25));",
+          "  pm.environment.set('runId', String(1000 + Math.floor(Math.random() * 9000)));",
+          "  [0, 1, 2, 3].forEach(i => pm.environment.set('day' + i, new Date(base + i * 86400000).toISOString().slice(0, 10)));",
+          "}",
+          "const m = name.match(/\\{(ADMIN|ATCC|BACKOFFICE|TECH|SUPERVISOR|NONE)\\}/);",
+          "const role = m ? m[1] : 'ATCC';",
+          "if (role === 'NONE' || pm.request.url.getPath().startsWith('/realms')) return;",
+          "const K = {ADMIN: 'Admin', ATCC: 'Atcc', BACKOFFICE: 'Backoffice', TECH: 'Tech', SUPERVISOR: 'Supervisor'}[role];",
+          "const U = {ADMIN: 'admin.user', ATCC: 'atcc.user', BACKOFFICE: 'backoffice.user', TECH: 'tech.user', SUPERVISOR: 'supervisor.user'}[role];",
+          "const setH = t => pm.request.headers.upsert({key: 'Authorization', value: 'Bearer ' + t});",
+          "if (env('token' + K) && Number(env('exp' + K) || 0) > Date.now() + 15000) { setH(env('token' + K)); return; }",
+          "const login = (b, cb) => pm.sendRequest({url: b + '/realms/' + env('realm') + '/protocol/openid-connect/token', method: 'POST', header: {'Content-Type': 'application/x-www-form-urlencoded'}, body: {mode: 'urlencoded', urlencoded: [{key: 'grant_type', value: 'password'}, {key: 'client_id', value: env('clientId')}, {key: 'username', value: U}, {key: 'password', value: env('pwd' + K)}]}}, cb);",
+          "const ok = (e, r) => { if (e || r.code !== 200) return false; const j = r.json(); pm.environment.set('token' + K, j.access_token); pm.environment.set('exp' + K, String(Date.now() + j.expires_in * 1000)); setH(j.access_token); return true; };",
+          "login(env('gateway'), (e, r) => { if (!ok(e, r)) login(env('gateway2'), (e2, r2) => { if (!ok(e2, r2)) console.error('Login failed for role ' + role); }); });"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.test('Response body does not leak a stack trace', () => pm.expect(pm.response.text()).to.not.match(/\\.java:\\d+/));"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "jwtSecret",
+      "value": "change-this-development-secret-key-with-at-least-32-bytes"
+    },
+    {
+      "key": "lib",
+      "value": "(() => { const env = k => pm.environment.get(k); const sleep = ms => new Promise(r => setTimeout(r, ms)); const send = o => new Promise(r => pm.sendRequest(o, (e, res) => r(res || {code: 0, headers: {get: () => null, has: () => false}, text: () => String(e), json: () => ({})}))); const U = {ADMIN: ['admin.user', 'pwdAdmin'], ATCC: ['atcc.user', 'pwdAtcc'], BACKOFFICE: ['backoffice.user', 'pwdBackoffice'], TECH: ['tech.user', 'pwdTech'], SUPERVISOR: ['supervisor.user', 'pwdSupervisor']}; const cache = {}; const tok = async (role, gw) => { const g = gw || env('gateway'); const k = role + g; if (cache[k]) return cache[k]; const r = await send({url: g + '/realms/' + env('realm') + '/protocol/openid-connect/token', method: 'POST', header: {'Content-Type': 'application/x-www-form-urlencoded'}, body: {mode: 'urlencoded', urlencoded: [{key: 'grant_type', value: 'password'}, {key: 'client_id', value: env('clientId')}, {key: 'username', value: U[role][0]}, {key: 'password', value: env(U[role][1])}]}}); cache[k] = r.json().access_token; return cache[k]; }; const call = async (m, p, b, role, base, extra) => { const h = Object.assign({'Content-Type': 'application/json'}, extra || {}); if (role && role !== 'NONE') h.Authorization = 'Bearer ' + await tok(role); let r; for (let i = 0; i < 4; i++) { r = await send({url: (base || env('gateway')) + p, method: m, header: h, body: b ? {mode: 'raw', raw: typeof b === 'string' ? b : JSON.stringify(b)} : undefined}); if (r.code !== 429) break; await sleep(1200); } await sleep(110); return r; }; const b64u = s => { const C = require('crypto-js'); return C.enc.Base64.stringify(C.enc.Utf8.parse(s)).replace(/=+$/, '').replace(/\\+/g, '-').replace(/\\//g, '_'); }; const hs = (secret, claims) => { const C = require('crypto-js'); const h = b64u(JSON.stringify({alg: 'HS256', typ: 'JWT'})); const now = Math.floor(Date.now() / 1000); const p = b64u(JSON.stringify(Object.assign({iat: now, exp: now + 3600}, claims))); const s = C.enc.Base64.stringify(C.HmacSHA256(h + '.' + p, secret)).replace(/=+$/, '').replace(/\\+/g, '-').replace(/\\//g, '_'); return h + '.' + p + '.' + s; }; return {env, sleep, send, tok, call, hs, b64u, U}; })()"
+    }
+  ]
+}
