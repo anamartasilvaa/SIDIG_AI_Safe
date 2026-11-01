@@ -16,8 +16,8 @@
 
 | Colega            | Nota (0–20) |
 |-------------------|:-----------:|
-| Ana Silva         |             |
-| Bernardo Oliveira |             |
+| Ana Silva         |     18      |
+| Bernardo Oliveira |     18      |
 
 ### Ana Silva avalia
 
