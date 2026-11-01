@@ -1,0 +1,54 @@
+@startuml sd-replication-and-history
+skinparam style strictuml
+autonumber
+title SD - Maintenance replication, startup sync and history forwarding
+
+participant "MaintenanceService" as Svc
+participant "MaintenanceReplicator" as Rep
+database "Replica 1 DB" as DB1
+participant "Replica 2\nInternalMaintenanceController" as R2
+database "Replica 2 DB" as DB2
+participant "MaintenancePeerClient" as Peer
+
+== Record/template write ==
+Svc -> DB1 : save record or template\n(globalId, revision)
+DB1 --> Svc : saved
+Svc -> Rep : replicateAcknowledged(dto)
+Rep -> R2 : PUT /internal/maintenance/records/{id}/replica\nor /templates/{id}/replica
+R2 -> DB2 : create or merge only if revision is newer
+DB2 --> R2 : applied
+R2 --> Rep : 204
+Rep --> Svc : acknowledged
+
+== Retry ==
+loop every 5 seconds while pending
+    Rep -> R2 : retry pending replica copy
+    alt peer available
+        R2 -> DB2 : apply replica
+        R2 --> Rep : 204
+        Rep -> Rep : remove pending item
+    else peer unavailable
+        R2 --> Rep : timeout / unavailable
+    end
+end
+
+== History read miss ==
+Svc -> DB1 : find records for aircraft
+DB1 --> Svc : no local records
+Svc -> Peer : forwardHistory(registrationNumber)
+Peer -> R2 : GET /internal/maintenance/records/{registrationNumber}
+R2 -> DB2 : local history
+DB2 --> R2 : records
+R2 --> Peer : records
+Peer --> Svc : records + unreachable peer list
+
+== Startup synchronization ==
+Svc -> Peer : collectAll() and collectTemplates()
+Peer -> R2 : GET /internal/maintenance/records
+R2 --> Peer : local records
+Peer -> R2 : GET /internal/maintenance/templates
+R2 --> Peer : local templates
+Peer --> Svc : aggregate
+Svc -> DB1 : applyReplica for records/templates\nonly newer revisions
+
+@enduml

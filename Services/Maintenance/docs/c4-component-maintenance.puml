@@ -1,0 +1,51 @@
+@startuml c4-component-maintenance
+!include <C4/C4_Component>
+LAYOUT_TOP_DOWN()
+
+title Maintenance Service - C4 Level 3 (Components)
+
+Person(client, "AISafe User", "Maintenance Technician, Backoffice, Admin")
+Container_Ext(gateway, "API Gateway", "NGINX, HTTPS :8443 (:8444 in Docker)", "Routes /api/maintenance; blocks /internal")
+Container_Ext(keycloak, "Keycloak", "aisafe realm", "Issues RS256 JWT and publishes JWKS")
+Container_Ext(peers, "Other Maintenance replicas", "Spring Boot", "8075-8077 (development) / 2 replicas (Docker)")
+Container_Ext(aircraft, "Aircraft Service", "Spring Boot", "Resolves models and receives maintenance status updates")
+ContainerDb(db, "Maintenance DB", "In-memory H2", "One database per replica")
+
+Container_Boundary(mt, "Maintenance Service (one replica)") {
+    Component(jwt, "JwtAuthenticationFilter + TokenDecoders", "OncePerRequestFilter", "Validates RS256 JWT from Keycloak (JWKS, issuer, expiry) or development HS256.")
+    Component(security, "SecurityConfig", "Spring Security", "RBAC for templates, records, statistics and parts.")
+    Component(apiKey, "ApiKeyFilter", "OncePerRequestFilter", "Requires X-API-Key on /internal/...")
+    Component(ctrl, "MaintenanceController", "@RestController /api/maintenance", "Templates, records, history, completion, search, alerts and statistics.")
+    Component(internal, "InternalMaintenanceController", "@RestController /internal/maintenance", "Local reads and receipt of record/template replicas.")
+    Component(service, "MaintenanceService", "@Service", "Template and record lifecycle, aircraft integration, history, alerts and statistics.")
+    Component(domain, "Maintenance domain", "JPA entities", "MaintenanceRecord, MaintenanceTemplate, Checklist and MaintenancePart.")
+    Component(peerClient, "MaintenancePeerClient", "@Component", "Forwards history/search and aggregates peer results.")
+    Component(replicator, "MaintenanceReplicator", "@Component + scheduler", "Replicates records and templates by global ID/revision; retries every 5s.")
+    Component(aircraftClient, "AircraftClient", "@Component", "Looks up model and changes status to UNDER_MAINTENANCE.")
+    Component(http, "RemoteCaller + CircuitBreaker", "@Component", "Timeouts, retry/backoff and destination circuit breakers.")
+    Component(repo, "Maintenance repositories", "Spring Data JPA", "Record, template and part repositories.")
+}
+
+Rel(client, gateway, "Requests with JWT", "HTTPS")
+Rel(gateway, jwt, "Forwards public request", "HTTPS")
+Rel(jwt, keycloak, "Fetches public key", "JWKS")
+Rel(jwt, security, "User + roles")
+Rel(security, ctrl, "If authorized")
+Rel(peers, apiKey, "Internal requests", "HTTPS + X-API-Key")
+Rel(apiKey, internal, "If key is valid")
+
+Rel(ctrl, service, "Uses")
+Rel(internal, service, "Local methods and apply replicas")
+Rel(service, domain, "Creates / completes / maps")
+Rel(service, repo, "Uses")
+Rel(service, aircraftClient, "Resolves model and updates status")
+Rel(service, replicator, "Replicates after saving")
+Rel(service, peerClient, "Forwarding and aggregation")
+Rel(aircraftClient, http, "Uses")
+Rel(peerClient, http, "Uses")
+Rel(replicator, http, "PUT /internal/maintenance/.../replica")
+Rel(http, aircraft, "GET/PATCH /internal/aircraft/...", "HTTPS + X-API-Key")
+Rel(http, peers, "Peer calls", "HTTPS + X-API-Key")
+Rel(repo, db, "Reads/Writes", "JDBC")
+
+@enduml

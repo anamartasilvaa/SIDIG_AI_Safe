@@ -1,0 +1,88 @@
+@startuml class-diagram-maintenance
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing false
+hide empty members
+title Maintenance Service - Domain Model
+
+package "Maintenance Record Aggregate" {
+    class MaintenanceRecord <<Entity>> {
+        - pk: Long
+        - globalId: String
+        - revision: long
+        - lastModified: Instant
+        - registrationNumber: String
+        - modelName: String
+        - description: String
+        - startDate: LocalDateTime
+        - expectedDuration: Integer
+        - completionNotes: String
+        - cost: Double
+        - completionDate: LocalDateTime
+        - status: MaintenanceRecordStatus
+        - componentCategory: ComponentCategory
+        - templateName: String
+        --
+        + complete(notes: String)
+        + mergeReplica(...): boolean
+    }
+    enum MaintenanceRecordStatus <<Enumeration>> {
+        SCHEDULED
+        IN_PROGRESS
+        COMPLETED
+    }
+    enum ComponentCategory <<Enumeration>>
+}
+
+package "Maintenance Template Aggregate" {
+    class MaintenanceTemplate <<Entity>> {
+        - pk: Long
+        - globalId: String
+        - revision: long
+        - lastModified: Instant
+        - templateName: String
+        - templateType: String
+        - flightHoursInterval: Double
+        - calendarDaysInterval: Integer
+        - appliesToModelNames: List<String>
+        --
+        + mergeReplica(...): boolean
+    }
+    class Checklist <<Entity>> {
+        - title: String
+        - version: String
+        - items: List<ChecklistItem>
+    }
+    class ChecklistItem <<Embeddable>> {
+        - taskDescription: String
+        - mandatory: boolean
+    }
+    MaintenanceTemplate "1" *-- "1" Checklist
+    Checklist "1" *-- "*" ChecklistItem
+}
+
+package "Parts" {
+    class MaintenancePart <<Entity>> {
+        - pk: Long
+        - partNumber: PartNumber
+        - name: String
+        - description: String
+        - stockQuantity: Integer
+        - minimumThreshold: Integer
+        - componentCategory: ComponentCategory
+    }
+    class PartNumber <<Value Object>> {
+        - number: String
+    }
+    MaintenancePart "1" *-- "1" PartNumber
+}
+
+package "External bounded context (REST only)" #EEEEEE {
+    class "Aircraft Service" as Aircraft <<External>>
+}
+
+MaintenanceRecord ..> MaintenanceTemplate : uses template name
+MaintenanceRecord ..> Aircraft : identifies aircraft by registration
+MaintenanceTemplate ..> Aircraft : applies to model names
+
+@enduml

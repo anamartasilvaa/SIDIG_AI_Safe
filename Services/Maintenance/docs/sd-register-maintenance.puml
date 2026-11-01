@@ -1,0 +1,41 @@
+@startuml sd-register-maintenance
+skinparam style strictuml
+autonumber
+title SD - Register maintenance and update aircraft status
+
+actor "Maintenance Technician" as User
+participant "API Gateway" as GW
+participant "MaintenanceController" as Ctrl
+participant "MaintenanceService" as Svc
+participant "AircraftClient" as AC
+participant "Aircraft Service" as Aircraft
+database "Maintenance DB" as DB
+participant "MaintenanceReplicator" as Rep
+
+User -> GW : POST /api/maintenance/records\nJWT + maintenance data
+GW -> Ctrl : forwards request
+Ctrl -> Svc : registerMaintenance(dto)
+Svc -> AC : getAircraftModelName(registrationNumber)\n(if model omitted)
+AC -> Aircraft : GET /internal/aircraft/instances/{reg}
+Aircraft --> AC : model data
+AC --> Svc : model name
+Svc -> Svc : resolve template and create SCHEDULED record
+Svc -> DB : save(record)
+DB --> Svc : saved record
+Svc -> AC : updateMaintenanceStatus(reg, UNDER_MAINTENANCE)
+AC -> Aircraft : PATCH /internal/aircraft/instances/{reg}/maintenance-status\nX-API-Key
+Aircraft --> AC : status update + grounding report
+AC --> Svc : acknowledged
+Svc -> Rep : replicateAcknowledged(record)
+Rep -> Rep : queue newest record revision per peer
+Rep --> Svc : acknowledged or queued for retry
+Svc --> Ctrl : record view
+Ctrl --> GW : 201 Created
+GW --> User : 201 Created
+
+note over Svc, Aircraft
+If Aircraft Service is unavailable, the maintenance record remains
+created and the status update is logged for later operational recovery.
+end note
+
+@enduml
