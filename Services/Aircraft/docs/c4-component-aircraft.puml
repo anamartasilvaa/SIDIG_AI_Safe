@@ -1,0 +1,61 @@
+@startuml c4-component-aircraft
+!include <C4/C4_Component>
+LAYOUT_TOP_DOWN()
+
+title Aircraft Service - C4 Level 3 (Components)
+
+Person(client, "AISafe User", "ATCC, Backoffice, Admin")
+Container_Ext(gateway, "API Gateway", "NGINX, HTTPS :8443 (:8444 in Docker)", "Routes public aircraft APIs; blocks /internal")
+Container_Ext(keycloak, "Keycloak", "aisafe realm", "Issues RS256 JWT and publishes JWKS")
+Container_Ext(peers, "Other Aircraft replicas", "Spring Boot", "8071-8073 (development) / 2 replicas (Docker)")
+Container_Ext(fo, "Flight Operations Service", "Spring Boot", "Validates aircraft and receives grounding requests")
+Container_Ext(ar, "Airports & Routes Service", "Spring Boot", "Provides route data for compatible-route queries")
+Container_Ext(maintenance, "Maintenance Service", "Spring Boot", "Updates aircraft status through /internal")
+ContainerDb(db, "Aircraft DB", "In-memory H2", "One database per replica")
+
+Container_Boundary(ac, "Aircraft Service (one replica)") {
+    Component(jwt, "JwtAuthenticationFilter + TokenDecoders", "OncePerRequestFilter", "Validates RS256 JWT from Keycloak (JWKS, issuer, expiry) or development HS256.")
+    Component(security, "SecurityConfig", "Spring Security", "RBAC for aircraft-models and aircraft contract endpoints.")
+    Component(apiKey, "ApiKeyFilter", "OncePerRequestFilter", "Requires X-API-Key on /internal/...")
+    Component(modelCtrl, "AircraftController", "@RestController /api/aircraft-models", "Models, instances, status, utilization, compatible routes and metrics.")
+    Component(contractCtrl, "AircraftContractController", "@RestController /api/aircraft", "Compact aircraft contract for Flight Operations: status, range and capacity.")
+    Component(internalCtrl, "InternalAircraftController", "@RestController /internal/aircraft", "Local reads, maintenance status, assignment counters and replica reception.")
+    Component(service, "AircraftService", "@Service", "Registration, lookup, search, status changes, utilization and distributed aggregation.")
+    Component(domain, "Aircraft + AircraftModel", "JPA entities", "Aircraft instance and model specifications, status, hours, assignments and revision.")
+    Component(peerClient, "AircraftPeerClient", "@Component", "Forwards missing reads and merges peer results.")
+    Component(replicator, "AircraftReplicator", "@Component + scheduler", "Asynchronous replica writes, newest revision wins, retries every 5s.")
+    Component(flightsClient, "FlightsServiceClient", "@Component", "Checks assignments and requests grounding/reassignment.")
+    Component(routesClient, "AirportsRoutesClient", "@Component", "Fetches routes with failover for compatible-route queries.")
+    Component(http, "RemoteCaller + CircuitBreaker", "@Component", "Timeouts, retry/backoff and per-destination circuit breakers.")
+    Component(repo, "Aircraft repositories", "Spring Data JPA", "AircraftRepository and AircraftModelRepository.")
+}
+
+Rel(client, gateway, "Requests with JWT", "HTTPS")
+Rel(gateway, jwt, "Forwards public request", "HTTPS")
+Rel(jwt, keycloak, "Fetches public key", "JWKS")
+Rel(jwt, security, "User + roles")
+Rel(security, modelCtrl, "If authorized")
+Rel(security, contractCtrl, "If authorized")
+Rel(peers, apiKey, "Internal requests", "HTTPS + X-API-Key")
+Rel(maintenance, apiKey, "Maintenance status update", "PATCH + X-API-Key")
+Rel(apiKey, internalCtrl, "If key is valid")
+
+Rel(modelCtrl, service, "Uses")
+Rel(contractCtrl, service, "Uses")
+Rel(internalCtrl, service, "Local methods and applyReplica")
+Rel(service, domain, "Creates / updates / maps")
+Rel(service, repo, "Uses")
+Rel(service, peerClient, "Forwarding and aggregation")
+Rel(service, replicator, "Replicates writes")
+Rel(service, flightsClient, "Availability and grounding")
+Rel(service, routesClient, "Compatible routes")
+Rel(peerClient, http, "Uses")
+Rel(replicator, http, "PUT /internal/aircraft/.../replica")
+Rel(flightsClient, http, "GET /internal/... and POST /internal/.../grounding")
+Rel(routesClient, http, "GET /api/routes")
+Rel(http, peers, "Peer calls", "HTTPS + X-API-Key")
+Rel(http, fo, "Aircraft validation and grounding", "HTTPS + JWT / X-API-Key")
+Rel(http, ar, "Route lookup", "HTTPS + JWT")
+Rel(repo, db, "Reads/Writes", "JDBC")
+
+@enduml

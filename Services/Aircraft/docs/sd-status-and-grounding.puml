@@ -1,0 +1,41 @@
+@startuml sd-status-and-grounding
+skinparam style strictuml
+autonumber
+title SD - Aircraft status change and flight grounding
+
+actor "ATCC / Admin" as User
+participant "API Gateway" as GW
+participant "AircraftController" as Ctrl
+participant "AircraftService" as Svc
+database "Aircraft DB" as DB
+participant "AircraftReplicator" as Rep
+participant "FlightsServiceClient" as Flights
+participant "Flight Operations" as FO
+
+User -> GW : PATCH /api/aircraft-models/instances/{reg}/status\nJWT + new status
+GW -> Ctrl : forwards request
+Ctrl -> Svc : updateAircraftStatusWithReport(reg, dto)
+Svc -> DB : find aircraft and save new status
+DB --> Svc : updated aircraft
+Svc -> Rep : replicate(updated aircraft)
+Rep -> Rep : queues newest revision for each peer
+
+alt status is UNDER_MAINTENANCE or INACTIVE
+    Svc -> Svc : find ACTIVE replacement candidates of same model
+    Svc -> Flights : POST /internal/scheduled-flights/aircraft/{reg}/grounding\nX-API-Key + candidates
+    Flights -> FO : reassign future flights
+    FO --> Flights : grounding report
+    Flights --> Svc : notification result
+end
+
+Svc --> Ctrl : aircraft + swap report
+Ctrl --> GW : 200 JSON
+GW --> User : 200 JSON
+
+== Asynchronous replication ==
+loop every 5 seconds while copies are pending
+    Rep -> Rep : retry PUT /internal/aircraft/instances/{reg}/replica
+    Rep -> Rep : remove copy after peer acknowledgement
+end
+
+@enduml

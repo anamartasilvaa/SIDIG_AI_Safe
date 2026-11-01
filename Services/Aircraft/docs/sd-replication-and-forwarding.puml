@@ -1,0 +1,38 @@
+@startuml sd-replication-and-forwarding
+skinparam style strictuml
+autonumber
+title SD - Aircraft read forwarding and asynchronous replication
+
+actor Client
+participant "AircraftController" as Ctrl
+participant "AircraftService" as Svc1
+database "Replica 1 DB" as DB1
+participant "AircraftPeerClient" as Peer
+participant "Replica 2\nInternalAircraftController" as R2
+database "Replica 2 DB" as DB2
+
+== Read miss ==
+Client -> Ctrl : GET /api/aircraft-models/instances/{reg}
+Ctrl -> Svc1 : getAircraftByRegistrationNumber(reg, false)
+Svc1 -> DB1 : lookup locally
+DB1 --> Svc1 : not found
+Svc1 -> Peer : forwardGetAircraftByRegNum(reg)
+Peer -> R2 : GET /internal/aircraft/instances/{reg}\nX-API-Key
+R2 -> DB2 : local lookup
+DB2 --> R2 : aircraft or 404
+R2 --> Peer : 200 / 404
+Peer --> Svc1 : aircraft or empty
+Svc1 --> Ctrl : aircraft or 404
+Ctrl --> Client : response
+
+== Write replication ==
+Client -> Ctrl : PATCH status / POST aircraft
+Ctrl -> Svc1 : save local entity
+Svc1 -> DB1 : save with incremented revision
+Svc1 -> Peer : AircraftReplicator.replicate(dto)
+Peer -> R2 : PUT /internal/aircraft/instances/{reg}/replica
+R2 -> DB2 : create or apply only newer revision
+DB2 --> R2 : saved
+R2 --> Peer : 204
+
+@enduml

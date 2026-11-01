@@ -1,0 +1,77 @@
+@startuml class-diagram-aircraft
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing false
+hide empty members
+title Aircraft Service - Domain Model
+
+package "Aircraft Aggregate" {
+    class Aircraft <<Entity>> {
+        - pk: Long
+        - globalId: String
+        - revision: long
+        - lastModified: Instant
+        - registrationNumber: RegistrationNumber
+        - status: AircraftStatus
+        - manufacturingDate: LocalDate
+        - actualSeatingCapacity: Integer
+        - totalFlightHours: Double
+        - totalAssignments: Integer
+        - features: String
+        --
+        + updateStatus(newStatus: AircraftStatus)
+        + addFlightHours(hours: Double)
+        + incrementAssignments()
+        + touch()
+    }
+    package "Aircraft Model Aggregate" {
+        class AircraftModel <<Entity>> {
+            - pk: Long
+            - modelName: ModelName
+            - manufacturer: Manufacturer
+            - defaultSeatingCapacity: Integer
+            - fuelCapacity: Double
+            - maximumRange: Double
+            - cruisingSpeed: Double
+            - fuelConsumptionPerHour: Double
+            - modelPhotoUrl: String
+            - seatingConfiguration: String
+            - operatingHoursRange: String
+            - engineType: String
+            --
+            + updateSpecifications(...)
+            + updateImage(url: String)
+        }
+        class ModelName <<Value Object>> {
+            - name: String
+        }
+        enum Manufacturer <<Enumeration>>
+    } 
+    class RegistrationNumber <<Value Object>> {
+        - number: String
+    }
+    enum AircraftStatus <<Enumeration>> {
+        ACTIVE
+        INACTIVE
+        UNDER_MAINTENANCE
+    }
+    class AirplaneCertification <<Entity>>
+
+    Aircraft "*" --> "1" AircraftModel : uses >
+    Aircraft "1" *-- "1" RegistrationNumber : identified by >
+    AircraftModel "1" *-- "1" ModelName : identified by >
+    Aircraft "1" --> "1" AircraftStatus : has >
+    AircraftModel "1" --> "1" Manufacturer : made by >
+}
+
+package "External bounded contexts (REST only)" #EEEEEE {
+    class "Flight Operations" as FO <<External>>
+    class "Airports & Routes" as AR <<External>>
+    class "Maintenance" as MT <<External>>
+}
+
+Aircraft ..> FO : grounding and assignment checks
+Aircraft ..> AR : compatible routes
+Aircraft ..> MT : status is updated by maintenance
+
+@enduml
