@@ -39,6 +39,8 @@ infrastructure/docker/certs/
 # Bases de dados H2 em ficheiro (Airports & Routes, Modo A)
 *.mv.db
 *.trace.db
+*.lock.db
+certs/
 
 # Certificados e truststores locais
 certs/
