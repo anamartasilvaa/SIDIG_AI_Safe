@@ -2,6 +2,7 @@ package pt.isep.psoft.aisafe.airports_routes_service.application;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -20,6 +21,7 @@ import pt.isep.psoft.aisafe.airports_routes_service.security.PeerTokenService;
 import java.time.Instant;
 
 @Component
+@ConditionalOnProperty(name = "app.replication.transport", havingValue = "http", matchIfMissing = true)
 public class ReplicationTaskScheduler {
 
     private static final Logger log =
