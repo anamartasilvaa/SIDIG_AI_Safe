@@ -22,7 +22,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 
-@SpringBootTest(properties = "peer.urls=")
+@SpringBootTest(properties = {"peer.urls=", "app.replication.transport=http"})
 @AutoConfigureMockMvc
 class SecurityAndExceptionMockMvcTest {
     @Autowired MockMvc mockMvc;
