@@ -1,0 +1,1 @@
+ALTER TABLE fo_command.route_ref ADD COLUMN minimum_range DOUBLE PRECISION;
