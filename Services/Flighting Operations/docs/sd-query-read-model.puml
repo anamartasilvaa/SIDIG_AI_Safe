@@ -1,0 +1,54 @@
+@startuml sd-query-read-model
+skinparam style strictuml
+autonumber
+title SD - Queries served only by the read model (query side)
+
+actor "ATCC / Backoffice" as User
+participant "API Gateway" as GW
+box "Any FO replica" #F4FFF4
+participant "Security\n(JWT + RBAC)" as Sec
+participant "FlightQueryController" as Ctrl
+participant "FlightQueryService" as Svc
+database "Replica DB\n(schema query)" as DB
+end box
+
+User -> GW : GET /api/scheduled-flights/{id}
+GW -> Sec : round-robin
+Sec -> Ctrl : ATCC / BACKOFFICE / ADMIN
+Ctrl -> Svc : findById(id)
+Svc -> DB : SELECT * FROM flight_view WHERE flight_id = ?
+alt found
+  DB --> Svc : FlightView
+  Svc --> Ctrl : FlightView
+  Ctrl --> GW : 200 + ETag: "<revision>"
+else not found
+  Ctrl --> GW : 404
+  note right : every replica has ALL flights (one queue per replica),\nso 404 here means "does not exist yet in this replica";\nno peer forwarding is needed
+end
+GW --> User : response
+
+User -> GW : GET /api/scheduled-flights/aircraft/{reg}   (US213)
+GW -> Ctrl : (after JWT + RBAC)
+Ctrl -> Svc : flightsOf(reg)
+Svc -> DB : SELECT ... FROM flight_view WHERE registration_number = ? ORDER BY scheduled_date_time
+Ctrl --> GW : 200 (or 204 if empty)
+
+User -> GW : GET /api/scheduled-flights/route-utilization   (US229)
+GW -> Ctrl : BACKOFFICE / ADMIN
+Ctrl -> Svc : routeUtilization()
+Svc -> DB : SELECT * FROM route_utilization_view ORDER BY flight_count DESC
+note right : pre-computed counter (incremented on\nFlightScheduled, decremented on CANCELED);\nno aggregation over replicas, no duplicates
+Ctrl --> GW : 200 / 204
+
+User -> GW : GET /api/scheduled-flights/availability?registrationNumber=&dateTime=   (US205)
+GW -> Ctrl : ATCC / ADMIN
+Ctrl -> Svc : availability(reg, when)
+Svc -> DB : SELECT aircraft_status FROM aircraft_schedule_view\n+ flights of the aircraft within +/- 2 h
+Ctrl --> GW : 200 {available, reason}
+
+note over User, DB
+  Reads never call another service or another replica: they keep working with RabbitMQ,
+  Aircraft or Airports & Routes down. The price is eventual consistency: a flight created on
+  the other replica appears here after the event is consumed (normally < 1 s).
+end note
+@enduml

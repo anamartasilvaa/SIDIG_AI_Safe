@@ -1,0 +1,60 @@
+@startuml sd-failure-recovery
+skinparam style strictuml
+autonumber
+title SD - Failure and recovery scenarios (no single point of failure)
+
+participant "API Gateway 1 / 2" as GW
+box "FO-1" #F4F7FF
+participant "FO-1" as F1
+database "FO-1 DB" as D1
+end box
+box "RabbitMQ" #FFF8E8
+participant "rabbitmq-1" as R1
+participant "rabbitmq-2" as R2
+participant "rabbitmq-3" as R3
+end box
+box "FO-2" #F4FFF4
+participant "FO-2" as F2
+database "FO-2 DB" as D2
+end box
+
+== A. One RabbitMQ node fails ==
+R1 -> R1 : X stopped
+F1 -> R2 : client reconnects (spring.rabbitmq.addresses = 3 nodes)
+note over R2, R3 : quorum queues keep a majority (2 of 3):\nleader re-elected, no message lost
+
+== B. The whole broker is unavailable ==
+GW -> F1 : POST /api/scheduled-flights
+F1 -> D1 : commit flight + outbox
+F1 --> GW : 201 (writes keep working)
+GW -> F2 : GET ... (reads keep working from the local views)
+note over F1, D1 : outbox rows accumulate; OutboxRelay retries with backoff;\nwhen the broker returns everything is published in order
+
+== C. FO-2 fails ==
+GW -> F2 : request
+F2 -> F2 : X down
+GW -> F1 : proxy_next_upstream: same request to FO-1
+note over R2, R3 : fo.flights.fo-2 (durable) keeps receiving events while FO-2 is down
+
+== D. FO-2 restarts with its database intact ==
+F2 -> D2 : readiness = DOWN until the backlog is consumed
+R2 -> F2 : backlog of fo.flights.fo-2 / fo.aircraft.fo-2 / fo.routes.fo-2
+F2 -> D2 : idempotent apply (processed_event, revision)
+F2 -> F2 : readiness = UP -> gateway sends traffic again
+
+== E. FO-2 starts with an EMPTY database (disk lost / new replica) ==
+F2 -> F1 : GET /internal/snapshot (X-API-Key): command store + references + views
+F1 --> F2 : snapshot (each item with its revision)
+F2 -> D2 : load snapshot
+R2 -> F2 : queue backlog (events after and around the snapshot)
+F2 -> D2 : apply; older revisions ignored -> converges with no gap
+note right : queues are declared in the broker definitions\n(not by the application), so they exist and\nstore events even before the replica first starts
+
+== F. Aircraft and Airports & Routes completely down ==
+GW -> F1 : POST /api/scheduled-flights
+F1 -> D1 : validates with local AircraftRef / RouteRef (last known state)
+F1 --> GW : 201 / 409 (no 503 any more; stale references are the accepted AP trade-off)
+
+== G. One gateway fails ==
+GW -> GW : client uses the other gateway (:8443 <-> :8444)
+@enduml
