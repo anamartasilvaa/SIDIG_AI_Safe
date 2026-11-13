@@ -14,9 +14,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import pt.isep.psoft.aisafe.airports_routes_service.application.DTO.AlternativeRouteDTO;
 import pt.isep.psoft.aisafe.airports_routes_service.application.DTO.RouteViewDTO;
-import pt.isep.psoft.aisafe.airports_routes_service.domain.Route;
-import pt.isep.psoft.aisafe.airports_routes_service.domain.RouteStatus;
-import pt.isep.psoft.aisafe.airports_routes_service.repositories.RouteRepository;
+import pt.isep.psoft.aisafe.airports_routes_service.readmodel.RouteReadModel;
+import pt.isep.psoft.aisafe.airports_routes_service.readmodel.RouteReadRepository;
 import pt.isep.psoft.aisafe.airports_routes_service.util.HalResponseUtils;
 
 import java.util.*;
@@ -26,17 +25,17 @@ import java.util.stream.Collectors;
 public class FastestRouteStrategy implements RouteSearchStrategy {
 
     private static final Logger log = LoggerFactory.getLogger(FastestRouteStrategy.class);
-    private final RouteRepository routeRepository;
+    private final RouteReadRepository routeReadRepository;
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
     private final List<String> peerUrls;
     private static final int MINIMUM_CONNECTING_TIME_MINUTES = 60; // Regra do MCT (Minimum Connection Time)
     private static final int MAX_FLIGHTS = 3; // Limite fixo: máximo de 3 voos (2 escalas).
 
-    public FastestRouteStrategy(RouteRepository routeRepository, RestTemplate restTemplate,
+    public FastestRouteStrategy(RouteReadRepository routeReadRepository, RestTemplate restTemplate,
                                 ObjectMapper objectMapper,
                                 @Value("${peer.urls:}") List<String> peerUrls) {
-        this.routeRepository = routeRepository;
+        this.routeReadRepository = routeReadRepository;
         this.restTemplate = restTemplate;
         this.objectMapper = objectMapper;
         this.peerUrls = peerUrls.stream().map(String::trim).filter(url -> !url.isBlank()).toList();
@@ -104,11 +103,10 @@ public class FastestRouteStrategy implements RouteSearchStrategy {
     // --- Métodos Auxiliares ---
 
     private List<RouteViewDTO> getOutgoingRoutes(String iataCode) {
-        List<RouteViewDTO> routes = routeRepository
-                .findByOrigin_IataCode_Code(iataCode.toUpperCase(), org.springframework.data.domain.Pageable.unpaged())
-                .filter(r -> r.getStatus() == RouteStatus.ACTIVE)
-                .map(this::convertToDTO)
-                .toList();
+        // CQRS: a pesquisa BFS le do modelo de leitura (rotas ativas que partem deste aeroporto).
+        List<RouteViewDTO> routes = new ArrayList<>(routeReadRepository
+                .findByOriginIataAndStatus(iataCode.toUpperCase(), "ACTIVE")
+                .stream().map(this::convertToDTO).toList());
 
         for (String peerUrl : peerUrls) {
             try {
@@ -171,11 +169,11 @@ public class FastestRouteStrategy implements RouteSearchStrategy {
         return new AlternativeRouteDTO(legDTOs, totalTime, totalDistance);
     }
 
-    private RouteViewDTO convertToDTO(Route route) {
-        return new RouteViewDTO(route.getRouteId().id(),
-                route.getOrigin().getIataCode().code(),
-                route.getDestination().getIataCode().code(),
-                route.getStatus().name(), route.getMinimumCapacity(),
+    private RouteViewDTO convertToDTO(RouteReadModel route) {
+        return new RouteViewDTO(route.getRouteId(),
+                route.getOriginIata(),
+                route.getDestinationIata(),
+                route.getStatus(), route.getMinimumCapacity(),
                 route.getLastModified(), route.getOriginNodeId(),
                 route.getMinimumRange(), route.getEstimatedFlightTime());
     }

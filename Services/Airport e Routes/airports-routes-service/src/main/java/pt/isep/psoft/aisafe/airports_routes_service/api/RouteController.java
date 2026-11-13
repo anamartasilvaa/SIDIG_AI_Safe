@@ -17,6 +17,7 @@ import pt.isep.psoft.aisafe.airports_routes_service.application.DTO.CreateRouteD
 import pt.isep.psoft.aisafe.airports_routes_service.application.DTO.RouteHistoryDTO;
 import pt.isep.psoft.aisafe.airports_routes_service.application.DTO.RouteViewDTO;
 import pt.isep.psoft.aisafe.airports_routes_service.application.DTO.UpdateRouteDTO;
+import pt.isep.psoft.aisafe.airports_routes_service.application.RouteQueryService;
 import pt.isep.psoft.aisafe.airports_routes_service.application.RouteService;
 
 import java.util.List;
@@ -31,9 +32,11 @@ import static org.springframework.hateoas.server.mvc.WebMvcLinkBuilder.methodOn;
 public class RouteController {
 
     private final RouteService routeService;
+    private final RouteQueryService routeQueryService;
 
-    public RouteController(RouteService routeService) {
+    public RouteController(RouteService routeService, RouteQueryService routeQueryService) {
         this.routeService = routeService;
+        this.routeQueryService = routeQueryService;
     }
 
     // --- US110: Criar uma Rota ---
@@ -101,7 +104,7 @@ public class RouteController {
             @RequestParam String originIata,
             @RequestParam String destinationIata) {
 
-        List<pt.isep.psoft.aisafe.airports_routes_service.application.DTO.AlternativeRouteDTO> alternatives = routeService.findAlternativeRoutes(originIata, destinationIata);
+        List<pt.isep.psoft.aisafe.airports_routes_service.application.DTO.AlternativeRouteDTO> alternatives = routeQueryService.findAlternativeRoutes(originIata, destinationIata);
 
         // Se não houver forma de chegar ao destino, devolve 204 No Content
         if (alternatives.isEmpty()) {
@@ -124,7 +127,7 @@ public class RouteController {
     public ResponseEntity<EntityModel<RouteViewDTO>> getRouteById(
             @PathVariable String id,
             @RequestHeader(value = "X-P2P-Hops", defaultValue = "0") int hops) {
-        RouteViewDTO route = routeService.getRoute(id, hops);
+        RouteViewDTO route = routeQueryService.getRoute(id, hops);
         EntityModel<RouteViewDTO> resource = EntityModel.of(route);
         resource.add(WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(RouteController.class).getRouteById(id, 0)).withSelfRel());
         resource.add(WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(RouteController.class).updateRoute(id, null, false)).withRel("update-route"));
@@ -139,7 +142,7 @@ public class RouteController {
     // --- US111: Ver histórico de uma rota ---
     @GetMapping("/{id}/history")
     public ResponseEntity<CollectionModel<EntityModel<RouteHistoryDTO>>> getRouteHistory(@PathVariable String id) {
-        List<EntityModel<RouteHistoryDTO>> history = routeService.getRouteHistory(id)
+        List<EntityModel<RouteHistoryDTO>> history = routeQueryService.getRouteHistory(id)
                 .stream()
                 .map(dto -> EntityModel.of(dto,
                         WebMvcLinkBuilder.linkTo(WebMvcLinkBuilder.methodOn(RouteController.class).getRouteById(id, 0)).withRel("route-details")))
@@ -160,7 +163,7 @@ public class RouteController {
             PagedResourcesAssembler<RouteViewDTO> assembler,
             @RequestHeader(value = "X-P2P-Hops", defaultValue = "0") int hops) {
 
-        Page<RouteViewDTO> page = routeService.searchRoutes(iata, null, pageable, hops);
+        Page<RouteViewDTO> page = routeQueryService.searchRoutes(iata, null, pageable, hops);
         PagedModel<EntityModel<RouteViewDTO>> pagedModel = assembler.toModel(page, this::addLinksToRoute);
 
         return ResponseEntity.ok(pagedModel);
@@ -176,7 +179,7 @@ public class RouteController {
             PagedResourcesAssembler<RouteViewDTO> assembler,
             @RequestHeader(value = "X-P2P-Hops", defaultValue = "0") int hops) {
 
-        Page<RouteViewDTO> page = routeService.searchRoutes(origin, destination, pageable, hops);
+        Page<RouteViewDTO> page = routeQueryService.searchRoutes(origin, destination, pageable, hops);
         PagedModel<EntityModel<RouteViewDTO>> pagedModel = assembler.toModel(page, this::addLinksToRoute);
 
         return ResponseEntity.ok(pagedModel);
@@ -198,7 +201,7 @@ public class RouteController {
             @PageableDefault(size = 10) Pageable pageable,
             PagedResourcesAssembler<RouteViewDTO> assembler,
             @RequestHeader(value = "X-P2P-Hops", defaultValue = "0") int hops) {
-        Page<RouteViewDTO> page = routeService.getRoutesByAirport(iataCode, pageable, hops);
+        Page<RouteViewDTO> page = routeQueryService.getRoutesByAirport(iataCode, pageable, hops);
         PagedModel<EntityModel<RouteViewDTO>> pagedModel = assembler.toModel(page, this::addLinksToRoute);
 
         return ResponseEntity.ok(pagedModel);
@@ -208,7 +211,7 @@ public class RouteController {
     @GetMapping("/statistics/busiest-airports")
     public ResponseEntity<CollectionModel<EntityModel<pt.isep.psoft.aisafe.airports_routes_service.application.DTO.BusiestAirportDTO>>> getBusiestAirports() {
 
-        List<pt.isep.psoft.aisafe.airports_routes_service.application.DTO.BusiestAirportDTO> stats = routeService.getBusiestAirports();
+        List<pt.isep.psoft.aisafe.airports_routes_service.application.DTO.BusiestAirportDTO> stats = routeQueryService.getBusiestAirports();
 
         if (stats.isEmpty()) {
             return ResponseEntity.noContent().build();
@@ -227,7 +230,7 @@ public class RouteController {
     /* US215 - Total Network Distance */
     @GetMapping("/statistics/total-distance")
     public ResponseEntity<EntityModel<java.util.Map<String, Double>>> getTotalDistance() {
-        Double total = routeService.getTotalNetworkDistance();
+        Double total = routeQueryService.getTotalNetworkDistance();
 
         java.util.Map<String, Double> response = java.util.Map.of("totalDistance", total);
 
@@ -246,7 +249,7 @@ public class RouteController {
             PagedResourcesAssembler<RouteViewDTO> assembler,
             @RequestHeader(value = "X-P2P-Hops", defaultValue = "0") int hops) {
 
-        Page<RouteViewDTO> page = routeService.getActiveRoutesSorted(sortBy, pageable, hops);
+        Page<RouteViewDTO> page = routeQueryService.getActiveRoutesSorted(sortBy, pageable, hops);
         PagedModel<EntityModel<RouteViewDTO>> pagedModel = assembler.toModel(page, this::addLinksToRoute);
 
         return ResponseEntity.ok(pagedModel);
@@ -256,7 +259,7 @@ public class RouteController {
     @GetMapping(value = "/export/geojson", produces = "application/geo+json")
     @Operation(summary = "Export all routes as a GeoJSON file")
     public ResponseEntity<byte[]> exportGeoJson() {
-        String geoJson = routeService.exportRoutesAsGeoJson();
+        String geoJson = routeQueryService.exportRoutesAsGeoJson();
         byte[] fileBytes = geoJson.getBytes();
 
         org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();

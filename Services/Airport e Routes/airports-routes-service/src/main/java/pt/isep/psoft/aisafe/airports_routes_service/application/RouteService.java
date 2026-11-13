@@ -6,12 +6,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import java.time.Instant;
 import org.springframework.stereotype.Service;
 import pt.isep.psoft.aisafe.airports_routes_service.application.DTO.*;
 import pt.isep.psoft.aisafe.airports_routes_service.api.exception.NotFoundException;
 import pt.isep.psoft.aisafe.airports_routes_service.domain.*;
+import pt.isep.psoft.aisafe.airports_routes_service.readmodel.RouteProjector;
 import pt.isep.psoft.aisafe.airports_routes_service.repositories.AirportRepository;
 import pt.isep.psoft.aisafe.airports_routes_service.repositories.RouteRepository;
 import pt.isep.psoft.aisafe.airports_routes_service.repositories.RouteHistoryRepository;
@@ -110,9 +112,9 @@ public class RouteService {
             if (receivedAt != null && isNewer(receivedAt, receivedNode, existing.getLastModified(), existing.getOriginNodeId())) {
                 existing.applyReplicationData(dto.estimatedFlightTime(), dto.minimumRange(), dto.minimumCapacity(), existing.getStatus());
                 existing.applyReplicationMetadata(receivedAt, receivedNode);
-                return convertToDTO(routeRepository.save(existing));
+                return project(routeRepository.save(existing));
             }
-            return convertToDTO(existing);
+            return project(existing);
         }
         Route newRoute = new Route(routeId, origin, destination, dto.estimatedFlightTime(), dto.minimumRange(), dto.minimumCapacity());
 
@@ -124,7 +126,7 @@ public class RouteService {
             replicateCreate(dto, savedRoute);
         }
         auditService.record("CREATE", dto.routeId(), "SUCCESS", isReplication);
-        return convertToDTO(savedRoute);
+        return project(savedRoute);
     }
 
     // --- US112: Desativar uma rota ---
@@ -143,11 +145,11 @@ public class RouteService {
                 });
 
         if (isReplication && receivedAt != null && !isNewer(receivedAt, receivedNode, route.getLastModified(), route.getOriginNodeId())) {
-            return convertToDTO(route);
+            return project(route);
         }
 
         if (route.getStatus() == RouteStatus.INACTIVE && isReplication) {
-            return convertToDTO(route);
+            return project(route);
         }
 
         route.deactivate();
@@ -162,7 +164,7 @@ public class RouteService {
         }
 
         auditService.record("DEACTIVATE", id, "SUCCESS", isReplication);
-        return convertToDTO(saved);
+        return project(saved);
     }
 
     // --- US112: Atualizar uma rota ---
@@ -182,7 +184,7 @@ public class RouteService {
                 });
 
         if (isReplication && receivedAt != null && !isNewer(receivedAt, receivedNode, route.getLastModified(), route.getOriginNodeId())) {
-            return convertToDTO(route);
+            return project(route);
         }
         route.updateParameters(dto.estimatedFlightTime(), dto.minimumRange(), dto.minimumCapacity());
         route.applyReplicationMetadata(isReplication ? receivedAt : Instant.now(), isReplication ? receivedNode : nodeId);
@@ -193,271 +195,33 @@ public class RouteService {
             replicateUpdate(id, dto, saved.getLastModified(), saved.getOriginNodeId());
         }
         auditService.record("UPDATE", id, "SUCCESS", isReplication);
-        return convertToDTO(saved);
+        return project(saved);
     }
 
-    // --- US113: Ver Detalhes de uma Rota Específica ---
-    public RouteViewDTO getRoute(String id) {
-        return getRoute(id, 0);
-    }
-
-    public RouteViewDTO getRoute(String id, int hops) {
-        hops = Math.max(0, hops);
-        RouteId routeId = new RouteId(id);
-        Optional<Route> localRoute = routeRepository.findByRouteId(routeId);
-        if (localRoute.isPresent()) {
-            return convertToDTO(localRoute.get());
-        }
-
-        if (hops >= maxForwardingHops) {
-            throw routeNotFound(id);
-        }
-
-        boolean peerFailure = false;
-        for (String peerUrl : peerUrls) {
-            String url = UriComponentsBuilder.fromUriString(peerUrl)
-                    .pathSegment("api", "routes", id).toUriString();
-            try {
-                ResponseEntity<String> response = restTemplate.exchange(
-                        url, HttpMethod.GET, p2pEntity(hops + 1), String.class);
-                if (response.getBody() == null || response.getBody().isBlank()) {
-                    continue;
-                }
-                JsonNode body = objectMapper.readTree(response.getBody());
-                JsonNode dtoNode = body.has("content") ? body.get("content") : body;
-                return objectMapper.treeToValue(dtoNode, RouteViewDTO.class);
-            } catch (HttpClientErrorException.NotFound exception) {
-                log.debug("Peer route lookup returned 404 for {}", peerUrl);
-            } catch (Exception exception) {
-                peerFailure = true;
-                log.warn("Peer route lookup failed for {}", peerUrl, exception);
-            }
-        }
-        if (peerFailure) {
-            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "One or more peers were unavailable");
-        }
-        throw routeNotFound(id);
-    }
-
-    // --- US113 e US114: Pesquisar Rotas ---
-    public Page<RouteViewDTO> searchRoutes(String origin, String destination, Pageable pageable) {
-        return searchRoutes(origin, destination, pageable, 0);
-    }
-
-    public Page<RouteViewDTO> searchRoutes(String origin, String destination, Pageable pageable, int hops) {
-        hops = Math.max(0, hops);
-        PartialResultContext.start();
-        List<RouteViewDTO> routes = new ArrayList<>();
-
-        if (origin != null && destination != null) {
-            routeRepository.findByOrigin_IataCode_CodeAndDestination_IataCode_Code(origin, destination, Pageable.unpaged())
-                    .map(this::convertToDTO).forEach(routes::add);
-        } else if (origin != null) {
-            routeRepository.findByOrigin_IataCode_Code(origin, Pageable.unpaged())
-                    .map(this::convertToDTO).forEach(routes::add);
-        } else if (destination != null) {
-            routeRepository.findByDestination_IataCode_Code(destination, Pageable.unpaged())
-                    .map(this::convertToDTO).forEach(routes::add);
-        } else {
-            routeRepository.findAll(Pageable.unpaged()).map(this::convertToDTO).forEach(routes::add);
-        }
-
-        if (hops < maxForwardingHops) {
-            routes.addAll(searchRoutesOnPeers(origin, destination, pageable, hops));
-        }
-        return pageRoutes(deduplicateRoutes(routes), pageable);
-    }
-
-    // --- US111: Ver Histórico da Rota ---
-    public List<RouteHistoryDTO> getRouteHistory(String routeId) {
-        List<RouteHistory> entities = routeHistoryRepository.findByRouteIdOrderByStartDateDesc(routeId);
-        return entities.stream().map(entity ->
-                new RouteHistoryDTO(
-                        entity.getRouteId(),
-                        entity.getAction(),
-                        entity.getStartDate(),
-                        entity.getEndDate()
-                )
-        ).collect(Collectors.toList());
-    }
-
-    // US209
-    public Page<RouteViewDTO> getRoutesByAirport(String iataCode, Pageable pageable) {
-        return getRoutesByAirport(iataCode, pageable, 0);
-    }
-
-    public Page<RouteViewDTO> getRoutesByAirport(String iataCode, Pageable pageable, int hops) {
-        hops = Math.max(0, hops);
-        PartialResultContext.start();
-        String code = iataCode.toUpperCase();
-        List<RouteViewDTO> routes = new ArrayList<>(routeRepository.findRoutesByAirport(code, Pageable.unpaged())
-                .map(this::convertToDTO).getContent());
-        if (hops < maxForwardingHops) {
-            routes.addAll(searchRoutesOnPeers(code, pageable, hops));
-        }
-        return pageRoutes(deduplicateRoutes(routes), pageable);
-    }
-
-    private List<RouteViewDTO> searchRoutesOnPeers(String iataCode, Pageable pageable, int hops) {
-        List<RouteViewDTO> result = new ArrayList<>();
-        for (String peerUrl : peerUrls) {
-            UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(peerUrl)
-                    .pathSegment("api", "routes", "involving", iataCode);
-            result.addAll(fetchPeerRoutes(builder, pageable, hops));
-        }
-        return result;
-    }
-
-    private List<RouteViewDTO> searchRoutesOnPeers(String origin, String destination, Pageable pageable, int hops) {
-        List<RouteViewDTO> result = new ArrayList<>();
-        for (String peerUrl : peerUrls) {
-            UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(peerUrl)
-                    .path("api/routes");
-            if (origin != null) builder.queryParam("origin", origin);
-            if (destination != null) builder.queryParam("destination", destination);
-            result.addAll(fetchPeerRoutes(builder, pageable, hops));
-        }
-        return result;
-    }
-
-    private List<RouteViewDTO> fetchPeerRoutes(UriComponentsBuilder builder, Pageable pageable, int hops) {
-        if (hops >= maxForwardingHops) {
-            return List.of();
-        }
-        try {
-            List<RouteViewDTO> routes = new ArrayList<>();
-            int page = 0;
-            int totalPages = 1;
-            do {
-                UriComponentsBuilder pageBuilder = builder.cloneBuilder()
-                        .replaceQueryParam("page", page)
-                        .replaceQueryParam("size", 2000);
-                ResponseEntity<String> response = restTemplate.exchange(
-                        pageBuilder.toUriString(), HttpMethod.GET, p2pEntity(hops + 1), String.class);
-                if (response.getBody() == null || response.getBody().isBlank()) break;
-                JsonNode body = objectMapper.readTree(response.getBody());
-                JsonNode routesNode = HalResponseUtils.firstEmbeddedArray(body);
-                if (routesNode != null) {
-                    for (JsonNode routeNode : routesNode) {
-                        routes.add(objectMapper.treeToValue(routeNode, RouteViewDTO.class));
-                    }
-                }
-                totalPages = Math.max(1, body.path("page").path("totalPages").asInt(1));
-                page++;
-            } while (page < totalPages);
-            return routes;
-        } catch (HttpClientErrorException.NotFound exception) {
-            return List.of();
-        } catch (Exception exception) {
-            PartialResultContext.markPartial();
-            log.warn("Peer route search failed for {}", builder, exception);
-            return List.of();
-        }
-    }
-
-    private List<RouteViewDTO> deduplicateRoutes(List<RouteViewDTO> routes) {
-        Map<String, RouteViewDTO> unique = new LinkedHashMap<>();
-        routes.forEach(route -> unique.merge(route.routeId(), route,
-                this::newerRouteVersion));
-        return new ArrayList<>(unique.values());
-    }
-
-    private RouteViewDTO newerRouteVersion(RouteViewDTO current, RouteViewDTO candidate) {
-        if (current.lastModified() == null) return candidate;
-        if (candidate.lastModified() == null) return current;
-        int timestampComparison = candidate.lastModified().compareTo(current.lastModified());
-        if (timestampComparison != 0) return timestampComparison > 0 ? candidate : current;
-        String currentNode = current.originNodeId() == null ? "" : current.originNodeId();
-        String candidateNode = candidate.originNodeId() == null ? "" : candidate.originNodeId();
-        return candidateNode.compareTo(currentNode) > 0 ? candidate : current;
-    }
-
-    private Page<RouteViewDTO> pageRoutes(List<RouteViewDTO> routes, Pageable pageable) {
-        if (pageable.getSort().isSorted()) {
-            Comparator<RouteViewDTO> comparator = null;
-            for (org.springframework.data.domain.Sort.Order order : pageable.getSort()) {
-                Comparator<RouteViewDTO> field = Comparator.comparing(
-                        route -> routeSortValue(route, order.getProperty()),
-                        Comparator.nullsFirst(String::compareTo));
-                if (order.isDescending()) field = field.reversed();
-                comparator = comparator == null ? field : comparator.thenComparing(field);
-            }
-            if (comparator != null) routes.sort(comparator);
-        }
-        if (pageable.isUnpaged()) return new PageImpl<>(routes);
-        int from = (int) Math.min((long) pageable.getOffset(), routes.size());
-        int to = Math.min(from + pageable.getPageSize(), routes.size());
-        return new PageImpl<>(routes.subList(from, to), pageable, routes.size());
-    }
-
-    private String routeSortValue(RouteViewDTO route, String property) {
-        return switch (property) {
-            case "origin", "originIata" -> route.originIata();
-            case "destination", "destinationIata" -> route.destinationIata();
-            case "status" -> route.status();
-            case "minimumCapacity", "capacity" -> String.valueOf(route.minimumCapacity());
-            default -> route.routeId();
-        };
-    }
-
-    private NotFoundException routeNotFound(String id) {
-        return new NotFoundException("Route not found: " + id);
-    }
-
-    // US210
-    public List<pt.isep.psoft.aisafe.airports_routes_service.application.DTO.BusiestAirportDTO> getBusiestAirports() {
-        List<Airport> airports = airportRepository.findAll();
-
-        return airports.stream()
-                .map(airport -> {
-                    String iata = airport.getIataCode().code();
-                    long count = routeRepository.countRoutesForAirport(iata);
-                    return new pt.isep.psoft.aisafe.airports_routes_service.application.DTO.BusiestAirportDTO(iata, airport.getName(), count);
-                })
-                .sorted((a1, a2) -> Long.compare(a2.routeCount(), a1.routeCount()))
-                .collect(Collectors.toList());
-    }
-
-    // --- US215: Distância total da rede ---
-    public Double getTotalNetworkDistance() {
-        Double total = routeRepository.calculateTotalNetworkDistance();
-        return (total != null) ? total : 0.0;
-    }
-
-    // --- US214: Listar rotas ativas ordenadas por popularidade ou distância ---
-    public Page<RouteViewDTO> getActiveRoutesSorted(String sortBy, Pageable pageable) {
-        return getActiveRoutesSorted(sortBy, pageable, 0);
-    }
-
-    public Page<RouteViewDTO> getActiveRoutesSorted(String sortBy, Pageable pageable, int hops) {
-        hops = Math.max(0, hops);
-        PartialResultContext.start();
-        Page<Route> routes;
-
-        if ("popularity".equalsIgnoreCase(sortBy)) {
-            routes = routeRepository.findAllActiveRoutesSortedByPopularity(Pageable.unpaged());
-        } else {
-            routes = routeRepository.findAllActiveRoutesSortedByDistance(Pageable.unpaged());
-        }
-
-        List<RouteViewDTO> allRoutes = new ArrayList<>(routes.map(this::convertToDTO).getContent());
-        if (hops < maxForwardingHops) {
-            for (String peerUrl : peerUrls) {
-                UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(peerUrl)
-                        .pathSegment("api", "routes", "active", "sorted")
-                        .queryParam("sortBy", sortBy);
-                allRoutes.addAll(fetchPeerRoutes(builder, pageable, hops));
-            }
-        }
-        return pageRoutes(deduplicateRoutes(allRoutes), pageable);
-    }
-
-    // --- US216: Procurar rotas alternativas ---
-    public List<AlternativeRouteDTO> findAlternativeRoutes(String originIata, String destinationIata) {
-        return routeSearchStrategy.findAlternatives(originIata, destinationIata);
-    }
 
     // --- Métodos Privados Auxiliares ---
+
+    /** CQRS: modelo de leitura atualizado pelo projetor (opcional para permitir testes unitarios). */
+    @Autowired(required = false)
+    private RouteProjector routeProjector;
+
+    /** Mapeia o agregado e atualiza o modelo de leitura na mesma transacao do comando. */
+    private RouteViewDTO project(Route route) {
+        RouteViewDTO dto = convertToDTO(route);
+        if (routeProjector != null) {
+            routeProjector.project(route);
+        }
+        return dto;
+    }
+
+    /** Reconstroi todo o modelo de leitura a partir do modelo de escrita. */
+    @Transactional
+    public int rebuildReadModel() {
+        if (routeProjector == null) return 0;
+        List<Route> all = routeRepository.findAll();
+        all.forEach(routeProjector::project);
+        return all.size();
+    }
 
     private RouteViewDTO convertToDTO(Route route) {
         return new RouteViewDTO(
@@ -514,65 +278,5 @@ public class RouteService {
             routeHistoryRepository.save(old);
         }
         routeHistoryRepository.save(new RouteHistory(routeId, action, eventDateTime));
-    }
-
-    // US228
-    public String exportRoutesAsGeoJson() {
-        List<Route> allRoutes = routeRepository.findAll();
-        List<GeoJsonFeature> features = allRoutes.stream()
-                .map(this::toGeoJsonFeature)
-                .toList();
-
-        try {
-            return objectMapper.writeValueAsString(new GeoJsonFeatureCollection(features));
-        } catch (JsonProcessingException exception) {
-            throw new IllegalStateException("Unable to serialize routes as GeoJSON", exception);
-        }
-    }
-
-    private GeoJsonFeature toGeoJsonFeature(Route route) {
-        Airport origin = route.getOrigin();
-        Airport destination = route.getDestination();
-        Map<String, String> properties = new LinkedHashMap<>();
-        properties.put("routeId", route.getRouteId().id());
-        properties.put("origin", origin.getIataCode().code());
-        properties.put("destination", destination.getIataCode().code());
-        properties.put("status", route.getStatus().name());
-
-        return new GeoJsonFeature(
-                properties,
-                new GeoJsonLineString(List.of(
-                        List.of(origin.getCoordinates().longitude(), origin.getCoordinates().latitude()),
-                        List.of(destination.getCoordinates().longitude(), destination.getCoordinates().latitude())
-                ))
-        );
-    }
-
-    private record GeoJsonFeatureCollection(
-            String type,
-            List<GeoJsonFeature> features
-    ) {
-        private GeoJsonFeatureCollection(List<GeoJsonFeature> features) {
-            this("FeatureCollection", features);
-        }
-    }
-
-    private record GeoJsonFeature(
-            String type,
-            Map<String, String> properties,
-            GeoJsonLineString geometry
-    ) {
-        private GeoJsonFeature(Map<String, String> properties, GeoJsonLineString geometry) {
-            this("Feature", properties, geometry);
-        }
-    }
-
-    private record GeoJsonLineString(
-            String type,
-            List<List<Double>> coordinates
-    ) {
-        private GeoJsonLineString(List<List<Double>> coordinates) {
-            this("LineString", coordinates);
-        }
     }
 }
