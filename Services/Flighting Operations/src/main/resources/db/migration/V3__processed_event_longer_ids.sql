@@ -1,0 +1,1 @@
+ALTER TABLE fo_command.processed_event ALTER COLUMN event_id SET DATA TYPE VARCHAR(100);
