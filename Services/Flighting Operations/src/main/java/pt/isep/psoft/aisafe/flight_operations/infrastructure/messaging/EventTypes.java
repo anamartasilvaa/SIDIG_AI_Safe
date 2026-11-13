@@ -1,4 +1,4 @@
-package pt.isep.psoft.aisafe.flight_operations.messaging;
+package pt.isep.psoft.aisafe.flight_operations.infrastructure.messaging;
 
 public final class EventTypes {
 

@@ -1,4 +1,4 @@
-package pt.isep.psoft.aisafe.flight_operations.messaging.outbox;
+package pt.isep.psoft.aisafe.flight_operations.infrastructure.messaging.inbound.outbox;
 
 import jakarta.persistence.*;
 

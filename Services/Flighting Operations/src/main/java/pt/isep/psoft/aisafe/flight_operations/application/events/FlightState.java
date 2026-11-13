@@ -1,4 +1,4 @@
-package pt.isep.psoft.aisafe.flight_operations.messaging;
+package pt.isep.psoft.aisafe.flight_operations.application.events;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import pt.isep.psoft.aisafe.flight_operations.domain.ScheduledFlight;

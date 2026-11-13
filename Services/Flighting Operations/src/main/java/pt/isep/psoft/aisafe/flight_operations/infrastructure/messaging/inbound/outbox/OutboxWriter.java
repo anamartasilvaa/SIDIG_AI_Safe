@@ -1,4 +1,4 @@
-package pt.isep.psoft.aisafe.flight_operations.messaging.outbox;
+package pt.isep.psoft.aisafe.flight_operations.infrastructure.messaging.inbound.outbox;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -6,8 +6,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
-import pt.isep.psoft.aisafe.flight_operations.messaging.EventTypes;
-import pt.isep.psoft.aisafe.flight_operations.messaging.IntegrationEvent;
+import pt.isep.psoft.aisafe.flight_operations.infrastructure.messaging.EventTypes;
+import pt.isep.psoft.aisafe.flight_operations.infrastructure.messaging.IntegrationEvent;
 
 import java.time.Clock;
 import java.util.UUID;

@@ -6,7 +6,7 @@ import org.springframework.amqp.core.TopicExchange;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableScheduling;
-import pt.isep.psoft.aisafe.flight_operations.messaging.EventTypes;
+import pt.isep.psoft.aisafe.flight_operations.infrastructure.messaging.EventTypes;
 
 import java.time.Clock;
 

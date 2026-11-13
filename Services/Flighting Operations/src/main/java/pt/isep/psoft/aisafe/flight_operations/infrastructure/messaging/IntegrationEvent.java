@@ -1,4 +1,4 @@
-package pt.isep.psoft.aisafe.flight_operations.messaging;
+package pt.isep.psoft.aisafe.flight_operations.infrastructure.messaging;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.JsonNode;
