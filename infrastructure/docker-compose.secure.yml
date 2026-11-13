@@ -108,6 +108,25 @@ services:
       keycloak-db: {condition: service_healthy}
       keycloak-1: {condition: service_started}
 
+  # ------------------------- Message broker (AMQP) -------------------------
+  rabbitmq:
+    image: rabbitmq:3-management
+    restart: unless-stopped
+    networks: [backend, edge]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-aisafe}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-aisafe-mq}
+    ports:
+      # so a consola de gestao, apenas em localhost; o AMQP (5672) fica interno
+      - "127.0.0.1:15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+
   # ------------------------- Aircraft -------------------------
   aircraft-1:
     <<: *service
@@ -183,9 +202,15 @@ services:
       SERVER_SSL_KEY_ALIAS: aisafe-key
       PEER_URLS: https://airports-routes-2:8443
       PEER_NODE_ID: airports-routes-1
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: "5672"
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-aisafe}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-aisafe-mq}
       APP_SECURITY_JWT_JWK_SET_URI: http://keycloak:8180/realms/aisafe/protocol/openid-connect/certs
       APP_SECURITY_JWT_ISSUER: http://localhost:8180/realms/aisafe
       APP_SECURITY_JWT_ACCEPT_DEV_TOKENS: "true"
+    depends_on:
+      rabbitmq: {condition: service_healthy}
     healthcheck:
       test: ["CMD", "curl", "--silent", "--insecure", "--output", "/dev/null", "https://localhost:8443/actuator/health"]
       interval: 10s
@@ -207,10 +232,16 @@ services:
       SERVER_SSL_KEY_ALIAS: aisafe-key
       PEER_URLS: https://airports-routes-1:8443
       PEER_NODE_ID: airports-routes-2
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: "5672"
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-aisafe}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-aisafe-mq}
       APP_SECURITY_JWT_JWK_SET_URI: http://keycloak:8180/realms/aisafe/protocol/openid-connect/certs
       APP_SECURITY_JWT_ISSUER: http://localhost:8180/realms/aisafe
       APP_SECURITY_JWT_ACCEPT_DEV_TOKENS: "true"
 
+    depends_on:
+      rabbitmq: {condition: service_healthy}
     healthcheck:
       test: ["CMD", "curl", "--silent", "--insecure", "--output", "/dev/null", "https://localhost:8443/actuator/health"]
       interval: 10s
