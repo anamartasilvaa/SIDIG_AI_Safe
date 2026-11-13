@@ -1,0 +1,73 @@
+@startuml sd-event-propagation
+skinparam style strictuml
+autonumber
+title SD - Event propagation: outbox -> RabbitMQ -> projections on every replica
+
+box "FO-1 (origin)" #F4F7FF
+participant "OutboxRelay" as Relay
+database "FO-1 DB" as DB1
+participant "FlightEventListener\n(fo.flights.fo-1)" as L1
+end box
+box "RabbitMQ cluster (3 nodes)" #FFF8E8
+participant "flights.events\n(topic)" as EX
+queue "fo.flights.fo-1\n(quorum)" as Q1
+queue "fo.flights.fo-2\n(quorum)" as Q2
+queue "fo.dead-letter" as DLQ
+end box
+box "FO-2" #F4FFF4
+participant "FlightEventListener\n(fo.flights.fo-2)" as L2
+participant "IdempotencyGuard" as Idem
+participant "Projectors +\nConflictResolver" as Proj
+database "FO-2 DB" as DB2
+end box
+
+== 1. Publication (at-least-once) ==
+loop every 500 ms (and right after each commit)
+  Relay -> DB1 : SELECT outbox_event WHERE sent_at IS NULL\nORDER BY created_at LIMIT 100
+  DB1 --> Relay : pending events
+  Relay -> EX : basicPublish(persistent, mandatory,\nrouting key flight.scheduled)
+  EX -> Q1 : copy (flight.#)
+  EX -> Q2 : copy (flight.#)
+  note over Q1, Q2 : quorum queues: the message is written\nto a MAJORITY of nodes (2 of 3) before the confirm
+  EX --> Relay : publisher confirm (ack)
+  alt confirm received
+    Relay -> DB1 : UPDATE outbox_event SET sent_at = now()
+  else nack / timeout / connection lost / message returned
+    Relay -> Relay : keep the row; retry with exponential backoff\n(the client reconnects to another node)
+    note right : a crash between publish and UPDATE\nresends the event -> duplicates are\nexpected and handled by the consumers
+  end
+end
+
+== 2. Consumption on FO-2 (manual ack, prefetch 20) ==
+Q2 -> L2 : deliver(event)
+activate L2
+L2 -> DB2 : BEGIN
+L2 -> Idem : INSERT processed_event(consumer = "fo.flights", eventId)
+alt (consumer, eventId) already processed (duplicate)
+  Idem --> L2 : unique violation
+  L2 -> DB2 : ROLLBACK
+  L2 -> Q2 : basicAck (discard)
+else first time
+  L2 -> Proj : apply(event)
+  Proj -> DB2 : command schema: upsert flight if event.revision > local.revision\n(tie: most recent lastModifiedAt)
+  note right : events carry the FULL flight state,\nso an out-of-order or old event can\nnever overwrite newer data
+  Proj -> DB2 : query schema: FlightView, RouteUtilizationView,\nAircraftScheduleView, AircraftMoodView
+  Proj -> Proj : ConflictResolver.check(aircraft, slot)\n(see sd-conflict-compensation)
+  L2 -> DB2 : COMMIT
+  L2 -> Q2 : basicAck
+  note right : ack only AFTER the commit: a crash before\nthe ack causes a redelivery, never a loss
+end
+deactivate L2
+
+alt processing fails (bug, DB down)
+  L2 -> Q2 : basicNack(requeue = true)
+  Q2 -> L2 : redelivery (x-delivery-count + 1)
+  Q2 -> DLQ : after 5 deliveries (delivery-limit, dead-letter exchange fo.dlx)
+  note right of DLQ : poison message isolated:\nthe queue keeps flowing;\nalert + manual replay
+end
+
+== 3. Same path on the origin replica ==
+Q1 -> L1 : deliver(event)
+L1 -> DB1 : processed_event + update ONLY the query schema\n(command schema already has revision 1)
+L1 -> Q1 : basicAck
+@enduml

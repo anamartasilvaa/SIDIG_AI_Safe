@@ -1,0 +1,77 @@
+@startuml messaging-topology-flight-operations
+skinparam shadowing false
+skinparam defaultTextAlignment center
+skinparam rectangle {
+  RoundCorner 8
+}
+left to right direction
+title Flight Operations - AMQP topology (RabbitMQ cluster, 3 nodes, quorum queues)
+
+package "Publishers" {
+  rectangle "FO-1 / FO-2\nOutboxRelay" as foPub #DDEBFF
+  rectangle "Aircraft-1 / Aircraft-2\nOutbox" as acPub #EEEEEE
+  rectangle "Airports-Routes-1 / -2\nOutbox" as arPub #EEEEEE
+}
+
+package "RabbitMQ cluster (rabbitmq-1, rabbitmq-2, rabbitmq-3)" {
+  collections "flights.events\n<<topic exchange>>" as exF #FFF4D6
+  collections "aircraft.events\n<<topic exchange>>" as exA #FFF4D6
+  collections "routes.events\n<<topic exchange>>" as exR #FFF4D6
+  collections "fo.dlx\n<<fanout exchange>>" as dlx #FFE0E0
+
+  queue "fo.flights.fo-1\n<<quorum>>" as qF1
+  queue "fo.flights.fo-2\n<<quorum>>" as qF2
+  queue "fo.aircraft.fo-1\n<<quorum>>" as qA1
+  queue "fo.aircraft.fo-2\n<<quorum>>" as qA2
+  queue "fo.routes.fo-1\n<<quorum>>" as qR1
+  queue "fo.routes.fo-2\n<<quorum>>" as qR2
+  queue "fo.grounding\n<<quorum, shared>>" as qG
+  queue "fo.dead-letter\n<<quorum>>" as qDL
+}
+
+package "Consumers" {
+  rectangle "FO-1\nFlightEventListener\nReferenceDataListener" as c1 #DDEBFF
+  rectangle "FO-2\nFlightEventListener\nReferenceDataListener" as c2 #DDEBFF
+  rectangle "FO-1 or FO-2\nGroundingHandler\n(competing consumers)" as cg #DDEBFF
+  rectangle "Other services\n(e.g. Aircraft: flights per aircraft)" as other #EEEEEE
+}
+
+foPub --> exF : flight.scheduled\nflight.status-changed\nflight.reassigned\nfo.grounding.requested
+acPub --> exA : aircraft.registered\naircraft.status-changed
+arPub --> exR : route.created\nroute.updated\nroute.deactivated
+
+exF --> qF1 : flight.#
+exF --> qF2 : flight.#
+exF --> other : flight.#\n(their own queues)
+exA --> qA1 : aircraft.#
+exA --> qA2 : aircraft.#
+exA --> qG : aircraft.status-changed
+exF --> qG : fo.grounding.requested
+exR --> qR1 : route.#
+exR --> qR2 : route.#
+
+qF1 --> c1
+qA1 --> c1
+qR1 --> c1
+qF2 --> c2
+qA2 --> c2
+qR2 --> c2
+qG --> cg
+
+qF1 ..> dlx : rejected after\n5 deliveries
+qG ..> dlx
+dlx --> qDL
+
+note bottom of exF
+  Event envelope (JSON):
+  eventId (UUID), type, version, occurredAt,
+  idempotency key per consumer: (consumer, eventId)
+  aggregateId, revision, sourceInstance, correlationId, payload
+  Persistent messages; publisher confirms; manual ack after commit.
+end note
+
+note bottom of qG
+  One queue per replica = every replica receives every event (pub/sub, multicast).
+  Shared fo.grounding = exactly one replica reassigns the flights (work queue).
+end note
+@enduml

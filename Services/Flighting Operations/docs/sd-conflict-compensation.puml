@@ -1,0 +1,55 @@
+@startuml sd-conflict-compensation
+skinparam style strictuml
+autonumber
+title SD - Conflict created during a partition and deterministic compensation
+
+actor "ATCC A" as A
+actor "ATCC B" as B
+box "FO-1" #F4F7FF
+participant "FO-1" as F1
+database "FO-1 DB" as D1
+end box
+participant "RabbitMQ\nflights.events" as MQ
+box "FO-2" #F4FFF4
+participant "FO-2" as F2
+database "FO-2 DB" as D2
+end box
+
+== Events between FO-1 and FO-2 delayed (partition or broker unreachable) ==
+A -> F1 : POST flight X: CS-TTA 10:00
+F1 -> D1 : no local conflict -> commit X + outbox
+F1 --> A : 201
+B -> F2 : POST flight Y: CS-TTA 11:00
+F2 -> D2 : X not received yet -> commit Y + outbox
+F2 --> B : 201
+note over F1, F2 : both accepted (AP): the system stays available during the partition
+
+== Partition heals: the outboxes are delivered ==
+F1 -> MQ : FlightScheduled(X)
+F2 -> MQ : FlightScheduled(Y)
+MQ -> F2 : X
+F2 -> F2 : ConflictResolver: X and Y overlap (< 2 h, same aircraft)
+MQ -> F1 : Y
+F1 -> F1 : ConflictResolver: same check
+
+note over F1, F2
+  Deterministic winner, computed identically on every replica:
+  the flight with the smallest (createdAt, flightId) wins -> X wins, Y loses.
+  No coordinator, no vote, no extra message needed to agree.
+end note
+
+par
+  F1 -> D1 : Y.changeStatus(CANCELED, reason = SCHEDULE_CONFLICT_WITH X)\nrevision r+1 + outbox
+else
+  F2 -> D2 : same compensation, same target state, revision r+1 + outbox
+end
+F1 -> MQ : FlightStatusChanged(Y, CANCELED)
+F2 -> MQ : FlightStatusChanged(Y, CANCELED)
+MQ -> F1 : duplicates converge (same state; LWW by revision, then lastModifiedAt)
+MQ -> F2
+note over F1, F2
+  Result: Y is CANCELED everywhere with a visible reason; AUDIT "COMPENSATION";
+  route utilization and aircraft mood are recomputed by the projectors.
+  Works even if the replica that created Y never comes back.
+end note
+@enduml

@@ -1,0 +1,43 @@
+@startuml sd-unicorns
+skinparam style strictuml
+autonumber
+title SD - GET /api/v2/unicorns (aircraft mood): a pure CQRS query
+
+participant "Aircraft / FO\nevents" as EV
+box "Any FO replica" #F4FFF4
+participant "MoodProjector" as MP
+database "query schema\naircraft_mood_view" as DB
+participant "UnicornQueryController" as UC
+end box
+participant "API Gateway" as GW
+actor "User / Postman" as U
+participant "Postman mock server\n(contract)" as Mock
+
+== Write path: no command exists for the mood ==
+EV -> MP : AircraftRegistered / AircraftStatusChanged /\nFlightScheduled / FlightStatusChanged / FlightReassigned
+MP -> MP : recompute mood of the affected aircraft
+note right
+  SLEEPING : aircraft not ACTIVE
+  GRUMPY   : >= 2 flights DELAYED or CANCELED in the last 7 days
+  BUSY     : >= 3 flights in the next 24 h
+  HAPPY    : otherwise
+end note
+MP -> DB : UPSERT aircraft_mood_view (mood, reason, counters, updatedAt)
+
+== Read path ==
+U -> GW : GET /api/v2/unicorns  (Bearer JWT)
+GW -> UC : routed to FO (round-robin)
+UC -> DB : SELECT * FROM aircraft_mood_view
+UC --> GW : 200 [{registrationNumber, mood, reason, updatedAt}]
+GW --> U : 200 application/json
+
+== Contract test in Postman ==
+U -> Mock : GET {{mockUrl}}/api/v2/unicorns
+Mock --> U : example response (same JSON schema)
+U -> U : the same schema test runs against the mock and the real endpoint
+
+note over EV, Mock
+  CQRS: the mood is never written by a client; it is a read model derived from events.
+  v2: a new projection exposed without changing the v1 contract (URI versioning).
+end note
+@enduml

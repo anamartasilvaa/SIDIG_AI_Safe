@@ -1,69 +1,79 @@
 @startuml c4-component-flight-operations
 !include <C4/C4_Component>
 LAYOUT_TOP_DOWN()
+skinparam wrapWidth 220
 
-title Flight Operations Service - C4 Level 3 (Components)
+title Flight Operations Service - C4 Level 3 (Components) - CQRS + AMQP
 
 Person(client, "AISafe User", "ATCC, Backoffice, Admin")
-Container_Ext(gateway, "API Gateway", "NGINX, HTTPS :8443 (:8444 in Mode B)", "Routes in round-robin; blocks /internal/...")
-Container_Ext(keycloak, "Keycloak", "aisafe realm", "Issues RS256 JWT; publishes public key (JWKS)")
-Container_Ext(peers, "Other Flight Operations replicas", "Spring Boot", "8081-8083 (Mode A) / 2 replicas (Mode B)")
-Container_Ext(ar, "Airports & Routes Service", "Spring Boot", "8091-8093 (Mode A) / 2 replicas (Mode B); validates the same JWT")
-Container_Ext(am, "Aircraft Service", "Spring Boot", "8071-8073 (Mode A) / 2 replicas (Mode B); also calls /internal/.../grounding")
-ContainerDb(db, "Flight Ops DB", "In-memory H2", "One DB per replica")
+Container_Ext(gateway, "API Gateways (x2)", "NGINX, HTTPS :8443 / :8444", "Round-robin between FO replicas; blocks /internal/...")
+Container_Ext(keycloak, "Keycloak cluster (x2)", "aisafe realm", "Issues RS256 JWT; JWKS public key")
+Container_Ext(broker, "RabbitMQ cluster (3 nodes)", "AMQP 0-9-1 over TLS, quorum queues", "Exchanges flights.events, aircraft.events, routes.events")
+Container_Ext(peer, "Other FO replica", "Spring Boot", "Same components, own database")
+ContainerDb(db, "FO database (one per replica)", "PostgreSQL", "Schema command: flights, references, outbox, processed events. Schema query: denormalised views.")
 
 Container_Boundary(fo, "Flight Operations Service (one replica)") {
-    Component(jwt, "JwtAuthenticationFilter + TokenDecoders", "OncePerRequestFilter + NimbusJwtDecoder", "Validates JWT: RS256 from Keycloak (JWKS, iss, exp) or development HS256; reads user and roles.")
-    Component(security, "SecurityConfig", "Spring Security, stateless", "RBAC per endpoint and method. Deny by default.")
-    Component(problems, "SecurityProblemHandler", "EntryPoint + AccessDeniedHandler", "401 / 403 in ProblemDetail; AUDIT DENIED.")
-    Component(filter, "ApiKeyFilter", "OncePerRequestFilter", "Requires X-API-Key on /internal/...; AUDIT ALLOWED/DENIED.")
-    Component(pub, "ScheduledFlightController", "@RestController /api/scheduled-flights", "Public API: US212, US213, US205, US229, change state. HATEOAS.")
-    Component(internal, "InternalScheduledFlightController", "@RestController /internal/scheduled-flights", "Local reads, local state, receive copies (/replica), grounding. Never forwards.")
+
+    Component(sec, "JwtAuthenticationFilter + SecurityConfig", "Spring Security, stateless", "Validates the RS256 JWT (JWKS, iss, exp); RBAC per endpoint; deny by default; AUDIT DENIED.")
+
+    Boundary(cmd, "Command side (write model)") {
+        Component(cmdCtrl, "FlightCommandController", "@RestController /api/scheduled-flights", "POST (US212), PATCH /{id}/status. Returns 201/200 after the local commit.")
+        Component(cmdSvc, "FlightCommandService", "@Service, @Transactional", "Loads the aggregate, applies the policy, saves the aggregate and the outbox event in ONE transaction.")
+        Component(policy, "FlightSchedulingPolicy", "Domain service", "Active route, ACTIVE aircraft, range, capacity, 2 h conflicts.")
+        Component(agg, "ScheduledFlight", "Aggregate root", "State machine, revision, reassignAircraft(), raises domain events.")
+        Component(grounding, "GroundingHandler", "@RabbitListener fo.grounding (competing consumers)", "On AircraftStatusChanged (not ACTIVE): picks a free, compatible ACTIVE aircraft from the local reference data.")
+        Component(conflict, "ConflictResolver", "@Component", "Deterministic rule for conflicts created during a partition: every replica elects the same winner; the losing flight is cancelled (idempotent compensation).")
+    }
+
+    Boundary(msg, "Messaging (AMQP)") {
+        Component(outbox, "OutboxRelay", "@Scheduled + RabbitTemplate (publisher confirms)", "Publishes pending outbox rows to flights.events; marks them as sent only after the broker confirms.")
+        Component(flightL, "FlightEventListener", "@RabbitListener fo.flights.<instance>", "Receives FlightScheduled / StatusChanged / Reassigned from ALL replicas (own included).")
+        Component(refL, "ReferenceDataListener", "@RabbitListener fo.aircraft.<instance>, fo.routes.<instance>", "Receives aircraft and route events from the other services.")
+        Component(idem, "IdempotencyGuard", "processed_event table", "Ignores duplicated eventIds (at-least-once delivery).")
+    }
+
+    Boundary(qry, "Query side (read model)") {
+        Component(qryCtrl, "FlightQueryController", "@RestController /api/scheduled-flights", "GET /{id}, /aircraft/{reg} (US213), /availability (US205), /route-utilization (US229).")
+        Component(unicorn, "UnicornQueryController", "@RestController /api/v2/unicorns", "Mood status of each aircraft (read-only).")
+        Component(qrySvc, "FlightQueryService", "@Service, read-only", "Reads only the denormalised views; no business rules, no remote calls.")
+        Component(proj, "Projectors", "FlightProjector, ReferenceProjector, MoodProjector", "Update the views and the command-side replicas (last-writer-wins by revision).")
+    }
+
+    Component(boot, "SnapshotBootstrapper", "ApplicationRunner", "Only for an EMPTY database: copies a snapshot from the peer replica before consuming the queues.")
     Component(audit, "AuditLog", "logger AUDIT", "Who created / changed each flight.")
-    Component(handler, "GlobalExceptionHandler", "@RestControllerAdvice", "400 / 404 / 409 / 502 / 503 in ProblemDetail.")
-    Component(service, "ScheduledFlightService", "@Service", "Local vs distributed, aggregation, AP/CP, aircraft lock, apply copies, sync on startup, groundAircraft (reassign flights).")
-    Component(policy, "FlightSchedulingPolicy", "Domain Service", "Active route, ACTIVE aircraft, range, capacity, 2h conflicts.")
-    Component(domain, "ScheduledFlight + Value Objects", "JPA Aggregate", "FlightId, RouteId, RegistrationNumber, state machine, revision, reassignAircraft.")
-    Component(validator, "FlightAssignmentValidator", "@Component + ACL", "Fetches route and aircraft (RouteInfo / AircraftInfo).")
-    Component(replicator, "FlightReplicator", "@Component + scheduler", "Replication with acknowledgement from at least one peer before replying; the rest in the background; pending copies, resend every 5s.")
-    Component(peerClient, "PeerClient", "@Component + thread pool", "findFirst, collectAll, forwardPut in parallel; partial responses.")
-    Component(replicated, "ReplicatedServiceClient", "routesClient, aircraftClient", "Round-robin + failover between replicas of another service.")
-    Component(caller, "RemoteCaller + CircuitBreaker", "@Component", "Timeouts 1s / 2s, retry with backoff, circuit breaker per destination.")
-    Component(http, "HttpClientConfig", "RestTemplate (HTTPS + truststore)", "Sends X-API-Key and X-Origin-Instance; forwards the user's JWT.")
-    Component(repo, "ScheduledFlightRepository", "Spring Data JPA", "Local DB.")
 }
 
-Rel(client, gateway, "Requests with Bearer JWT", "HTTPS")
-Rel(client, keycloak, "Login (through gateway)", "OpenID Connect")
-Rel(gateway, jwt, "Forwards request", "HTTPS")
-Rel(jwt, keycloak, "Fetches public key", "JWKS")
-Rel(jwt, security, "User + roles")
-Rel(security, pub, "If role has permission")
-Rel(security, problems, "401 / 403")
-Rel(peers, filter, "Internal requests", "HTTPS + X-API-Key")
-Rel(am, filter, "Grounding: reassign flights of a grounded aircraft", "HTTPS POST + X-API-Key")
-Rel(filter, internal, "If key is valid")
+Rel(client, gateway, "REST + Bearer JWT", "HTTPS")
+Rel(gateway, sec, "Forwards", "HTTPS")
+Rel(sec, keycloak, "Fetches public key", "JWKS")
+Rel(sec, cmdCtrl, "POST / PATCH")
+Rel(sec, qryCtrl, "GET")
+Rel(sec, unicorn, "GET /api/v2/unicorns")
 
-Rel(pub, service, "Uses")
-Rel(pub, audit, "CREATE / UPDATE_STATUS")
-Rel(internal, service, "Local methods, applyReplica and groundAircraft")
-Rel(service, validator, "Validates before creating")
-Rel(validator, policy, "Delegates rules")
-Rel(service, policy, "Detects conflicts")
-Rel(service, domain, "Creates / updates / merges copies")
-Rel(service, repo, "Uses")
-Rel(service, replicator, "Replicates after saving (waits for one peer)")
-Rel(service, peerClient, "Forwarding, aggregation and sync")
-Rel(validator, replicated, "Queries route / aircraft")
+Rel(cmdCtrl, cmdSvc, "Commands")
+Rel(cmdCtrl, audit, "CREATE / UPDATE_STATUS")
+Rel(cmdSvc, agg, "Creates / changes")
+Rel(cmdSvc, policy, "Validates")
+Rel(cmdSvc, db, "Aggregate + outbox row (1 transaction)", "JDBC")
+Rel(grounding, cmdSvc, "reassignAircraft")
+Rel(conflict, cmdSvc, "cancel (compensation)")
 
-Rel(replicator, caller, "PUT /replica")
-Rel(peerClient, caller, "Uses")
-Rel(replicated, caller, "Uses")
-Rel(caller, http, "Uses")
-Rel(http, peers, "/internal/scheduled-flights/...", "HTTPS + X-API-Key")
-Rel(http, ar, "GET /api/routes/{id}", "HTTPS + Bearer JWT")
-Rel(http, am, "GET /api/aircraft/{reg}", "HTTPS + Bearer JWT")
-Rel(repo, db, "Reads/Writes", "JDBC")
-Rel_L(handler, pub, "Translates exceptions")
+Rel(outbox, db, "Reads pending rows", "JDBC")
+Rel(outbox, broker, "Publishes flight.*", "AMQPS")
+Rel(broker, flightL, "fo.flights.<instance>", "AMQPS")
+Rel(broker, refL, "fo.aircraft.<instance>, fo.routes.<instance>", "AMQPS")
+Rel(broker, grounding, "fo.grounding", "AMQPS")
+Rel(flightL, idem, "Checks eventId")
+Rel(refL, idem, "Checks eventId")
+Rel(flightL, proj, "Applies")
+Rel(refL, proj, "Applies")
+Rel(flightL, conflict, "Possible conflict")
+Rel(proj, db, "Updates views + replicas", "JDBC")
 
+Rel(qryCtrl, qrySvc, "Queries")
+Rel(unicorn, qrySvc, "Queries")
+Rel(qrySvc, db, "Reads views", "JDBC")
+
+Rel(boot, peer, "GET /internal/snapshot", "HTTPS + X-API-Key")
+Rel(peer, broker, "Publishes flight.*", "AMQPS")
 @enduml

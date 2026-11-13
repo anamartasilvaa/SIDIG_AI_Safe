@@ -1,0 +1,69 @@
+@startuml physical-view-flight-operations
+skinparam shadowing false
+title Flight Operations - physical view (Mode B, Docker) - no single point of failure
+
+node "Docker host" {
+  node "edge network" {
+    node "gateway-1\nnginx :8443" as G1
+    node "gateway-2\nnginx :8444" as G2
+  }
+  node "backend network (internal, no Internet)" {
+    node "keycloak-1" as K1
+    node "keycloak-2" as K2
+    database "keycloak-db-primary\nPostgreSQL (repmgr)" as KDB1
+    database "keycloak-db-standby\nPostgreSQL (repmgr)" as KDB2
+
+    node "rabbitmq-1" as RB1
+    node "rabbitmq-2" as RB2
+    node "rabbitmq-3" as RB3
+
+    node "flight-operations-1\nSpring Boot :8443" as FO1
+    database "fo-db-1\nPostgreSQL\n(command + query)" as FDB1
+    node "flight-operations-2\nSpring Boot :8443" as FO2
+    database "fo-db-2\nPostgreSQL\n(command + query)" as FDB2
+
+    node "aircraft-1 / aircraft-2\n(+ own DBs)" as AC
+    node "airports-routes-1 / -2\n(+ own DBs)" as AR
+    node "maintenance-1 / -2\n(+ own DBs)" as MT
+  }
+}
+
+actor "Client" as C
+C --> G1 : HTTPS
+C --> G2 : HTTPS (failover)
+G1 --> FO1 : HTTPS
+G1 --> FO2 : HTTPS
+G2 --> FO1
+G2 --> FO2
+G1 --> K1
+G1 --> K2
+K1 --> KDB1 : JDBC (multi-host URL)
+K2 --> KDB1
+KDB1 ..> KDB2 : streaming replication\n+ automatic failover
+
+FO1 --> FDB1 : JDBC
+FO2 --> FDB2 : JDBC
+FO1 --> RB1 : AMQPS (any of 3)
+FO2 --> RB2 : AMQPS (any of 3)
+RB1 -- RB2
+RB2 -- RB3
+RB1 -- RB3
+AC --> RB3 : AMQPS
+AR --> RB3
+MT --> RB3
+
+note bottom of FDB1
+  Database-per-Service: one database instance per replica.
+  The FO replica and its database fail together;
+  the other pair (FO-2 + fo-db-2) holds a full copy.
+end note
+note right of RB3
+  3 nodes + quorum queues:
+  survives the loss of any 1 node.
+end note
+note top of G1
+  Remaining limitation: a single Docker host (one laptop).
+  Production: the same compose as a Swarm / Kubernetes
+  stack spread over several hosts.
+end note
+@enduml

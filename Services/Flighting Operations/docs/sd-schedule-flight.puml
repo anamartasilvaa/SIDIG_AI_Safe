@@ -1,97 +1,80 @@
 @startuml sd-schedule-flight
 skinparam style strictuml
+skinparam sequenceMessageAlign center
 autonumber
-title SD - End-to-end flight scheduling (Keycloak + gateway + validation + replication)
+title SD - Schedule a flight (command side + transactional outbox)
 
 actor "ATCC" as User
-participant "API Gateway\n(NGINX :8443)" as GW
-participant "Keycloak\n(aisafe realm)" as KC
-box "FO-2 (replica chosen by gateway)" #F4F7FF
+participant "API Gateway\n(:8443 or :8444)" as GW
+box "FO-1 (replica chosen by the gateway)" #F4F7FF
 participant "JwtAuthenticationFilter\n+ SecurityConfig" as Sec
-participant "ScheduledFlightController" as Ctrl
-participant "ScheduledFlightService" as Svc
-participant "FlightAssignmentValidator" as Val
+participant "FlightCommandController" as Ctrl
+participant "FlightCommandService" as Svc
 participant "FlightSchedulingPolicy" as Policy
-participant "PeerClient" as Peers
-participant "ScheduledFlightRepository" as Repo
-participant "FlightReplicator" as Rep
+participant "ScheduledFlight" as Agg
+database "FO-1 DB\n(schema command)" as DB
 end box
-participant "Airports & Routes" as AR
-participant "Aircraft" as AC
-participant "FO-1 / FO-3\n/internal" as FO
 
-== 0. Authentication ==
-User -> GW : POST /realms/aisafe/.../token (user, password)
-GW -> KC : forwards
-KC --> GW : access_token (JWT RS256, roles=[ATCC])
-GW --> User : 200 access_token
-
-== 1. Request through gateway ==
-User -> GW : POST /api/scheduled-flights\nAuthorization: Bearer <JWT>
-GW -> Sec : HTTPS (Host :8443, X-Request-Id)
+User -> GW : POST /api/scheduled-flights\n{routeId, registrationNumber, scheduledDateTime}\nAuthorization: Bearer <JWT>
+GW -> Sec : HTTPS (round-robin; next replica if this one fails)
 activate Sec
-Sec -> Sec : validates signature (Keycloak JWKS public key),\niss and exp; reads user and roles
-alt token missing / invalid / forged / expired
+Sec -> Sec : RS256 signature (cached JWKS), iss, exp, roles
+alt token missing / invalid / expired
   Sec --> GW : 401 ProblemDetail (AUDIT DENIED 401)
   GW --> User : 401
-else role without permission (e.g., BACKOFFICE)
+else role not ATCC / ADMIN
   Sec --> GW : 403 ProblemDetail (AUDIT DENIED 403)
   GW --> User : 403
-end
-Sec -> Ctrl : ATCC authorized
+else authorised
+Sec -> Ctrl : schedule request
 deactivate Sec
 activate Ctrl
-Ctrl -> Svc : scheduleFlight(dto)
+Ctrl -> Svc : schedule(command, correlationId = X-Request-Id)
 activate Svc
 
-== 2. Aggregate invariants (no remote calls) ==
-Svc -> Svc : new ScheduledFlight(route, aircraft, date, now)
-note right : date in the past / blank fields -> 400
-Svc -> Svc : lock(registration)
+Svc -> Agg : ScheduledFlight.schedule(route, aircraft, when, now, "fo-1")
+note right : blank fields / date in the past -> 400\n(no I/O yet)
 
-== 3. Validation in other services (with user's JWT) ==
-Svc -> Val : validate(routeId, registration)
-activate Val
-Val -> AR : GET /api/routes/{id} + Bearer JWT
-AR --> Val : 200 RouteInfo (status, minimumCapacity)
-Val -> AC : GET /api/aircraft/{reg} + Bearer JWT
-AC --> Val : 200 AircraftInfo (status, range, seats)
-Val -> Policy : checkAssignment(route, aircraft)
-Policy --> Val : ok
-Val --> Svc : ok
-deactivate Val
+== One local ACID transaction (no remote calls) ==
+Svc -> DB : BEGIN
+Svc -> DB : SELECT aircraft_ref ... FOR UPDATE
+note right : row lock per aircraft: concurrent requests AND\nthe FlightEventListener applying flights of the\nsame aircraft are serialised on this replica
+DB --> Svc : AircraftRef (status, range, seats)
+Svc -> DB : SELECT route_ref WHERE routeId = ?
+DB --> Svc : RouteRef (active, distance, minimumCapacity)
+Svc -> DB : SELECT flights of the aircraft (status occupies aircraft)
+note right : the command store already holds the flights\nof ALL replicas (applied from events),\nso no peer calls are needed
+DB --> Svc : List<FlightSlot>
+Svc -> Policy : checkAssignment(route, aircraft)\nfindConflict(slots, when)
+Policy --> Svc : ok / SchedulingRuleViolation
 
-== 4. Schedule conflicts across all replicas ==
-Svc -> Repo : local flights for the aircraft (already includes replicated ones)
-Repo --> Svc : List<ScheduledFlight>
-Svc -> Peers : collectAll(/internal/.../aircraft/{reg})
-activate Peers
-par in parallel
-  Peers -> FO : GET (X-API-Key)
-  FO --> Peers : List<ScheduledFlightViewDTO>
-end
-Peers --> Svc : AggregatedResult(items, unreachablePeers)
-deactivate Peers
-Svc -> Policy : findConflict(slots, date)
-Policy --> Svc : Optional<FlightSlot>
-
-== 5. Result ==
-alt all valid
-  Svc -> Repo : save(flight) (still inside the aircraft lock)
-  Svc -> Rep : replicateAcknowledged(flight)
-  Svc --> Ctrl : ScheduleResultDTO
-  Ctrl --> GW : 201 Created + Location (https://localhost:8443/...)\n[+ X-Partial-Response-Unreachable-Peers if any peer failed (AP)]
-  GW --> User : 201 (X-Served-By: 127.0.0.1:8082)
-else inactive route, aircraft in maintenance, capacity/range, 2h conflict
+alt route or aircraft unknown in the local references
+  Svc -> DB : ROLLBACK
+  Svc --> Ctrl : unknown reference
+  Ctrl --> GW : 404 (503 while the replica is not ready)
+  GW --> User : 404 / 503
+else rule violated (inactive route, aircraft not ACTIVE,\nrange, capacity, 2 h conflict)
+  Svc -> DB : ROLLBACK
+  Svc --> Ctrl : SchedulingRuleViolation
   Ctrl --> GW : 409 ProblemDetail
   GW --> User : 409
-else CP mode and some peer unresponsive
-  Ctrl --> GW : 503 (cannot guarantee absence of conflicts)
-  GW --> User : 503
-else Airports & Routes or Aircraft completely down
-  Ctrl --> GW : 503 Service Unavailable
-  GW --> User : 503
+else valid
+  Svc -> DB : INSERT scheduled_flight (revision = 1, originInstance = fo-1)
+  Svc -> DB : INSERT outbox_event (FlightScheduled, routingKey = flight.scheduled,\npayload = full flight state, eventId = UUID)
+  Svc -> DB : COMMIT
+  note right : the flight and its event are durable together:\nno "saved but not published" and\nno "published but not saved"
+  Svc --> Ctrl : FlightId
+  Ctrl -> Ctrl : AUDIT "User: atcc.user - Action: CREATE - Target ID: ..."
+  Ctrl --> GW : 201 Created + Location
+  GW --> User : 201
 end
 deactivate Svc
 deactivate Ctrl
+end
+
+note over User, DB
+  The response does NOT wait for the broker or for the other replicas.
+  Publication is done afterwards by the OutboxRelay (see sd-event-propagation).
+  With RabbitMQ, Aircraft or Airports & Routes completely down, scheduling still works (AP).
+end note
 @enduml
