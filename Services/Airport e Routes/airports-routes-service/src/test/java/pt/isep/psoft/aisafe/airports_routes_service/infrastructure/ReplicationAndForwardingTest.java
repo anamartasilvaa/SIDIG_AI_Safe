@@ -14,6 +14,7 @@ import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
+import pt.isep.psoft.aisafe.airports_routes_service.application.AirportQueryService;
 import pt.isep.psoft.aisafe.airports_routes_service.application.AirportService;
 import pt.isep.psoft.aisafe.airports_routes_service.application.AuditService;
 import pt.isep.psoft.aisafe.airports_routes_service.application.ReplicationOutbox;
@@ -26,6 +27,8 @@ import pt.isep.psoft.aisafe.airports_routes_service.domain.Airport;
 import pt.isep.psoft.aisafe.airports_routes_service.domain.AirportType;
 import pt.isep.psoft.aisafe.airports_routes_service.domain.IATACode;
 import pt.isep.psoft.aisafe.airports_routes_service.domain.ReplicationTask;
+import pt.isep.psoft.aisafe.airports_routes_service.readmodel.AirportReadModel;
+import pt.isep.psoft.aisafe.airports_routes_service.readmodel.AirportReadRepository;
 import pt.isep.psoft.aisafe.airports_routes_service.repositories.AirportRepository;
 import pt.isep.psoft.aisafe.airports_routes_service.repositories.ReplicationTaskRepository;
 import pt.isep.psoft.aisafe.airports_routes_service.repositories.RouteHistoryRepository;
@@ -45,6 +48,7 @@ import static org.mockito.Mockito.*;
 class ReplicationAndForwardingTest {
 
     @Mock AirportRepository airportRepository;
+    @Mock AirportReadRepository airportReadRepository;
     @Mock RestTemplate restTemplate;
     @Mock ReplicationOutbox outbox;
     @Mock AuditService auditService;
@@ -56,6 +60,7 @@ class ReplicationAndForwardingTest {
     @Mock PeerTokenService peerTokenService;
 
     private AirportService service;
+    private AirportQueryService queryService;
 
     @BeforeEach
     void setUp() {
@@ -68,27 +73,33 @@ class ReplicationAndForwardingTest {
                 List.of("http://peer"),
                 1
         );
+        queryService = new AirportQueryService(
+                airportReadRepository,
+                restTemplate,
+                new ObjectMapper().findAndRegisterModules(),
+                List.of("http://peer"),
+                1
+        );
     }
 
     @Test
     void doesNotForwardWhenHopLimitIsReached() {
-        when(airportRepository.findByIataCodeString("LIS")).thenReturn(Optional.empty());
+        when(airportReadRepository.findById("LIS")).thenReturn(Optional.empty());
 
-        assertThrows(RuntimeException.class, () -> service.getAirportByIataCode("LIS", 1));
+        assertThrows(RuntimeException.class, () -> queryService.getAirportByIataCode("LIS", 1));
         verifyNoInteractions(restTemplate);
     }
 
     @Test
     void deduplicatesUsingNewestVersion() throws Exception {
-        Airport local = new Airport(
-                new IATACode("LIS"), "Local", "Lisbon", "PT",
-                "Europe/Lisbon", AirportType.INTERNATIONAL,
-                new pt.isep.psoft.aisafe.airports_routes_service.application.Coordinates(1d, 2d)
-        );
-
-        when(airportRepository.findAll()).thenReturn(List.of(local));
-
         ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+        AirportViewDTO localView = new AirportViewDTO("LIS", "Local", "Lisbon", "PT", "Europe/Lisbon",
+                "INTERNATIONAL", "OPERATIONAL", List.of(), List.of(), null, null, null);
+        AirportReadModel local = new AirportReadModel("LIS", "Local", "Lisbon", "PT", "OPERATIONAL",
+                null, null, mapper.writeValueAsString(localView));
+
+        when(airportReadRepository.findAll()).thenReturn(List.of(local));
+
         String body = mapper.writeValueAsString(
                 Map.of("_embedded", Map.of("airports", List.of(
                         new AirportViewDTO("LIS", "Newest", "Lisbon", "PT", "Europe/Lisbon",
@@ -100,7 +111,7 @@ class ReplicationAndForwardingTest {
         when(restTemplate.exchange(anyString(), any(HttpMethod.class), any(), eq(String.class)))
                 .thenReturn(ResponseEntity.ok(body));
 
-        List<AirportViewDTO> results = service.searchAirports(null, null, null);
+        List<AirportViewDTO> results = queryService.searchAirports(null, null, null);
 
         assertEquals(1, results.size());
         assertEquals("Newest", results.get(0).name());
@@ -124,10 +135,10 @@ class ReplicationAndForwardingTest {
 
     @Test
     void serverErrorFromPeerBecomesUnavailable() {
-        when(airportRepository.findByIataCodeString("LIS")).thenReturn(Optional.empty());
+        when(airportReadRepository.findById("LIS")).thenReturn(Optional.empty());
         when(restTemplate.exchange(anyString(), any(HttpMethod.class), any(), eq(String.class)))
                 .thenThrow(HttpServerErrorException.create(HttpStatus.BAD_GATEWAY, "peer", null, null, null));
 
-        assertThrows(ResponseStatusException.class, () -> service.getAirportByIataCode("LIS", 0));
+        assertThrows(ResponseStatusException.class, () -> queryService.getAirportByIataCode("LIS", 0));
     }
 }

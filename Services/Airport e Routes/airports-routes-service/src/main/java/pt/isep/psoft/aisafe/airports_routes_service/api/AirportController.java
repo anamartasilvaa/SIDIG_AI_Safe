@@ -9,6 +9,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import pt.isep.psoft.aisafe.airports_routes_service.util.PartialResultContext;
+import pt.isep.psoft.aisafe.airports_routes_service.application.AirportQueryService;
 import pt.isep.psoft.aisafe.airports_routes_service.application.AirportService;
 import pt.isep.psoft.aisafe.airports_routes_service.application.DTO.*;
 import pt.isep.psoft.aisafe.airports_routes_service.security.PeerReplicationAuthorizer;
@@ -22,10 +23,13 @@ import java.time.Instant;
 public class AirportController {
 
     private final AirportService service;
+    private final AirportQueryService queryService;
     private final PeerReplicationAuthorizer replicationAuthorizer;
 
-    public AirportController(AirportService service, PeerReplicationAuthorizer replicationAuthorizer) {
+    public AirportController(AirportService service, AirportQueryService queryService,
+                             PeerReplicationAuthorizer replicationAuthorizer) {
         this.service = service;
+        this.queryService = queryService;
         this.replicationAuthorizer = replicationAuthorizer;
     }
 
@@ -52,7 +56,7 @@ public class AirportController {
     public ResponseEntity<EntityModel<AirportViewDTO>> getAirport(
             @PathVariable String iataCode,
             @RequestHeader(value = "X-P2P-Hops", defaultValue = "0") int hops) {
-        AirportViewDTO airport = service.getAirportByIataCode(iataCode.toUpperCase(), Math.max(0, hops));
+        AirportViewDTO airport = queryService.getAirportByIataCode(iataCode.toUpperCase(), Math.max(0, hops));
 
         EntityModel<AirportViewDTO> resource = EntityModel.of(airport);
 
@@ -68,7 +72,7 @@ public class AirportController {
             @RequestParam(required = false) String country,
             @RequestHeader(value = "X-P2P-Hops", defaultValue = "0") int hops) {
 
-        List<AirportViewDTO> airports = service.searchAirports(name, city, country, Math.max(0, hops));
+        List<AirportViewDTO> airports = queryService.searchAirports(name, city, country, Math.max(0, hops));
 
         List<EntityModel<AirportViewDTO>> airportResources = airports.stream()
                 .map(dto -> EntityModel.of(dto,
@@ -160,7 +164,7 @@ public class AirportController {
             @RequestParam(defaultValue = "country") String by,
             @RequestHeader(value = "X-P2P-Hops", defaultValue = "0") int hops) {
 
-        Object groupedAirports = service.getAirportsGrouped(by, Math.max(0, hops));
+        Object groupedAirports = queryService.getAirportsGrouped(by, Math.max(0, hops));
 
         if (((java.util.Map<?, ?>) groupedAirports).isEmpty()) {
             return ResponseEntity.noContent().build();

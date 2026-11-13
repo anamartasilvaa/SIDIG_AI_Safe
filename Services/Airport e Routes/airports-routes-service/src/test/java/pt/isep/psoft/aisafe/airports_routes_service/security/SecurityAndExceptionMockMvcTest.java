@@ -7,7 +7,9 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
+import pt.isep.psoft.aisafe.airports_routes_service.application.AirportQueryService;
 import pt.isep.psoft.aisafe.airports_routes_service.application.AirportService;
+import pt.isep.psoft.aisafe.airports_routes_service.application.RouteQueryService;
 import pt.isep.psoft.aisafe.airports_routes_service.application.RouteService;
 import pt.isep.psoft.aisafe.airports_routes_service.application.DTO.AirportViewDTO;
 import pt.isep.psoft.aisafe.airports_routes_service.api.exception.NotFoundException;
@@ -27,7 +29,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class SecurityAndExceptionMockMvcTest {
     @Autowired MockMvc mockMvc;
     @MockitoBean AirportService airportService;
+    @MockitoBean AirportQueryService airportQueryService;
     @MockitoBean RouteService routeService;
+    @MockitoBean RouteQueryService routeQueryService;
 
     @Test
     void rejectsRequestWithoutToken() throws Exception {
@@ -99,7 +103,7 @@ class SecurityAndExceptionMockMvcTest {
 
     @Test
     void mapsNotFoundTo404() throws Exception {
-        when(airportService.getAirportByIataCode(anyString(), anyInt()))
+        when(airportQueryService.getAirportByIataCode(anyString(), anyInt()))
                 .thenThrow(new NotFoundException("missing"));
 
         mockMvc.perform(get("/api/airports/LIS").with(user("atcc").roles("ATCC")))
@@ -130,7 +134,7 @@ class SecurityAndExceptionMockMvcTest {
     }
     @Test
     void mapsPeerFailureTo503() throws Exception {
-        when(airportService.getAirportByIataCode(anyString(), anyInt()))
+        when(airportQueryService.getAirportByIataCode(anyString(), anyInt()))
                 .thenThrow(new org.springframework.web.client.ResourceAccessException("offline"));
 
         mockMvc.perform(get("/api/airports/LIS").with(user("atcc").roles("ATCC")))
@@ -142,7 +146,7 @@ class SecurityAndExceptionMockMvcTest {
     void airportHateoasSelfLinkContainsIata() throws Exception {
         AirportViewDTO dto = new AirportViewDTO("LIS", "Lisbon", "Lisbon", "PT",
                 "Europe/Lisbon", "INTERNATIONAL", "OPERATIONAL", List.of(), List.of(), null, null, null);
-        when(airportService.getAirportByIataCode(eq("LIS"), anyInt())).thenReturn(dto);
+        when(airportQueryService.getAirportByIataCode(eq("LIS"), anyInt())).thenReturn(dto);
 
         mockMvc.perform(get("/api/airports/LIS").with(user("atcc").roles("ATCC")))
                 .andExpect(status().isOk())
@@ -151,7 +155,7 @@ class SecurityAndExceptionMockMvcTest {
 
     @Test
     void airportSearchHateoasSelfLinkContainsSearch() throws Exception {
-        when(airportService.searchAirports(any(), any(), any(), anyInt())).thenReturn(List.of());
+        when(airportQueryService.searchAirports(any(), any(), any(), anyInt())).thenReturn(List.of());
 
         mockMvc.perform(get("/api/airports/search?name=Lisbon").with(user("atcc").roles("ATCC")))
                 .andExpect(status().isOk())
@@ -160,7 +164,7 @@ class SecurityAndExceptionMockMvcTest {
 
     @Test
     void routeHateoasSelfLinkContainsId() throws Exception {
-        when(routeService.getRoute(eq("RT-1"), anyInt()))
+        when(routeQueryService.getRoute(eq("RT-1"), anyInt()))
                 .thenReturn(new pt.isep.psoft.aisafe.airports_routes_service.application.DTO.RouteViewDTO(
                         "RT-1", "LIS", "OPO", "ACTIVE", 100));
 
