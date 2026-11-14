@@ -14,13 +14,16 @@ import org.springframework.test.web.servlet.ResultMatcher;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
-import pt.isep.psoft.aisafe.flight_operations.application.DTO.AggregatedResult;
 import pt.isep.psoft.aisafe.flight_operations.application.DTO.AvailabilityDTO;
-import pt.isep.psoft.aisafe.flight_operations.application.DTO.ScheduleResultDTO;
 import pt.isep.psoft.aisafe.flight_operations.application.DTO.ScheduledFlightViewDTO;
-import pt.isep.psoft.aisafe.flight_operations.application.ScheduledFlightService;
+import pt.isep.psoft.aisafe.flight_operations.application.FlightCommandService;
+import pt.isep.psoft.aisafe.flight_operations.application.query.FlightQueryService;
+import pt.isep.psoft.aisafe.flight_operations.domain.RegistrationNumber;
+import pt.isep.psoft.aisafe.flight_operations.domain.RouteId;
+import pt.isep.psoft.aisafe.flight_operations.domain.ScheduledFlight;
 import pt.isep.psoft.aisafe.flight_operations.config.ApiKeyFilter;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -36,7 +39,7 @@ class SecurityRulesTest {
 
     private static final String FLIGHT_ID = "11111111-1111-1111-1111-111111111111";
     private static final ScheduledFlightViewDTO FLIGHT = new ScheduledFlightViewDTO(FLIGHT_ID, "OPO-LIS", "CS-TTA",
-            "2027-03-15T10:00", "SCHEDULED", null, null, 1, "2026-10-23T08:00:00Z");
+            "2027-03-15T10:00", "SCHEDULED", null, null, 1, "2026-10-23T08:00:00Z", null);
     private static final String NEW_FLIGHT = """
             {"routeId":"OPO-LIS","registrationNumber":"CS-TTA","scheduledDateTime":"2027-03-15T10:00:00"}""";
 
@@ -50,7 +53,8 @@ class SecurityRulesTest {
     @Autowired @Qualifier("springSecurityFilterChain") Filter securityFilterChain;
     @Autowired ApiKeyFilter apiKeyFilter;
 
-    @MockitoBean ScheduledFlightService service;
+    @MockitoBean FlightCommandService commands;
+    @MockitoBean FlightQueryService queries;
 
     private MockMvc mvc;
 
@@ -58,12 +62,14 @@ class SecurityRulesTest {
     void setUp() {
         mvc = MockMvcBuilders.webAppContextSetup(context).addFilters(securityFilterChain, apiKeyFilter).build();
 
-        when(service.scheduleFlight(any())).thenReturn(new ScheduleResultDTO(FLIGHT, List.of()));
-        when(service.findById(anyString())).thenReturn(Optional.of(FLIGHT));
-        when(service.changeStatus(anyString(), anyString())).thenReturn(Optional.of(FLIGHT));
-        when(service.findByAircraft(anyString())).thenReturn(new AggregatedResult<>(List.of(FLIGHT), List.of()));
-        when(service.routeUtilization()).thenReturn(new AggregatedResult<>(List.of(), List.of()));
-        when(service.checkAvailability(anyString(), anyString())).thenReturn(new AvailabilityDTO(
+        ScheduledFlight created = new ScheduledFlight(RouteId.of("OPO-LIS"), RegistrationNumber.of("CS-TTA"),
+                LocalDateTime.parse("2027-03-15T10:00:00"), LocalDateTime.parse("2026-10-23T08:00:00"), "fo-1");
+        when(commands.schedule(any(), any())).thenReturn(created);
+        when(commands.changeStatus(anyString(), anyString(), any())).thenReturn(Optional.of(created));
+        when(queries.findById(anyString())).thenReturn(Optional.of(FLIGHT));
+        when(queries.findByAircraft(anyString())).thenReturn(List.of(FLIGHT));
+        when(queries.routeUtilization()).thenReturn(List.of());
+        when(queries.availability(anyString(), anyString())).thenReturn(new AvailabilityDTO(
                 "CS-TTA", "2027-03-15T10:00", true, "ACTIVE", null, List.of(), List.of()));
     }
 

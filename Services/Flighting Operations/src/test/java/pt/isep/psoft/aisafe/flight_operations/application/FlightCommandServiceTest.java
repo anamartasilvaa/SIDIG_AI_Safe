@@ -4,6 +4,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import pt.isep.psoft.aisafe.flight_operations.application.DTO.CreateScheduledFlightDTO;
 import pt.isep.psoft.aisafe.flight_operations.application.events.FlightEventPublisher;
+import pt.isep.psoft.aisafe.flight_operations.application.query.FlightProjector;
 import pt.isep.psoft.aisafe.flight_operations.application.reference.ReferenceDataService;
 import pt.isep.psoft.aisafe.flight_operations.domain.*;
 import pt.isep.psoft.aisafe.flight_operations.domain.reference.AircraftRef;
@@ -32,6 +33,7 @@ class FlightCommandServiceTest {
     private RouteRefRepository routeRefs;
     private ReferenceDataService referenceData;
     private FlightEventPublisher events;
+    private FlightProjector projector;
     private FlightCommandService service;
 
     @BeforeEach
@@ -41,8 +43,9 @@ class FlightCommandServiceTest {
         routeRefs = mock(RouteRefRepository.class);
         referenceData = mock(ReferenceDataService.class);
         events = mock(FlightEventPublisher.class);
+        projector = mock(FlightProjector.class);
         service = new FlightCommandService(flights, aircraftRefs, routeRefs, referenceData,
-                new FlightSchedulingPolicy(Duration.ofHours(2)), events,
+                new FlightSchedulingPolicy(Duration.ofHours(2)), events, projector,
                 TransactionOperations.withoutTransaction(), Clock.fixed(NOW, ZoneOffset.UTC), "fo-1");
 
         when(referenceData.ensureRoute(any())).thenReturn(true);
@@ -75,6 +78,7 @@ class FlightCommandServiceTest {
         assertEquals(1, f.getRevision());
         verify(flights).save(f);
         verify(events).flightScheduled(f, "corr-1");
+        verify(projector).project(any());   // read-your-writes on this replica
     }
 
     @Test

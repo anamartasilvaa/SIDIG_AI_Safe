@@ -1,15 +1,9 @@
 package pt.isep.psoft.aisafe.flight_operations.application.DTO;
 
-import pt.isep.psoft.aisafe.flight_operations.domain.FlightId;
-import pt.isep.psoft.aisafe.flight_operations.domain.FlightSlot;
-import pt.isep.psoft.aisafe.flight_operations.domain.FlightStatus;
-import pt.isep.psoft.aisafe.flight_operations.domain.RegistrationNumber;
-import pt.isep.psoft.aisafe.flight_operations.domain.RouteId;
+import pt.isep.psoft.aisafe.flight_operations.application.query.FlightView;
 import pt.isep.psoft.aisafe.flight_operations.domain.ScheduledFlight;
 
-import java.time.Instant;
-import java.time.LocalDateTime;
-
+/** JSON representation of a flight in the public API (same fields as P1, plus statusReason). */
 public record ScheduledFlightViewDTO(
         String id,
         String routeId,
@@ -19,8 +13,10 @@ public record ScheduledFlightViewDTO(
         String actualDepartureDateTime,
         String actualArrivalDateTime,
         long revision,
-        String lastModifiedAt
+        String lastModifiedAt,
+        String statusReason
 ) {
+    /** From the write model (response to a command). */
     public static ScheduledFlightViewDTO from(ScheduledFlight f) {
         return new ScheduledFlightViewDTO(
                 f.getFlightId().value(),
@@ -28,34 +24,29 @@ public record ScheduledFlightViewDTO(
                 f.getAircraft().value(),
                 f.getScheduledDateTime().toString(),
                 f.getStatus().name(),
-                f.getActualDepartureDateTime() == null ? null : f.getActualDepartureDateTime().toString(),
-                f.getActualArrivalDateTime() == null ? null : f.getActualArrivalDateTime().toString(),
+                text(f.getActualDepartureDateTime()),
+                text(f.getActualArrivalDateTime()),
                 f.getRevision(),
-                f.getLastModifiedAt() == null ? null : f.getLastModifiedAt().toString());
+                text(f.getLastModifiedAt()),
+                f.getStatusReason());
     }
 
-    public FlightSlot toSlot() {
-        return new FlightSlot(id, LocalDateTime.parse(scheduledDateTime), FlightStatus.parse(status));
-    }
-    public ScheduledFlight toAggregate() {
-        return ScheduledFlight.restore(FlightId.of(id), RouteId.of(routeId), RegistrationNumber.of(registrationNumber),
-                LocalDateTime.parse(scheduledDateTime), parseOrNull(actualDepartureDateTime),
-                parseOrNull(actualArrivalDateTime), FlightStatus.parse(status), revision, lastModified());
-    }
-
-    public Instant lastModified() {
-        return lastModifiedAt == null ? Instant.EPOCH : Instant.parse(lastModifiedAt);
-    }
-
-
-    public static ScheduledFlightViewDTO newest(ScheduledFlightViewDTO a, ScheduledFlightViewDTO b) {
-        if (a.revision != b.revision) return a.revision > b.revision ? a : b;
-        int byTime = a.lastModified().compareTo(b.lastModified());
-        if (byTime != 0) return byTime > 0 ? a : b;
-        return FlightStatus.parse(a.status).ordinal() >= FlightStatus.parse(b.status).ordinal() ? a : b;
+    /** From the read model (response to a query). */
+    public static ScheduledFlightViewDTO from(FlightView v) {
+        return new ScheduledFlightViewDTO(
+                v.getFlightId(),
+                v.getRouteId(),
+                v.getRegistrationNumber(),
+                v.getScheduledDateTime().toString(),
+                v.getStatus(),
+                text(v.getActualDeparture()),
+                text(v.getActualArrival()),
+                v.getRevision(),
+                text(v.getLastModifiedAt()),
+                v.getStatusReason());
     }
 
-    private static LocalDateTime parseOrNull(String value) {
-        return value == null ? null : LocalDateTime.parse(value);
+    private static String text(Object value) {
+        return value == null ? null : value.toString();
     }
 }

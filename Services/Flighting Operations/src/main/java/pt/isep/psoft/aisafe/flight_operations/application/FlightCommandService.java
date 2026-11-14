@@ -7,6 +7,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionOperations;
 import pt.isep.psoft.aisafe.flight_operations.application.DTO.CreateScheduledFlightDTO;
 import pt.isep.psoft.aisafe.flight_operations.application.events.FlightEventPublisher;
+import pt.isep.psoft.aisafe.flight_operations.application.events.FlightState;
+import pt.isep.psoft.aisafe.flight_operations.application.query.FlightProjector;
 import pt.isep.psoft.aisafe.flight_operations.application.reference.ReferenceDataService;
 import pt.isep.psoft.aisafe.flight_operations.domain.*;
 import pt.isep.psoft.aisafe.flight_operations.domain.reference.AircraftRef;
@@ -21,6 +23,13 @@ import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Optional;
 
+/**
+ * Command side (CQRS): the only way to change a flight.
+ * Each command is ONE local transaction: validate with the local copies, save the aggregate,
+ * write the event to the outbox and update THIS replica's views (read-your-writes on this
+ * replica; the other replicas get it through the event). No remote call happens inside the
+ * transaction, and the response does not depend on RabbitMQ or on the other replicas (AP).
+ */
 @Service
 public class FlightCommandService {
 
@@ -32,6 +41,7 @@ public class FlightCommandService {
     private final ReferenceDataService referenceData;
     private final FlightSchedulingPolicy policy;
     private final FlightEventPublisher events;
+    private final FlightProjector projector;
     private final TransactionOperations tx;
     private final Clock clock;
     private final String instanceId;
@@ -39,7 +49,7 @@ public class FlightCommandService {
     public FlightCommandService(ScheduledFlightRepository flights, AircraftRefRepository aircraftRefs,
                                 RouteRefRepository routeRefs, ReferenceDataService referenceData,
                                 FlightSchedulingPolicy policy, FlightEventPublisher events,
-                                TransactionOperations tx, Clock clock,
+                                FlightProjector projector, TransactionOperations tx, Clock clock,
                                 @Value("${app.instance-id}") String instanceId) {
         this.flights = flights;
         this.aircraftRefs = aircraftRefs;
@@ -47,10 +57,19 @@ public class FlightCommandService {
         this.referenceData = referenceData;
         this.policy = policy;
         this.events = events;
+        this.projector = projector;
         this.tx = tx;
         this.clock = clock;
         this.instanceId = instanceId;
     }
+
+    /**
+     * US212: schedules a flight.
+     * @throws IllegalArgumentException   invalid input (400)
+     * @throws SchedulingRuleViolation    business rule violated or unknown route/aircraft (409)
+     * @throws pt.isep.psoft.aisafe.flight_operations.infrastructure.DependencyUnavailableException
+     *         route/aircraft unknown locally and its service is down (503)
+     */
     public ScheduledFlight schedule(CreateScheduledFlightDTO dto, String correlationId) {
         LocalDateTime now = LocalDateTime.now(clock);
         ScheduledFlight flight = new ScheduledFlight(RouteId.of(dto.routeId()),
@@ -59,6 +78,7 @@ public class FlightCommandService {
         RouteId routeId = flight.getRouteId();
         RegistrationNumber reg = flight.getAircraft();
 
+        // Outside the main transaction: may call the owning service once (bootstrap / fallback).
         if (!referenceData.ensureRoute(routeId)) {
             throw new SchedulingRuleViolation("Route " + routeId + " does not exist.");
         }
@@ -85,13 +105,17 @@ public class FlightCommandService {
 
             ScheduledFlight saved = flights.save(flight);
             events.flightScheduled(saved, correlationId);
+            projector.project(FlightState.of(saved));
             log.info("Flight {} scheduled (route {}, aircraft {}, rev {}).",
                     saved.getFlightId(), routeId, reg, saved.getRevision());
             return saved;
         });
     }
 
-
+    /**
+     * Changes the status of a flight stored on this replica (every replica stores every flight).
+     * @return empty if the flight does not exist (404).
+     */
     public Optional<ScheduledFlight> changeStatus(String id, String statusText, String correlationId) {
         String flightId = FlightId.of(id).value();
         FlightStatus target = FlightStatus.parse(statusText);
@@ -103,6 +127,7 @@ public class FlightCommandService {
             }
             ScheduledFlight saved = flights.save(flight);
             events.flightStatusChanged(saved, previous.name(), correlationId);
+            projector.project(FlightState.of(saved));
             log.info("Flight {}: {} -> {} (rev {}).", flightId, previous, target, saved.getRevision());
             return saved;
         }));

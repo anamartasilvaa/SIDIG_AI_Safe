@@ -1,71 +1,56 @@
 package pt.isep.psoft.aisafe.flight_operations.api;
 
-import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
-import pt.isep.psoft.aisafe.flight_operations.application.DTO.ChangeFlightStatusDTO;
 import pt.isep.psoft.aisafe.flight_operations.application.DTO.GroundingRequestDTO;
-import pt.isep.psoft.aisafe.flight_operations.application.DTO.RouteUtilizationDTO;
-import pt.isep.psoft.aisafe.flight_operations.application.DTO.ScheduledFlightViewDTO;
-import pt.isep.psoft.aisafe.flight_operations.application.ScheduledFlightService;
-import pt.isep.psoft.aisafe.flight_operations.domain.FlightStatus;
+import pt.isep.psoft.aisafe.flight_operations.application.GroundingService;
+import pt.isep.psoft.aisafe.flight_operations.application.events.FlightState;
+import pt.isep.psoft.aisafe.flight_operations.domain.FlightId;
+import pt.isep.psoft.aisafe.flight_operations.repositories.ScheduledFlightRepository;
 
 import java.util.List;
 
+/**
+ * Internal API (X-Api-Key, blocked at the gateway). Only local data, never forwards.
+ * - GET  /           : snapshot of this replica's command store (bootstrap of an empty replica)
+ * - GET  /{id}       : local copy of one flight (diagnostics / tests)
+ * - POST /aircraft/{reg}/grounding : kept for compatibility while the Aircraft Service still
+ *   calls it by REST; the event-driven path (AircraftStatusChanged) uses the same GroundingService.
+ */
 @RestController
 @RequestMapping("/internal/scheduled-flights")
 public class InternalScheduledFlightController {
 
-    private final ScheduledFlightService service;
+    private final ScheduledFlightRepository flights;
+    private final GroundingService grounding;
 
-    public InternalScheduledFlightController(ScheduledFlightService service) {
-        this.service = service;
+    public InternalScheduledFlightController(ScheduledFlightRepository flights, GroundingService grounding) {
+        this.flights = flights;
+        this.grounding = grounding;
     }
 
     @GetMapping
-    public List<ScheduledFlightViewDTO> getAllLocal() {
-        return service.findLocalAll();
+    @Transactional(readOnly = true)
+    public List<FlightState> snapshot() {
+        return flights.findAll().stream().map(FlightState::of).toList();
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<ScheduledFlightViewDTO> getLocal(@PathVariable String id) {
-        return service.findLocalById(id)
+    @Transactional(readOnly = true)
+    public ResponseEntity<FlightState> getLocal(@PathVariable String id) {
+        return flights.findByFlightId_Uuid(FlightId.of(id).value())
+                .map(FlightState::of)
                 .map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
-    @PutMapping("/{id}/status")
-    public ResponseEntity<ScheduledFlightViewDTO> changeLocalStatus(@PathVariable String id,
-                                                                    @Valid @RequestBody ChangeFlightStatusDTO dto) {
-        return service.applyStatusLocally(id, FlightStatus.parse(dto.status()))
-                .map(ResponseEntity::ok)
-                .orElseGet(() -> ResponseEntity.notFound().build());
-    }
-
-
-    @PutMapping("/{id}/replica")
-    public ResponseEntity<Void> receiveReplica(@PathVariable String id, @RequestBody ScheduledFlightViewDTO replica) {
-        if (!id.equalsIgnoreCase(replica.id())) {
-            throw new IllegalArgumentException("Path id and body id differ.");
-        }
-        service.applyReplica(replica);
-        return ResponseEntity.noContent().build();
-    }
-
-    @GetMapping("/aircraft/{registrationNumber}")
-    public List<ScheduledFlightViewDTO> getLocalByAircraft(@PathVariable String registrationNumber) {
-        return service.findLocalByAircraft(registrationNumber);
-    }
-
-    @GetMapping("/route-utilization")
-    public List<RouteUtilizationDTO> getLocalRouteUtilization() {
-        return service.findLocalRouteUtilization();
-    }
-
+    /** The candidate list sent by the Aircraft Service is ignored: FO chooses from its own references. */
     @PostMapping("/aircraft/{registrationNumber}/grounding")
     public List<String> groundAircraft(@PathVariable String registrationNumber,
-                                       @RequestBody(required = false) GroundingRequestDTO request) {
-        return service.groundAircraft(registrationNumber,
-                request == null ? List.of() : request.candidateRegistrationNumbers());
+                                       @RequestBody(required = false) GroundingRequestDTO ignored,
+                                       @RequestHeader(value = ScheduledFlightController.REQUEST_ID, required = false)
+                                       String requestId) {
+        return grounding.ground(registrationNumber, requestId);
     }
 }
