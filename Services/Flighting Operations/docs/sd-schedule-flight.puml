@@ -8,8 +8,9 @@ actor "ATCC" as User
 participant "API Gateway\n(:8443 or :8444)" as GW
 box "FO-1 (replica chosen by the gateway)" #F4F7FF
 participant "JwtAuthenticationFilter\n+ SecurityConfig" as Sec
-participant "FlightCommandController" as Ctrl
+participant "ScheduledFlightController" as Ctrl
 participant "FlightCommandService" as Svc
+participant "ReferenceDataService" as Ref
 participant "FlightSchedulingPolicy" as Policy
 participant "ScheduledFlight" as Agg
 database "FO-1 DB\n(schema command)" as DB
@@ -35,23 +36,25 @@ activate Svc
 Svc -> Agg : ScheduledFlight.schedule(route, aircraft, when, now, "fo-1")
 note right : blank fields / date in the past -> 400\n(no I/O yet)
 
+Svc -> Ref : ensureRoute(routeId), ensureAircraft(reg)
+note right : normally found in route_ref / aircraft_ref (kept up to date\nby events). Only if missing: one REST call through\nReferenceLookup, stored locally (outside the transaction)
+
 == One local ACID transaction (no remote calls) ==
 Svc -> DB : BEGIN
 Svc -> DB : SELECT aircraft_ref ... FOR UPDATE
 note right : row lock per aircraft: concurrent requests AND\nthe FlightEventListener applying flights of the\nsame aircraft are serialised on this replica
 DB --> Svc : AircraftRef (status, range, seats)
 Svc -> DB : SELECT route_ref WHERE routeId = ?
-DB --> Svc : RouteRef (active, distance, minimumCapacity)
+DB --> Svc : RouteRef (active, minimumRange, minimumCapacity)
 Svc -> DB : SELECT flights of the aircraft (status occupies aircraft)
 note right : the command store already holds the flights\nof ALL replicas (applied from events),\nso no peer calls are needed
 DB --> Svc : List<FlightSlot>
 Svc -> Policy : checkAssignment(route, aircraft)\nfindConflict(slots, when)
 Policy --> Svc : ok / SchedulingRuleViolation
 
-alt route or aircraft unknown in the local references
-  Svc -> DB : ROLLBACK
-  Svc --> Ctrl : unknown reference
-  Ctrl --> GW : 404 (503 while the replica is not ready)
+alt route or aircraft unknown (not local and the REST fallback failed)
+  Svc --> Ctrl : unknown reference / service unavailable
+  Ctrl --> GW : 404 / 503
   GW --> User : 404 / 503
 else rule violated (inactive route, aircraft not ACTIVE,\nrange, capacity, 2 h conflict)
   Svc -> DB : ROLLBACK
@@ -61,6 +64,7 @@ else rule violated (inactive route, aircraft not ACTIVE,\nrange, capacity, 2 h c
 else valid
   Svc -> DB : INSERT scheduled_flight (revision = 1, originInstance = fo-1)
   Svc -> DB : INSERT outbox_event (FlightScheduled, routingKey = flight.scheduled,\npayload = full flight state, eventId = UUID)
+  Svc -> DB : FlightProjector: UPSERT flight_view, route utilization, mood\n(query schema, same transaction -> read-your-writes)
   Svc -> DB : COMMIT
   note right : the flight and its event are durable together:\nno "saved but not published" and\nno "published but not saved"
   Svc --> Ctrl : FlightId

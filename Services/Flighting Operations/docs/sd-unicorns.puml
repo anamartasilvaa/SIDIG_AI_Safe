@@ -7,7 +7,7 @@ participant "Aircraft / FO\nevents" as EV
 box "Any FO replica" #F4FFF4
 participant "MoodProjector" as MP
 database "query schema\naircraft_mood_view" as DB
-participant "UnicornQueryController" as UC
+participant "UnicornController" as UC
 end box
 participant "API Gateway" as GW
 actor "User / Postman" as U
@@ -28,7 +28,7 @@ MP -> DB : UPSERT aircraft_mood_view (mood, reason, counters, updatedAt)
 U -> GW : GET /api/v2/unicorns  (Bearer JWT)
 GW -> UC : routed to FO (round-robin)
 UC -> DB : SELECT * FROM aircraft_mood_view
-UC --> GW : 200 [{registrationNumber, mood, reason, updatedAt}]
+UC --> GW : 200 [{registrationNumber, mood, reason,\ndelayedOrCanceledLast7Days, flightsNext24h, updatedAt}]
 GW --> U : 200 application/json
 
 == Contract test in Postman ==

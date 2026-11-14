@@ -17,7 +17,7 @@ Container_Boundary(fo, "Flight Operations Service (one replica)") {
     Component(sec, "JwtAuthenticationFilter + SecurityConfig", "Spring Security, stateless", "Validates the RS256 JWT (JWKS, iss, exp); RBAC per endpoint; deny by default; AUDIT DENIED.")
 
     Boundary(cmd, "Command side (write model)") {
-        Component(cmdCtrl, "FlightCommandController", "@RestController /api/scheduled-flights", "POST (US212), PATCH /{id}/status. Returns 201/200 after the local commit.")
+        Component(cmdCtrl, "ScheduledFlightController (write endpoints)", "@RestController /api/scheduled-flights", "POST (US212), PATCH /{id}/status. Returns 201/200 after the local commit.")
         Component(cmdSvc, "FlightCommandService", "@Service, @Transactional", "Loads the aggregate, applies the policy, saves the aggregate and the outbox event in ONE transaction.")
         Component(policy, "FlightSchedulingPolicy", "Domain service", "Active route, ACTIVE aircraft, range, capacity, 2 h conflicts.")
         Component(agg, "ScheduledFlight", "Aggregate root", "State machine, revision, reassignAircraft(), raises domain events.")
@@ -28,15 +28,15 @@ Container_Boundary(fo, "Flight Operations Service (one replica)") {
     Boundary(msg, "Messaging (AMQP)") {
         Component(outbox, "OutboxRelay", "@Scheduled + RabbitTemplate (publisher confirms)", "Publishes pending outbox rows to flights.events; marks them as sent only after the broker confirms.")
         Component(flightL, "FlightEventListener", "@RabbitListener fo.flights.<instance>", "Receives FlightScheduled / StatusChanged / Reassigned from ALL replicas (own included).")
-        Component(refL, "ReferenceDataListener", "@RabbitListener fo.aircraft.<instance>, fo.routes.<instance>", "Receives aircraft and route events from the other services.")
+        Component(refL, "RouteEventListener / AircraftEventListener", "@RabbitListener fo.routes.<instance>, fo.aircraft.<instance>", "Receives aircraft and route events from the other services.")
         Component(idem, "IdempotencyGuard", "processed_event table", "Ignores duplicated eventIds (at-least-once delivery).")
     }
 
     Boundary(qry, "Query side (read model)") {
-        Component(qryCtrl, "FlightQueryController", "@RestController /api/scheduled-flights", "GET /{id}, /aircraft/{reg} (US213), /availability (US205), /route-utilization (US229).")
-        Component(unicorn, "UnicornQueryController", "@RestController /api/v2/unicorns", "Mood status of each aircraft (read-only).")
+        Component(qryCtrl, "ScheduledFlightController (read endpoints)", "@RestController /api/scheduled-flights", "GET /{id}, /aircraft/{reg} (US213), /availability (US205), /route-utilization (US229).")
+        Component(unicorn, "UnicornController", "@RestController /api/v2/unicorns", "Mood status of each aircraft (read-only).")
         Component(qrySvc, "FlightQueryService", "@Service, read-only", "Reads only the denormalised views; no business rules, no remote calls.")
-        Component(proj, "Projectors", "FlightProjector, ReferenceProjector, MoodProjector", "Update the views and the command-side replicas (last-writer-wins by revision).")
+        Component(proj, "Projectors", "FlightProjector, MoodProjector", "Update the views (only newer revisions are applied).")
     }
 
     Component(boot, "SnapshotBootstrapper", "ApplicationRunner", "Only for an EMPTY database: copies a snapshot from the peer replica before consuming the queues.")
@@ -74,6 +74,6 @@ Rel(qryCtrl, qrySvc, "Queries")
 Rel(unicorn, qrySvc, "Queries")
 Rel(qrySvc, db, "Reads views", "JDBC")
 
-Rel(boot, peer, "GET /internal/snapshot", "HTTPS + X-API-Key")
+Rel(boot, peer, "GET /internal/scheduled-flights", "HTTPS + X-API-Key")
 Rel(peer, broker, "Publishes flight.*", "AMQPS")
 @enduml

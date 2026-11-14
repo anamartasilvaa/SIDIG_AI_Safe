@@ -82,17 +82,11 @@ package "Query side - schema query (denormalised, no rules)" #F4FFF4 {
     destination: String
     flightCount: long
   }
-  class AircraftScheduleView {
-    registrationNumber: String
-    aircraftStatus: String
-    activeFlights: int
-    nextFlightAt: LocalDateTime
-  }
   class AircraftMoodView {
     registrationNumber: String
     mood: AircraftMood
     reason: String
-    delayedOrCanceled: int
+    delayedOrCanceledLast7Days: int
     flightsNext24h: int
     updatedAt: Instant
   }
@@ -145,7 +139,6 @@ AircraftMoodView --> AircraftMood
 
 FlightScheduled ..> FlightView : projected into
 FlightScheduled ..> RouteUtilizationView : projected into
-FlightScheduled ..> AircraftScheduleView : projected into
 FlightStatusChanged ..> AircraftMoodView : projected into
 AircraftEvents ..> AircraftRef : projected into
 AircraftEvents ..> AircraftMoodView : projected into

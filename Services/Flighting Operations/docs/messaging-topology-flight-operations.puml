@@ -30,8 +30,8 @@ package "RabbitMQ cluster (rabbitmq-1, rabbitmq-2, rabbitmq-3)" {
 }
 
 package "Consumers" {
-  rectangle "FO-1\nFlightEventListener\nReferenceDataListener" as c1 #DDEBFF
-  rectangle "FO-2\nFlightEventListener\nReferenceDataListener" as c2 #DDEBFF
+  rectangle "FO-1\nFlightEventListener\nRouteEventListener\nAircraftEventListener" as c1 #DDEBFF
+  rectangle "FO-2\nFlightEventListener\nRouteEventListener\nAircraftEventListener" as c2 #DDEBFF
   rectangle "FO-1 or FO-2\nGroundingHandler\n(competing consumers)" as cg #DDEBFF
   rectangle "Other services\n(e.g. Aircraft: flights per aircraft)" as other #EEEEEE
 }

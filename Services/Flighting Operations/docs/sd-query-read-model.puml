@@ -7,7 +7,7 @@ actor "ATCC / Backoffice" as User
 participant "API Gateway" as GW
 box "Any FO replica" #F4FFF4
 participant "Security\n(JWT + RBAC)" as Sec
-participant "FlightQueryController" as Ctrl
+participant "ScheduledFlightController" as Ctrl
 participant "FlightQueryService" as Svc
 database "Replica DB\n(schema query)" as DB
 end box
@@ -37,13 +37,14 @@ User -> GW : GET /api/scheduled-flights/route-utilization   (US229)
 GW -> Ctrl : BACKOFFICE / ADMIN
 Ctrl -> Svc : routeUtilization()
 Svc -> DB : SELECT * FROM route_utilization_view ORDER BY flight_count DESC
-note right : pre-computed counter (incremented on\nFlightScheduled, decremented on CANCELED);\nno aggregation over replicas, no duplicates
+note right : recomputed by the FlightProjector from flight_view\n(CANCELED excluded) whenever a flight changes;\nno aggregation over replicas, no duplicates
 Ctrl --> GW : 200 / 204
 
 User -> GW : GET /api/scheduled-flights/availability?registrationNumber=&dateTime=   (US205)
 GW -> Ctrl : ATCC / ADMIN
 Ctrl -> Svc : availability(reg, when)
-Svc -> DB : SELECT aircraft_status FROM aircraft_schedule_view\n+ flights of the aircraft within +/- 2 h
+Svc -> DB : SELECT status FROM aircraft_ref\n+ flight_view of the aircraft within +/- 2 h
+note right : aircraft not known locally -> UNKNOWN
 Ctrl --> GW : 200 {available, reason}
 
 note over User, DB

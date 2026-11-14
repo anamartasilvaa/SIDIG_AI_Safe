@@ -51,7 +51,7 @@ else first time
   L2 -> Proj : apply(event)
   Proj -> DB2 : command schema: upsert flight if event.revision > local.revision\n(tie: most recent lastModifiedAt)
   note right : events carry the FULL flight state,\nso an out-of-order or old event can\nnever overwrite newer data
-  Proj -> DB2 : query schema: FlightView, RouteUtilizationView,\nAircraftScheduleView, AircraftMoodView
+  Proj -> DB2 : query schema: FlightView, RouteUtilizationView,\nAircraftMoodView
   Proj -> Proj : ConflictResolver.check(aircraft, slot)\n(see sd-conflict-compensation)
   L2 -> DB2 : COMMIT
   L2 -> Q2 : basicAck

@@ -10,8 +10,9 @@ node "Docker host" {
   node "backend network (internal, no Internet)" {
     node "keycloak-1" as K1
     node "keycloak-2" as K2
-    database "keycloak-db-primary\nPostgreSQL (repmgr)" as KDB1
-    database "keycloak-db-standby\nPostgreSQL (repmgr)" as KDB2
+    database "keycloak-db-0\nPostgreSQL (repmgr)\nprimary" as KDB1
+    database "keycloak-db-1\nPostgreSQL (repmgr)\nstandby" as KDB2
+    database "keycloak-db-2\nPostgreSQL (repmgr)\nstandby" as KDB3
 
     node "rabbitmq-1" as RB1
     node "rabbitmq-2" as RB2
@@ -40,6 +41,7 @@ G1 --> K2
 K1 --> KDB1 : JDBC (multi-host URL)
 K2 --> KDB1
 KDB1 ..> KDB2 : streaming replication\n+ automatic failover
+KDB1 ..> KDB3 : streaming replication
 
 FO1 --> FDB1 : JDBC
 FO2 --> FDB2 : JDBC
