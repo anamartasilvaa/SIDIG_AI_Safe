@@ -1,6 +1,21 @@
 name: aisafe
 
 services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    environment:
+      RABBITMQ_DEFAULT_USER: aisafe
+      RABBITMQ_DEFAULT_PASS: aisafe-mq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+
   aircraft-1:
     image: aisafe-aircraft:latest
     build:
@@ -93,6 +108,19 @@ services:
       retries: 12
       start_period: 30s
 
+  fo-db-1:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: flightops
+      POSTGRES_USER: flightops
+      POSTGRES_PASSWORD: flightops
+    volumes: [fo-db-1-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flightops -d flightops"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   flight-operations-1:
     image: aisafe-flight-operations:latest
     build:
@@ -106,9 +134,19 @@ services:
       SSL_ENABLED: "false"
       API_KEY: sidis-dev-key
       ACCEPT_DEV_TOKENS: "true"
+      DB_URL: jdbc:postgresql://fo-db-1:5432/flightops
+      DB_USER: flightops
+      DB_PASSWORD: flightops
+      RABBITMQ_ADDRESSES: rabbitmq:5672
+      RABBITMQ_USER: aisafe
+      RABBITMQ_PASSWORD: aisafe-mq
     ports:
       - "8081:80"
     depends_on:
+      fo-db-1:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
       aircraft-1:
         condition: service_healthy
       aircraft-2:
@@ -124,6 +162,19 @@ services:
       retries: 12
       start_period: 30s
 
+  fo-db-2:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: flightops
+      POSTGRES_USER: flightops
+      POSTGRES_PASSWORD: flightops
+    volumes: [fo-db-2-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flightops -d flightops"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   flight-operations-2:
     image: aisafe-flight-operations:latest
     build:
@@ -137,9 +188,19 @@ services:
       SSL_ENABLED: "false"
       API_KEY: sidis-dev-key
       ACCEPT_DEV_TOKENS: "true"
+      DB_URL: jdbc:postgresql://fo-db-2:5432/flightops
+      DB_USER: flightops
+      DB_PASSWORD: flightops
+      RABBITMQ_ADDRESSES: rabbitmq:5672
+      RABBITMQ_USER: aisafe
+      RABBITMQ_PASSWORD: aisafe-mq
     ports:
       - "8082:80"
     depends_on:
+      fo-db-2:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
       aircraft-1:
         condition: service_healthy
       aircraft-2:
@@ -192,3 +253,7 @@ services:
       timeout: 5s
       retries: 12
       start_period: 30s
+
+volumes:
+  fo-db-1-data: {}
+  fo-db-2-data: {}

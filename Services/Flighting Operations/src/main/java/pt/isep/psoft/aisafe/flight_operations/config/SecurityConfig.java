@@ -50,7 +50,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/scheduled-flights/availability").hasAnyAuthority(ATCC, ADMIN)
                         .requestMatchers(HttpMethod.GET, "/api/scheduled-flights/aircraft/**").hasAnyAuthority(ATCC, ADMIN)
                         .requestMatchers(HttpMethod.GET, "/api/scheduled-flights/*").hasAnyAuthority(ATCC, BACKOFFICE, ADMIN)
-
+                        .requestMatchers(HttpMethod.GET, "/api/v2/unicorns").hasAnyAuthority(ATCC, BACKOFFICE, ADMIN)
                         .anyRequest().denyAll())
                 .exceptionHandling(e -> e
                         .authenticationEntryPoint(problems)          // 401

@@ -26,6 +26,7 @@ class FlightProjectorTest {
     private FlightViewRepository flightViews;
     private RouteUtilizationViewRepository routeUtilization;
     private RouteRefRepository routeRefs;
+    private MoodProjector moods;
     private FlightProjector projector;
 
     @BeforeEach
@@ -33,7 +34,8 @@ class FlightProjectorTest {
         flightViews = mock(FlightViewRepository.class);
         routeUtilization = mock(RouteUtilizationViewRepository.class);
         routeRefs = mock(RouteRefRepository.class);
-        projector = new FlightProjector(flightViews, routeUtilization, routeRefs);
+        moods = mock(MoodProjector.class);
+        projector = new FlightProjector(flightViews, routeUtilization, routeRefs, moods);
         when(routeRefs.findById("RT-OPOLIS")).thenReturn(Optional.of(
                 RouteRef.create("RT-OPOLIS", "OPO", "LIS", true, null, 300.0, 100, 1, T1)));
         when(routeUtilization.findById(any())).thenReturn(Optional.empty());
@@ -70,6 +72,20 @@ class FlightProjectorTest {
         assertTrue(projector.project(state(2, "DELAYED", T2)));
         assertEquals("DELAYED", view.getStatus());
         assertEquals(2, view.getRevision());
+        verify(moods).recompute("CS-TTA");
+    }
+
+    @Test
+    void reassignmentRecomputesTheMoodOfBothAircraft() {
+        FlightView view = FlightView.from(state(1, "SCHEDULED", T1), "OPO", "LIS");
+        when(flightViews.findById(ID)).thenReturn(Optional.of(view));
+        FlightState moved = new FlightState(ID, "RT-OPOLIS", "CS-TTB", LocalDateTime.parse("2027-03-15T10:00:00"),
+                null, null, "SCHEDULED", null, 2, T2, T1, "fo-1");
+
+        projector.project(moved);
+
+        verify(moods).recompute("CS-TTB");
+        verify(moods).recompute("CS-TTA");
     }
 
     @Test

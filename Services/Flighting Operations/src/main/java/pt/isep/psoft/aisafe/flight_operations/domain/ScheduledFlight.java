@@ -4,6 +4,8 @@ import jakarta.persistence.*;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
+
 @Entity
 @Table(name = "scheduled_flight", schema = "fo_command")
 public class ScheduledFlight {
@@ -71,7 +73,7 @@ public class ScheduledFlight {
         this.scheduledDateTime = scheduledDateTime;
         this.status = FlightStatus.SCHEDULED;
         this.revision = 1;
-        this.lastModifiedAt = Instant.now();
+        Instant.now().truncatedTo(ChronoUnit.MICROS);
         this.createdAt = this.lastModifiedAt;
         this.originInstance = originInstance;
     }
@@ -176,7 +178,7 @@ public class ScheduledFlight {
 
     private void touch() {
         this.revision++;
-        this.lastModifiedAt = Instant.now();
+        this.lastModifiedAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
     }
 
     private boolean isOlderThan(long otherRevision, Instant otherLastModifiedAt, FlightStatus otherStatus) {
