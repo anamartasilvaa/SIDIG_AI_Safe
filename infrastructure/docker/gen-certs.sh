@@ -118,7 +118,7 @@ password="${values[KEYSTORE_PASSWORD]:-}"
 mkdir -p "$OUT_DIR"
 find "$OUT_DIR" -mindepth 1 -maxdepth 1 -type f -delete
 
-san='SAN=dns:localhost,dns:gateway,dns:keycloak,dns:aircraft-1,dns:aircraft-2,dns:maintenance-1,dns:maintenance-2,dns:airports-routes-1,dns:airports-routes-2,dns:flight-operations-1,dns:flight-operations-2,ip:127.0.0.1'
+san='SAN=dns:localhost,dns:gateway,dns:keycloak,dns:aircraft-1,dns:aircraft-2,dns:maintenance-1,dns:maintenance-2,dns:airports-routes-1,dns:airports-routes-2,dns:flight-operations-1,dns:flight-operations-2,dns:rabbitmq-1,dns:rabbitmq-2,dns:rabbitmq-3,ip:127.0.0.1'
 
 keytool -genkeypair \
     -alias aisafe-key \

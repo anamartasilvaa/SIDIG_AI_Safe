@@ -43,6 +43,28 @@ x-keycloak-env: &keycloak-env
   KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_ADMIN_USER:-admin}
   KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD:?defina KC_ADMIN_PASSWORD no .env}
 
+x-rabbitmq-node: &rabbitmq-node
+  image: rabbitmq:3.13-management
+  restart: unless-stopped
+  networks: [backend, edge]
+  security_opt: ["no-new-privileges:true"]
+  environment:
+    RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-aisafe}
+    RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?defina RABBITMQ_PASSWORD no .env}
+    RABBITMQ_ERLANG_COOKIE: ${RABBITMQ_ERLANG_COOKIE:?defina RABBITMQ_ERLANG_COOKIE no .env}
+  healthcheck:
+    test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+    interval: 10s
+    timeout: 10s
+    retries: 18
+    start_period: 40s
+
+x-rabbit-client-env: &rabbit-client-env
+  RABBITMQ_ADDRESSES: rabbitmq-1:5671,rabbitmq-2:5671,rabbitmq-3:5671
+  RABBITMQ_SSL: "true"
+  RABBITMQ_USER: ${RABBITMQ_USER:-aisafe}
+  RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?defina RABBITMQ_PASSWORD no .env}
+
 x-gateway: &gateway
   image: nginx:1.27-alpine
   restart: unless-stopped
@@ -109,23 +131,68 @@ services:
       keycloak-1: {condition: service_started}
 
   # ------------------------- Message broker (AMQP) -------------------------
-  rabbitmq:
-    image: rabbitmq:3-management
-    restart: unless-stopped
-    networks: [backend, edge]
+  # Cluster of 3 RabbitMQ nodes + quorum queues: survives the loss of any 1 node.
+  # Clients only use AMQPS (5671) and list the 3 nodes (failover on reconnect).
+  rabbitmq-1:
+    <<: *rabbitmq-node
+    hostname: rabbitmq-1
+    volumes:
+      - rabbitmq-1-data:/var/lib/rabbitmq
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ./docker/certs/aisafe.pem:/etc/rabbitmq/certs/aisafe.pem:ro
+      - ./docker/certs/aisafe.key:/etc/rabbitmq/certs/aisafe.key:ro
+    ports:
+      - "127.0.0.1:15672:15672"     # management console only, on localhost
+
+  rabbitmq-2:
+    <<: *rabbitmq-node
+    hostname: rabbitmq-2
+    volumes:
+      - rabbitmq-2-data:/var/lib/rabbitmq
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ./docker/certs/aisafe.pem:/etc/rabbitmq/certs/aisafe.pem:ro
+      - ./docker/certs/aisafe.key:/etc/rabbitmq/certs/aisafe.key:ro
+    ports:
+      - "127.0.0.1:15673:15672"     # management console only, on localhost
+
+  rabbitmq-3:
+    <<: *rabbitmq-node
+    hostname: rabbitmq-3
+    volumes:
+      - rabbitmq-3-data:/var/lib/rabbitmq
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ./docker/certs/aisafe.pem:/etc/rabbitmq/certs/aisafe.pem:ro
+      - ./docker/certs/aisafe.key:/etc/rabbitmq/certs/aisafe.key:ro
+    ports:
+      - "127.0.0.1:15674:15672"     # management console only, on localhost
+
+  # One-shot: imports infrastructure/rabbitmq/definitions.json (exchanges, quorum queues,
+  # bindings) so every queue exists BEFORE any service publishes. Tries the 3 nodes.
+  rabbitmq-init:
+    image: curlimages/curl:8.10.1
+    restart: "no"
+    networks: [backend]
     security_opt: ["no-new-privileges:true"]
     environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-aisafe}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-aisafe-mq}
-    ports:
-      # so a consola de gestao, apenas em localhost; o AMQP (5672) fica interno
-      - "127.0.0.1:15672:15672"
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
-      interval: 10s
-      timeout: 10s
-      retries: 12
-      start_period: 30s
+      RABBITMQ_USER: ${RABBITMQ_USER:-aisafe}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?defina RABBITMQ_PASSWORD no .env}
+    volumes:
+      - ./rabbitmq/definitions.json:/defs/definitions.json:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        for n in 1 2 3; do
+          if curl --fail --silent --show-error --retry 10 --retry-delay 3 --retry-all-errors \
+               -u "$$RABBITMQ_USER:$$RABBITMQ_PASSWORD" -H "content-type: application/json" \
+               -X POST --data @/defs/definitions.json "http://rabbitmq-$$n:15672/api/definitions"; then
+            echo "definitions imported through rabbitmq-$$n"; exit 0
+          fi
+        done
+        echo "could not import definitions"; exit 1
+    depends_on:
+      rabbitmq-1: {condition: service_healthy}
+      rabbitmq-2: {condition: service_healthy}
+      rabbitmq-3: {condition: service_healthy}
 
   # ------------------------- Aircraft -------------------------
   aircraft-1:
@@ -202,15 +269,15 @@ services:
       SERVER_SSL_KEY_ALIAS: aisafe-key
       PEER_URLS: https://airports-routes-2:8443
       PEER_NODE_ID: airports-routes-1
-      SPRING_RABBITMQ_HOST: rabbitmq
-      SPRING_RABBITMQ_PORT: "5672"
+      SPRING_RABBITMQ_ADDRESSES: rabbitmq-1:5671,rabbitmq-2:5671,rabbitmq-3:5671
+      SPRING_RABBITMQ_SSL_ENABLED: "true"
       SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-aisafe}
       SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-aisafe-mq}
       APP_SECURITY_JWT_JWK_SET_URI: http://keycloak:8180/realms/aisafe/protocol/openid-connect/certs
       APP_SECURITY_JWT_ISSUER: http://localhost:8180/realms/aisafe
       APP_SECURITY_JWT_ACCEPT_DEV_TOKENS: "true"
     depends_on:
-      rabbitmq: {condition: service_healthy}
+      rabbitmq-init: {condition: service_completed_successfully}
     healthcheck:
       test: ["CMD", "curl", "--silent", "--insecure", "--output", "/dev/null", "https://localhost:8443/actuator/health"]
       interval: 10s
@@ -232,8 +299,8 @@ services:
       SERVER_SSL_KEY_ALIAS: aisafe-key
       PEER_URLS: https://airports-routes-1:8443
       PEER_NODE_ID: airports-routes-2
-      SPRING_RABBITMQ_HOST: rabbitmq
-      SPRING_RABBITMQ_PORT: "5672"
+      SPRING_RABBITMQ_ADDRESSES: rabbitmq-1:5671,rabbitmq-2:5671,rabbitmq-3:5671
+      SPRING_RABBITMQ_SSL_ENABLED: "true"
       SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-aisafe}
       SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-aisafe-mq}
       APP_SECURITY_JWT_JWK_SET_URI: http://keycloak:8180/realms/aisafe/protocol/openid-connect/certs
@@ -241,7 +308,7 @@ services:
       APP_SECURITY_JWT_ACCEPT_DEV_TOKENS: "true"
 
     depends_on:
-      rabbitmq: {condition: service_healthy}
+      rabbitmq-init: {condition: service_completed_successfully}
     healthcheck:
       test: ["CMD", "curl", "--silent", "--insecure", "--output", "/dev/null", "https://localhost:8443/actuator/health"]
       interval: 10s
@@ -288,7 +355,7 @@ services:
     build:
       context: ../Services/Flighting Operations
     environment:
-      <<: *service-env
+      <<: [*service-env, *rabbit-client-env]
       INSTANCE_ID: flight-operations-1
       PEERS: https://flight-operations-2:8443
       API_KEY: ${API_KEY:?defina API_KEY no .env}
@@ -298,12 +365,9 @@ services:
       DB_URL: jdbc:postgresql://fo-db-1:5432/flightops
       DB_USER: flightops
       DB_PASSWORD: ${FO_DB_PASSWORD}
-      RABBITMQ_ADDRESSES: rabbitmq:5672
-      RABBITMQ_USER: ${RABBITMQ_USER:-aisafe}
-      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-aisafe-mq}
     depends_on:
       fo-db-1: {condition: service_healthy}
-      rabbitmq: {condition: service_healthy}
+      rabbitmq-init: {condition: service_completed_successfully}
       aircraft-1: {condition: service_healthy}
       aircraft-2: {condition: service_healthy}
       airports-routes-1: {condition: service_healthy}
@@ -314,7 +378,7 @@ services:
     build:
       context: ../Services/Flighting Operations
     environment:
-      <<: *service-env
+      <<: [*service-env, *rabbit-client-env]
       INSTANCE_ID: flight-operations-2
       PEERS: https://flight-operations-1:8443
       API_KEY: ${API_KEY:?defina API_KEY no .env}
@@ -324,12 +388,9 @@ services:
       DB_URL: jdbc:postgresql://fo-db-2:5432/flightops
       DB_USER: flightops
       DB_PASSWORD: ${FO_DB_PASSWORD}
-      RABBITMQ_ADDRESSES: rabbitmq:5672
-      RABBITMQ_USER: ${RABBITMQ_USER:-aisafe}
-      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-aisafe-mq}
     depends_on:
       fo-db-2: {condition: service_healthy}
-      rabbitmq: {condition: service_healthy}
+      rabbitmq-init: {condition: service_completed_successfully}
       aircraft-1: {condition: service_healthy}
       aircraft-2: {condition: service_healthy}
       airports-routes-1: {condition: service_healthy}
@@ -354,3 +415,6 @@ networks:
 volumes:
   fo-db-1-data: {}
   fo-db-2-data: {}
+  rabbitmq-1-data: {}
+  rabbitmq-2-data: {}
+  rabbitmq-3-data: {}

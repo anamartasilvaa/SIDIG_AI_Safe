@@ -76,6 +76,8 @@ class FlightCommandServiceTest {
         ScheduledFlight f = schedule();
         assertEquals("fo-1", f.getOriginInstance());
         assertEquals(1, f.getRevision());
+        assertNotNull(f.getLastModifiedAt());
+        assertNotNull(f.getCreatedAt());
         verify(flights).save(f);
         verify(events).flightScheduled(f, "corr-1");
         verify(projector).project(any());   // read-your-writes on this replica

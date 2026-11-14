@@ -1,0 +1,202 @@
+{
+  "exchanges": [
+    {
+      "name": "flights.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "aircraft.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "airports.events",
+      "vhost": "/",
+      "type": "fanout",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "fo.dlx",
+      "vhost": "/",
+      "type": "fanout",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    }
+  ],
+  "queues": [
+    {
+      "name": "fo.dead-letter",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "quorum"
+      }
+    },
+    {
+      "name": "fo.grounding",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "quorum",
+        "x-delivery-limit": 5,
+        "x-dead-letter-exchange": "fo.dlx"
+      }
+    },
+    {
+      "name": "fo.flights.flight-operations-1",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "quorum",
+        "x-delivery-limit": 5,
+        "x-dead-letter-exchange": "fo.dlx"
+      }
+    },
+    {
+      "name": "fo.routes.flight-operations-1",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "quorum",
+        "x-delivery-limit": 5,
+        "x-dead-letter-exchange": "fo.dlx"
+      }
+    },
+    {
+      "name": "fo.aircraft.flight-operations-1",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "quorum",
+        "x-delivery-limit": 5,
+        "x-dead-letter-exchange": "fo.dlx"
+      }
+    },
+    {
+      "name": "fo.flights.flight-operations-2",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "quorum",
+        "x-delivery-limit": 5,
+        "x-dead-letter-exchange": "fo.dlx"
+      }
+    },
+    {
+      "name": "fo.routes.flight-operations-2",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "quorum",
+        "x-delivery-limit": 5,
+        "x-dead-letter-exchange": "fo.dlx"
+      }
+    },
+    {
+      "name": "fo.aircraft.flight-operations-2",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "quorum",
+        "x-delivery-limit": 5,
+        "x-dead-letter-exchange": "fo.dlx"
+      }
+    }
+  ],
+  "bindings": [
+    {
+      "source": "fo.dlx",
+      "vhost": "/",
+      "destination": "fo.dead-letter",
+      "destination_type": "queue",
+      "routing_key": "",
+      "arguments": {}
+    },
+    {
+      "source": "aircraft.events",
+      "vhost": "/",
+      "destination": "fo.grounding",
+      "destination_type": "queue",
+      "routing_key": "aircraft.status-changed",
+      "arguments": {}
+    },
+    {
+      "source": "flights.events",
+      "vhost": "/",
+      "destination": "fo.grounding",
+      "destination_type": "queue",
+      "routing_key": "fo.grounding.requested",
+      "arguments": {}
+    },
+    {
+      "source": "flights.events",
+      "vhost": "/",
+      "destination": "fo.flights.flight-operations-1",
+      "destination_type": "queue",
+      "routing_key": "flight.#",
+      "arguments": {}
+    },
+    {
+      "source": "airports.events",
+      "vhost": "/",
+      "destination": "fo.routes.flight-operations-1",
+      "destination_type": "queue",
+      "routing_key": "",
+      "arguments": {}
+    },
+    {
+      "source": "aircraft.events",
+      "vhost": "/",
+      "destination": "fo.aircraft.flight-operations-1",
+      "destination_type": "queue",
+      "routing_key": "aircraft.#",
+      "arguments": {}
+    },
+    {
+      "source": "flights.events",
+      "vhost": "/",
+      "destination": "fo.flights.flight-operations-2",
+      "destination_type": "queue",
+      "routing_key": "flight.#",
+      "arguments": {}
+    },
+    {
+      "source": "airports.events",
+      "vhost": "/",
+      "destination": "fo.routes.flight-operations-2",
+      "destination_type": "queue",
+      "routing_key": "",
+      "arguments": {}
+    },
+    {
+      "source": "aircraft.events",
+      "vhost": "/",
+      "destination": "fo.aircraft.flight-operations-2",
+      "destination_type": "queue",
+      "routing_key": "aircraft.#",
+      "arguments": {}
+    }
+  ]
+}

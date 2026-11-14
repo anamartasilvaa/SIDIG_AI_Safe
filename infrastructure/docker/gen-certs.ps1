@@ -1,16 +1,3 @@
-# =====================================================================
-#  AISafe - certificados e segredos para a stack Docker segura
-#  Uso (PowerShell, na pasta infrastructure\docker):   .\gen-certs.ps1
-#
-#  1) Cria infrastructure\.env (a partir do .env.example) e troca cada CHANGE_ME por um segredo aleatorio
-#  2) Gera um certificado de desenvolvimento com SAN para localhost e para o nome de cada container
-#     (o certificado do grupo so serve para 'localhost', e entre containers o nome tem de coincidir)
-#  3) Cria keystore.p12 (servicos), truststore.p12 (confianca) e aisafe.pem/aisafe.key (gateway)
-#
-#  Nada disto vai para o Git (.env e docker\certs\ estao no .gitignore).
-#  Pre-requisitos: keytool (JDK) e openssl (vem com o Git for Windows).
-#  Se apagar o .env mas mantiver os certificados, volte a correr com -Force.
-# =====================================================================
 param(
     [string]$OutDir = "$PSScriptRoot\certs",
     [switch]$Force
@@ -66,7 +53,8 @@ Remove-Item "$OutDir\*" -Force -ErrorAction SilentlyContinue
 
 $san = "SAN=dns:localhost,dns:gateway,dns:keycloak," +
        "dns:aircraft-1,dns:aircraft-2,dns:maintenance-1,dns:maintenance-2," +
-       "dns:airports-routes-1,dns:airports-routes-2,dns:flight-operations-1,dns:flight-operations-2,ip:127.0.0.1"
+       "dns:airports-routes-1,dns:airports-routes-2,dns:flight-operations-1,dns:flight-operations-2," +
+       "dns:rabbitmq-1,dns:rabbitmq-2,dns:rabbitmq-3,ip:127.0.0.1"
 
 & $keytool -genkeypair -alias aisafe-key -keyalg RSA -keysize 2048 -validity 365 `
     -storetype PKCS12 -keystore "$OutDir\keystore.p12" -storepass $pw `

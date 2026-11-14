@@ -73,7 +73,7 @@ public class ScheduledFlight {
         this.scheduledDateTime = scheduledDateTime;
         this.status = FlightStatus.SCHEDULED;
         this.revision = 1;
-        Instant.now().truncatedTo(ChronoUnit.MICROS);
+        this.lastModifiedAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
         this.createdAt = this.lastModifiedAt;
         this.originInstance = originInstance;
     }
