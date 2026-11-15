@@ -286,6 +286,38 @@ services:
       aircraft-2: {condition: service_healthy}
 
   # ------------------------- Airports & Routes -------------------------
+  # Database-per-Service: one PostgreSQL per Airports & Routes instance (write + read model).
+  airports-db-1:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    networks: [backend]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      POSTGRES_DB: airports
+      POSTGRES_USER: airports
+      POSTGRES_PASSWORD: ${AIRPORTS_DB_PASSWORD:?defina AIRPORTS_DB_PASSWORD no .env}
+    volumes: [airports-db-1-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airports -d airports"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  airports-db-2:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    networks: [backend]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      POSTGRES_DB: airports
+      POSTGRES_USER: airports
+      POSTGRES_PASSWORD: ${AIRPORTS_DB_PASSWORD:?defina AIRPORTS_DB_PASSWORD no .env}
+    volumes: [airports-db-2-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airports -d airports"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   airports-routes-1:
     <<: *service
@@ -304,10 +336,18 @@ services:
       SPRING_RABBITMQ_SSL_ENABLED: "true"
       SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-aisafe}
       SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-aisafe-mq}
+      SPRING_DATASOURCE_URL: jdbc:postgresql://airports-db-1:5432/airports
+      SPRING_DATASOURCE_USERNAME: airports
+      SPRING_DATASOURCE_PASSWORD: ${AIRPORTS_DB_PASSWORD:?defina AIRPORTS_DB_PASSWORD no .env}
+      SPRING_DATASOURCE_DRIVER_CLASS_NAME: org.postgresql.Driver
+      SPRING_JPA_DATABASE_PLATFORM: org.hibernate.dialect.PostgreSQLDialect
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SPRING_H2_CONSOLE_ENABLED: "false"
       APP_SECURITY_JWT_JWK_SET_URI: http://keycloak:8180/realms/aisafe/protocol/openid-connect/certs
       APP_SECURITY_JWT_ISSUER: http://localhost:8180/realms/aisafe
       APP_SECURITY_JWT_ACCEPT_DEV_TOKENS: "true"
     depends_on:
+      airports-db-1: {condition: service_healthy}
       rabbitmq-init: {condition: service_completed_successfully}
     healthcheck:
       test: ["CMD", "curl", "--silent", "--insecure", "--output", "/dev/null", "https://localhost:8443/actuator/health"]
@@ -334,11 +374,19 @@ services:
       SPRING_RABBITMQ_SSL_ENABLED: "true"
       SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-aisafe}
       SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-aisafe-mq}
+      SPRING_DATASOURCE_URL: jdbc:postgresql://airports-db-2:5432/airports
+      SPRING_DATASOURCE_USERNAME: airports
+      SPRING_DATASOURCE_PASSWORD: ${AIRPORTS_DB_PASSWORD:?defina AIRPORTS_DB_PASSWORD no .env}
+      SPRING_DATASOURCE_DRIVER_CLASS_NAME: org.postgresql.Driver
+      SPRING_JPA_DATABASE_PLATFORM: org.hibernate.dialect.PostgreSQLDialect
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SPRING_H2_CONSOLE_ENABLED: "false"
       APP_SECURITY_JWT_JWK_SET_URI: http://keycloak:8180/realms/aisafe/protocol/openid-connect/certs
       APP_SECURITY_JWT_ISSUER: http://localhost:8180/realms/aisafe
       APP_SECURITY_JWT_ACCEPT_DEV_TOKENS: "true"
 
     depends_on:
+      airports-db-2: {condition: service_healthy}
       rabbitmq-init: {condition: service_completed_successfully}
     healthcheck:
       test: ["CMD", "curl", "--silent", "--insecure", "--output", "/dev/null", "https://localhost:8443/actuator/health"]
@@ -449,6 +497,8 @@ volumes:
   keycloak-db-2-data: {}
   fo-db-1-data: {}
   fo-db-2-data: {}
+  airports-db-1-data: {}
+  airports-db-2-data: {}
   rabbitmq-1-data: {}
   rabbitmq-2-data: {}
   rabbitmq-3-data: {}
