@@ -1,0 +1,53 @@
+@startuml c4-component-airports-routes-p2
+!include <C4/C4_Component>
+LAYOUT_TOP_DOWN()
+
+title Airports & Routes Service - C4 Level 3 (Components, P2: CQRS + AMQP)
+
+Person(client, "AISafe User", "ATCC, Backoffice, Admin")
+Container_Ext(gateway, "API Gateway", "NGINX, HTTPS :8443", "Routes in round-robin")
+Container_Ext(broker, "RabbitMQ", "airports.events fanout", "Durable queues + DLQ per instance")
+Container_Ext(peer, "Peer replica", "Spring Boot", "Same service, own database")
+Container_Ext(fo, "Flight Operations", "Spring Boot", "Consumes route events (local copy)")
+
+ContainerDb(db, "airports-db-N", "PostgreSQL 16", "One database instance per service instance (write + read tables)")
+
+Container_Boundary(ar, "Airports & Routes Service (one instance)") {
+    Component(ctrl, "Airport/RouteController", "@RestController", "REST API. Routes commands to services, queries to query services.")
+
+    Component(cmdSvc, "AirportService / RouteService", "@Service (COMMAND side)", "CRUD commands on JPA aggregates. Applies replicated events idempotently (last-writer-wins).")
+    Component(proj, "AirportProjector / RouteProjector", "@Component", "Updates the read model in the same transaction as each command.")
+    Component(qrySvc, "AirportQueryService / RouteQueryService", "@Service (QUERY side)", "Reads only from the read model. P2P forwarding (X-P2P-Hops).")
+    Component(bfs, "FastestRouteStrategy", "@Component", "BFS over the read model + peer routes (US216).")
+
+    Component(writeRepo, "AirportRepository / RouteRepository", "Spring Data JPA", "WRITE model (aggregates).")
+    Component(readRepo, "AirportReadRepository / RouteReadRepository", "Spring Data JPA", "READ model (flat tables).")
+    Component(rebuild, "ReadModelRebuilder", "CommandLineRunner", "Rebuilds the read model from the write model at startup.")
+
+    Component(outbox, "ReplicationOutbox", "@Service", "Transactional Outbox: command + task in one transaction.")
+    Component(pub, "AmqpReplicationPublisher", "@Scheduled", "Publishes PENDING tasks to the fanout exchange; DONE only after publisher confirm.")
+    Component(cons, "ReplicationEventConsumer", "@RabbitListener", "Consumes events from this instance's queue; ignores own origin; retry 3x then DLQ.")
+}
+
+Rel(client, gateway, "Bearer JWT", "HTTPS")
+Rel(gateway, ctrl, "Forwards", "HTTPS")
+
+Rel(ctrl, cmdSvc, "Commands (POST/PATCH)")
+Rel(ctrl, qrySvc, "Queries (GET)")
+Rel(cmdSvc, writeRepo, "Saves aggregates")
+Rel(cmdSvc, proj, "project() in same tx")
+Rel(proj, readRepo, "Saves views")
+Rel(cmdSvc, outbox, "Enqueues event")
+Rel(outbox, db, "ReplicationTask (PENDING)", "JDBC")
+Rel(pub, broker, "Publishes events", "AMQP + confirms")
+Rel(broker, cons, "Delivers to own queue", "AMQP")
+Rel(broker, fo, "Same events, FO queue", "AMQP")
+Rel(cons, cmdSvc, "Applies with isReplication=true")
+Rel(qrySvc, readRepo, "Reads views")
+Rel(qrySvc, peer, "Forwarding on miss", "HTTPS X-P2P-Hops")
+Rel(bfs, readRepo, "Active routes by origin")
+Rel(rebuild, writeRepo, "findAll() at startup")
+Rel(rebuild, proj, "Reprojects all")
+Rel(writeRepo, db, "JDBC")
+Rel(readRepo, db, "JDBC")
+@enduml

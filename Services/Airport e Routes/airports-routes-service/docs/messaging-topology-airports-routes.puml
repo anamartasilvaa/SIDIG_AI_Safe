@@ -1,0 +1,66 @@
+@startuml messaging-topology-airports-routes
+skinparam shadowing false
+skinparam defaultTextAlignment center
+skinparam rectangle {
+  RoundCorner 8
+}
+left to right direction
+title Airports & Routes - AMQP topology (RabbitMQ, fanout pub/sub)
+
+package "Publishers (Transactional Outbox)" {
+  rectangle "airports-routes-1\nAmqpReplicationPublisher" as pub1 #DDEBFF
+  rectangle "airports-routes-2\nAmqpReplicationPublisher" as pub2 #DDEBFF
+}
+
+package "RabbitMQ (rabbitmq:3-management)" {
+  collections "airports.events\n<<fanout exchange, durable>>" as ex #FFF4D6
+
+  queue "airports.events.airports-routes-1\n<<durable>>\nTTL 1h, max-length 10000" as q1
+  queue "airports.events.airports-routes-2\n<<durable>>\nTTL 1h, max-length 10000" as q2
+  queue "airports.events.airports-routes-1.dlq" as dlq1 #FFE0E0
+  queue "airports.events.airports-routes-2.dlq" as dlq2 #FFE0E0
+
+  queue "fo.routes.flight-operations-1\n(declared by Flight Operations)" as qf1 #EEEEEE
+  queue "fo.routes.flight-operations-2\n(declared by Flight Operations)" as qf2 #EEEEEE
+}
+
+package "Consumers" {
+  rectangle "airports-routes-1\nReplicationEventConsumer" as c1 #DDEBFF
+  rectangle "airports-routes-2\nReplicationEventConsumer" as c2 #DDEBFF
+  rectangle "flight-operations-1 / -2\nRouteEventListener\n(local copy of routes)" as cf #EEEEEE
+}
+
+pub1 --> ex : AIRPORT_CREATED / DETAILS_UPDATED / STATUS_CHANGED\nROUTE_CREATED / UPDATED / DEACTIVATED
+pub2 --> ex
+
+ex --> q1
+ex --> q2
+ex --> qf1
+ex --> qf2
+
+q1 --> c1
+q2 --> c2
+qf1 --> cf
+qf2 --> cf
+
+q1 ..> dlq1 : rejected after 3 attempts,\nexpired (TTL) or overflow
+q2 ..> dlq2
+
+note bottom of ex
+  Event envelope (JSON, persistent):
+  taskId, eventType, method, path, payload,
+  originalUser, lastModified, originNodeId.
+  messageId = <originNodeId>-<taskId> (idempotency).
+  Publisher confirms: outbox task only marked DONE
+  after broker ack (at-least-once delivery).
+end note
+
+note bottom of q1
+  One durable queue per instance = every instance
+  receives every event (pub/sub). If an instance is
+  down, its queue buffers the events.
+  Consumers ignore events with their own originNodeId
+  and apply the rest idempotently (last-writer-wins:
+  lastModified, tie-break by originNodeId).
+end note
+@enduml

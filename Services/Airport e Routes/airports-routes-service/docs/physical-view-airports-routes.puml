@@ -1,0 +1,58 @@
+@startuml physical-view-airports-routes
+skinparam shadowing false
+title Airports & Routes - physical view (Mode B, docker-compose.secure.yml)
+
+node "Docker host" {
+  node "edge network" {
+    node "gateway-1\nnginx :8443" as G1
+    node "gateway-2\nnginx :8444" as G2
+    node "rabbitmq\nrabbitmq:3-management\nmgmt UI 127.0.0.1:15672" as RB
+  }
+  node "backend network (internal, no Internet)" {
+    node "keycloak-1" as K1
+    node "keycloak-2" as K2
+    database "keycloak-db\nPostgreSQL 16" as KDB
+
+    node "airports-routes-1\nSpring Boot :8443 (HTTPS)" as AR1
+    database "airports-db-1\nPostgreSQL 16\n(write model + read model)" as DB1
+    node "airports-routes-2\nSpring Boot :8443 (HTTPS)" as AR2
+    database "airports-db-2\nPostgreSQL 16\n(write model + read model)" as DB2
+
+    node "aircraft-1 / -2\nmaintenance-1 / -2\nflight-operations-1 / -2" as OTHER
+  }
+}
+
+actor "Client" as C
+C --> G1 : HTTPS
+C --> G2 : HTTPS (2nd entry point)
+G1 --> AR1 : HTTPS (round-robin)
+G1 --> AR2
+G2 --> AR1
+G2 --> AR2
+G1 --> K1
+G1 --> K2
+K1 --> KDB : JDBC
+K2 --> KDB : JDBC
+
+AR1 --> DB1 : JDBC
+AR2 --> DB2 : JDBC
+AR1 --> RB : AMQP :5672
+AR2 --> RB : AMQP :5672
+OTHER --> RB : AMQP :5672
+AR1 <..> AR2 : HTTPS\nP2P read forwarding (X-P2P-Hops)
+
+note bottom of DB1
+  Database-per-Service pattern: a dedicated
+  PostgreSQL instance per service instance.
+  Data isolation: replicas never share a database;
+  state converges through AMQP events only.
+end note
+
+note right of RB
+  Single broker in Mode B. Queues are durable,
+  so events survive a broker restart; if the
+  broker is down, writes keep working and the
+  outbox retries publication (up to 10 attempts,
+  exponential backoff capped at 60 s).
+end note
+@enduml
