@@ -28,8 +28,7 @@ public class AirportReadModel {
     private Instant lastModified;
     private String originNodeId;
 
-    @Lob
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "TEXT")
     private String viewJson;
 
     protected AirportReadModel() {

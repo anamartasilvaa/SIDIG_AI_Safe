@@ -10,7 +10,7 @@ public class ReplicationTask {
     @Column(nullable = false) private String peerUrl;
     @Column(nullable = false) private String httpMethod;
     @Column(nullable = false) private String path;
-    @Lob private String payload;
+    @Column(columnDefinition = "TEXT") private String payload;
     @Column(nullable = false) private String originalUser;
     private int attempts;
     @Enumerated(EnumType.STRING) @Column(nullable = false) private Status status = Status.PENDING;
