@@ -1,0 +1,49 @@
+@startuml sd-cqrs-query-read-model
+skinparam style strictuml
+autonumber
+title SD - CQRS query side: read model + P2P forwarding (P2)
+
+actor "ATCC" as User
+participant "RouteController" as Ctrl
+participant "RouteQueryService" as Query
+participant "RouteReadRepository\n(route_read_model)" as RM
+participant "Peer replica\n(RouteQueryService)" as Peer
+
+== Startup ==
+note over Query, RM
+  ReadModelRebuilder (CommandLineRunner, @Order(10))
+  rebuilds airport_read_model and route_read_model
+  from the write model: the read model is derived
+  state and can always be reconstructed.
+end note
+
+== Query ==
+User -> Ctrl : GET /api/routes/{id}
+activate Ctrl
+Ctrl -> Query : getRoute(id, hops)
+activate Query
+Query -> RM : findById(id)
+alt found locally
+    RM --> Query : RouteReadModel
+    Query --> Ctrl : RouteViewDTO (toView)
+else not found and hops < max-hops (1)
+    Query -> Peer : GET /api/routes/{id}\nX-P2P-Hops: hops+1
+    Peer --> Query : 200 RouteViewDTO / 404
+    Query --> Ctrl : view or 404
+else not found and hops = max-hops
+    Query --> Ctrl : 404 Not Found
+end
+Ctrl --> User : 200 / 404
+deactivate Query
+deactivate Ctrl
+
+note right of Query
+  Query side never touches the write model:
+  statistics, search, GeoJSON export and the
+  BFS alternative-route search (FastestRouteStrategy)
+  all read from route_read_model only.
+  Commands go through RouteService (write model),
+  which keeps the read model in sync via RouteProjector
+  in the same transaction.
+end note
+@enduml

@@ -1,0 +1,32 @@
+@startuml sd-create-airport-outbox
+title SD - Create Airport with Asynchronous Outbox Replication (US106)
+actor "Backoffice Operator" as C
+participant "AirportController" as Ctl
+participant "AirportService" as S
+database "H2 local" as DB
+participant "ReplicationOutbox" as Outbox
+
+C -> Ctl : POST /api/airports + JWT\n(sem X-P2P-Sync)
+activate Ctl
+Ctl -> Ctl : RBAC: ROLE_BACKOFFICE ou ROLE_ADMIN
+
+Ctl -> S : registerAirport(dto, isReplication=false)
+activate S
+
+S -> DB : save(Airport)
+DB --> S : Airport guardado
+
+S -> Outbox : enqueue(peers, "POST", "/api/airports", payload)
+activate Outbox
+Outbox -> DB : save(ReplicationTask)
+Outbox --> S : Task criada
+deactivate Outbox
+
+S --> Ctl : AirportViewDTO
+deactivate S
+
+Ctl --> C : 201 Created + link self
+deactivate Ctl
+
+
+@enduml
