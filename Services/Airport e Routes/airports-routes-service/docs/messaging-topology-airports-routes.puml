@@ -30,7 +30,7 @@ package "Consumers" {
   rectangle "flight-operations-1 / -2\nlocal copy of routes" as cf #EEEEEE
 }
 
-pub1 --> ex : AIRPORT_CREATED / DETAILS_UPDATED / STATUS_CHANGED\nROUTE_CREATED / UPDATED / DEACTIVATED
+pub1 --> ex : AIRPORT_CREATED / DETAILS_UPDATED / STATUS_CHANGED / IMAGE_UPDATED\nROUTE_CREATED / UPDATED / DEACTIVATED
 pub2 --> ex
 
 ex --> q1

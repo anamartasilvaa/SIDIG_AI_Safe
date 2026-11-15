@@ -72,8 +72,9 @@ de leitura **da própria instância** nunca fica atrás do de escrita. As outras
 | **Transactional Outbox** | Dentro de cada instância | `AmqpReplicationPublisher` lê a tabela de outbox e publica |
 | **HTTP par-a-par** (só leituras) | Entre instâncias | Se uma instância não tem o dado, pergunta à outra com `X-P2P-Hops` (máximo 1 salto, sem ciclos); usa *circuit breaker* e um JWT interno `ROLE_PEER` |
 
-**Eventos publicados:** `AIRPORT_CREATED`, `AIRPORT_DETAILS_UPDATED`, `AIRPORT_STATUS_CHANGED`,
+**Eventos publicados:** `AIRPORT_CREATED`, `AIRPORT_DETAILS_UPDATED`, `AIRPORT_STATUS_CHANGED`, `AIRPORT_IMAGE_UPDATED`,
 `ROUTE_CREATED`, `ROUTE_UPDATED`, `ROUTE_DEACTIVATED`.
+O evento da imagem leva a imagem em *data URL* (base64) e só existe no modo AMQP; o tamanho fica limitado pelo limite de upload do Spring (por omissão 1 MB).
 
 **Envelope (JSON, mensagem persistente):** `taskId`, `eventType`, `method`, `path`, `payload`, `originalUser`,
 `lastModified`, `originNodeId`. O `messageId` é `<originNodeId>-<taskId>`.
@@ -147,6 +148,9 @@ Nenhuma alteração aos endpoints REST. Mudou apenas **como** a replicação ent
 ## E2.10 Testes
 
 - **Unitários e de integração:** `./mvnw test` na pasta do serviço (captura em `docs/screenshots/ar-02-testes-intellij.png`).
+  Cobrem, entre outros, o consumidor AMQP (`ReplicationEventConsumerTest`: eventos próprios ignorados, rejeição sem reenfileirar),
+  o publicador do outbox (`AmqpReplicationPublisherTest`: DONE só com confirmação do broker, repetição, FAILED às 10 tentativas),
+  o projetor CQRS (`AirportProjectorTest`) e a replicação da imagem (`AirportImageReplicationTest`).
 - **Postman (Entrega 1, Modo B):** coleção completa, 348 testes (captura `ar-01-postman-348-modo-b.png`).
 - **Postman (Entrega 2):** `SISDIS P2 - Testes (sistema completo)` — cria uma rota pela gateway 1, lê-a pela gateway 2 (replicação por eventos),
   consulta estatísticas e GeoJSON, desativa a rota pela gateway 2 e confirma o estado pela gateway 1; inclui o mock dos unicorns.
