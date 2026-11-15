@@ -30,6 +30,7 @@ public class AmqpReplicationConfig {
     public Queue replicationDeadLetterQueue(@Value("${peer.node-id:${server.port:local}}") String nodeId,
                                             @Value("${app.messaging.queue.max-length:10000}") long maxLength) {
         return QueueBuilder.durable("airports.events." + nodeId + ".dlq")
+                .quorum()                                            // replicada pelos nos do cluster
                 .withArgument("x-max-length", maxLength)
                 .build();
     }
@@ -40,6 +41,7 @@ public class AmqpReplicationConfig {
                                   @Value("${app.messaging.queue.max-length:10000}") long maxLength) {
         String name = "airports.events." + nodeId;
         return QueueBuilder.durable(name)
+                .quorum()                                            // replicada pelos nos do cluster (tolera a perda de 1 no)
                 .withArgument("x-dead-letter-exchange", "")          // exchange por omissao
                 .withArgument("x-dead-letter-routing-key", name + ".dlq")
                 .withArgument("x-message-ttl", ttlMs)                // 1 hora por omissao
