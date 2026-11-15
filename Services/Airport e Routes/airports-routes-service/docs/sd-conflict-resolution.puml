@@ -1,0 +1,35 @@
+@startuml sd-conflict-resolution
+skinparam shadowing false
+title SD - Conflict resolution (last-writer-wins) when two instances update the same airport
+
+participant "airports-routes-1" as A1
+participant "RabbitMQ\nairports.events" as MQ
+participant "airports-routes-2" as A2
+
+== Concurrent updates of the same airport ==
+A1 -> A1 : PATCH /api/airports/OPO/status\nlastModified = T1, originNodeId = airports-routes-1
+A2 -> A2 : PATCH /api/airports/OPO/status\nlastModified = T2, originNodeId = airports-routes-2
+
+A1 -> MQ : AIRPORT_STATUS_CHANGED (T1)
+A2 -> MQ : AIRPORT_STATUS_CHANGED (T2)
+
+MQ -> A1 : event from airports-routes-2 (T2)
+MQ -> A2 : event from airports-routes-1 (T1)
+note over MQ
+  The fanout also returns each instance its own
+  event: the consumer ignores events whose
+  originNodeId equals its own node id.
+end note
+
+== Decision on each instance: isNewer(incoming, current) ==
+A1 -> A1 : T2 > T1 ?\nyes -> apply (airports-routes-2 wins)
+A2 -> A2 : T1 > T2 ?\nno -> ignore (own state is newer)
+
+note over A1, A2
+  Rule: the update with the later lastModified wins.
+  On a tie, the larger originNodeId wins.
+  Both instances converge to the same state
+  (eventual consistency). Events are idempotent:
+  applying the same event twice changes nothing.
+end note
+@enduml

@@ -6,25 +6,30 @@ node "Docker host" {
   node "edge network" {
     node "gateway-1\nnginx :8443" as G1
     node "gateway-2\nnginx :8444" as G2
-    node "rabbitmq\nrabbitmq:3-management\nmgmt UI 127.0.0.1:15672" as RB
   }
   node "backend network (internal, no Internet)" {
     node "keycloak-1" as K1
     node "keycloak-2" as K2
-    database "keycloak-db\nPostgreSQL 16" as KDB
+    database "keycloak-db-0/1/2\nPostgreSQL (repmgr)\nprimary + 2 standby" as KDB
+
+    node "rabbitmq-1\nmgmt UI 127.0.0.1:15672" as RB1
+    node "rabbitmq-2\nmgmt UI 127.0.0.1:15673" as RB2
+    node "rabbitmq-3\nmgmt UI 127.0.0.1:15674" as RB3
+    node "rabbitmq-init\n(imports definitions.json,\nexits with code 0)" as RBI
 
     node "airports-routes-1\nSpring Boot :8443 (HTTPS)" as AR1
-    database "airports-db-1\nPostgreSQL 16\n(write model + read model)" as DB1
+    database "airports-db-1\nPostgreSQL 16\n(write model + read model + outbox)" as DB1
     node "airports-routes-2\nSpring Boot :8443 (HTTPS)" as AR2
-    database "airports-db-2\nPostgreSQL 16\n(write model + read model)" as DB2
+    database "airports-db-2\nPostgreSQL 16\n(write model + read model + outbox)" as DB2
 
-    node "aircraft-1 / -2\nmaintenance-1 / -2\nflight-operations-1 / -2" as OTHER
+    node "flight-operations-1 / -2\n(each with its own database)" as FO
+    node "aircraft-1 / -2\nmaintenance-1 / -2\n(REST only, no broker yet)" as OTHER
   }
 }
 
 actor "Client" as C
 C --> G1 : HTTPS
-C --> G2 : HTTPS (2nd entry point)
+C --> G2 : HTTPS (2nd entry point, client-side failover)
 G1 --> AR1 : HTTPS (round-robin)
 G1 --> AR2
 G2 --> AR1
@@ -36,23 +41,29 @@ K2 --> KDB : JDBC
 
 AR1 --> DB1 : JDBC
 AR2 --> DB2 : JDBC
-AR1 --> RB : AMQP :5672
-AR2 --> RB : AMQP :5672
-OTHER --> RB : AMQP :5672
+AR1 --> RB1 : AMQPS :5671\n(address list: any of the 3 nodes)
+AR2 --> RB2 : AMQPS :5671\n(address list: any of the 3 nodes)
+FO --> RB3 : AMQPS :5671
+RB1 -- RB2 : cluster
+RB2 -- RB3 : cluster
+RB1 -- RB3 : cluster
+RBI ..> RB1 : HTTP management API\n(one-shot, at startup)
 AR1 <..> AR2 : HTTPS\nP2P read forwarding (X-P2P-Hops)
 
 note bottom of DB1
   Database-per-Service pattern: a dedicated
   PostgreSQL instance per service instance.
-  Data isolation: replicas never share a database;
-  state converges through AMQP events only.
+  Replicas never share a database; state
+  converges through AMQP events only.
+  Each instance has its own outbox table.
 end note
 
-note right of RB
-  Single broker in Mode B. Queues are durable,
-  so events survive a broker restart; if the
-  broker is down, writes keep working and the
-  outbox retries publication (up to 10 attempts,
-  exponential backoff capped at 60 s).
+note right of RB2
+  3-node cluster, quorum queues (Raft): an
+  airports.events.<node> queue keeps working with
+  1 node down. AMQP only over TLS (AMQPS 5671).
+  If the whole broker is down, writes still work and
+  the outbox retries publication (up to 10 attempts,
+  backoff min(60 s, 5 s << attempts)).
 end note
 @enduml

@@ -1,0 +1,47 @@
+@startuml sd-failure-recovery
+skinparam shadowing false
+title SD - Failure recovery (broker down, poison message, instance down)
+
+participant "Client" as C
+participant "airports-routes-1\n(command side)" as A1
+database "airports-db-1\n(outbox)" as DB1
+participant "AmqpReplicationPublisher\n(every 2 s)" as P
+queue "RabbitMQ cluster\nairports.events" as MQ
+queue "airports.events.airports-routes-2" as Q2
+queue "airports.events.airports-routes-2.dlq" as DLQ
+participant "airports-routes-2\nReplicationEventConsumer" as A2
+
+== 1. Broker unavailable: writes keep working ==
+C -> A1 : POST /api/airports
+A1 -> DB1 : save aggregate + read model\n+ outbox task (PENDING)\n(one transaction)
+A1 --> C : 201 Created
+P -> DB1 : PENDING tasks (max 100)
+P -> MQ : send + waitForConfirms(5 s)
+MQ -[#red]-> P : unavailable / no confirm
+P -> DB1 : attempts++, nextAttemptAt = now + min(60, 5 << attempts) s
+note right of P
+  After 10 failed attempts the task becomes FAILED
+  (it stays in the table and is visible in
+  GET /api/admin/replication-tasks).
+end note
+... broker back ...
+P -> MQ : send + waitForConfirms
+MQ --> P : confirm (ack)
+P -> DB1 : task = DONE
+
+== 2. Instance 2 is down: events wait in its queue ==
+MQ -> Q2 : routed copy (durable, quorum)
+note right of Q2 : buffered until instance 2 returns\n(message TTL 1 h, max 10000 messages)
+... instance 2 restarts ...
+Q2 -> A2 : deliver
+A2 -> A2 : apply event (idempotent)
+A2 --> Q2 : ack
+
+== 3. Poison message: retry, then dead-letter ==
+Q2 -> A2 : deliver
+A2 -[#red]> A2 : processing fails
+A2 -> A2 : retry (listener retry,\n3 attempts: 1 s, then x2)
+A2 --> Q2 : reject without requeue\n(AmqpRejectAndDontRequeueException)
+Q2 -> DLQ : dead-letter\n(also on TTL expiry or overflow)
+note right of DLQ : kept for inspection in the\nRabbitMQ management UI
+@enduml
