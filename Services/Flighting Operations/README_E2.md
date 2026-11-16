@@ -74,21 +74,24 @@ scheduled_flight outbox_event    (read-your-writes)       flight_view
 - **Projeções.** O `FlightProjector` atualiza `flight_view` (só se a versão recebida for mais recente), recalcula a
   utilização da rota (sem voos `CANCELED`) e pede ao `MoodProjector` o novo humor dos aviões afetados.
 
-| Componente                                   | Responsabilidade                                                                                          |
-|----------------------------------------------|-----------------------------------------------------------------------------------------------------------|
-| `ScheduledFlightController`                  | API pública (mesmos URLs da P1); lê `X-Request-Id` como *correlation id*; `ETag` no `GET /{id}`           |
-| `UnicornController`                          | `GET /api/v2/unicorns`                                                                                    |
-| `InternalScheduledFlightController`          | API interna: estado completo dos voos e grounding                                                         |
-| `FlightCommandService`                       | Agendamento e mudança de estado (lado dos comandos)                                                       |
-| `FlightQueryService`                         | Consultas sobre as vistas (lado das consultas)                                                            |
-| `FlightReplicaService`                       | Aplica os voos recebidos de outras réplicas (*last writer wins*) e chama o `ConflictResolver`             |
-| `ConflictResolver`                           | Resolve conflitos de horário entre réplicas de forma determinística                                       |
-| `GroundingService`                           | Reatribui os voos futuros de um avião imobilizado                                                         |
-| `FlightProjector` / `MoodProjector`          | Mantêm as vistas de leitura                                                                               |
-| `ReferenceDataService`                       | Mantém `route_ref` e `aircraft_ref`; recurso a REST (`ReferenceLookup`) só para referências desconhecidas |
-| `OutboxWriter` / `OutboxRelay`               | *Transactional outbox*: grava o evento com o agregado e publica-o no broker                               |
-| `FlightEventListener` / `RouteEventListener` | Consumidores AMQP idempotentes (`IdempotencyGuard`)                                                       |
-| `AirportsRoutesTranslator`                   | *Anti-Corruption Layer* para os eventos do Airports & Routes                                              |
+| Componente                                                                                        | Responsabilidade                                                                                           |
+|---------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------|
+| `ScheduledFlightController`                                                                       | API pública (mesmos URLs da P1); lê `X-Request-Id` como *correlation id*; `ETag` no `GET /{id}`            |
+| `UnicornController`                                                                               | `GET /api/v2/unicorns`                                                                                     |
+| `InternalScheduledFlightController`                                                               | API interna: estado completo dos voos e grounding                                                          |
+| `FlightCommandService`                                                                            | Agendamento e mudança de estado (lado dos comandos)                                                        |
+| `FlightQueryService`                                                                              | Consultas sobre as vistas (lado das consultas)                                                             |
+| `FlightReplicaService`                                                                            | Aplica os voos recebidos de outras réplicas (*last writer wins*) e chama o `ConflictResolver`              |
+| `ConflictResolver`                                                                                | Resolve conflitos de horário entre réplicas de forma determinística                                        |
+| `GroundingService`                                                                                | Reatribui os voos futuros de um avião imobilizado                                                          |
+| `FlightProjector` / `MoodProjector`                                                               | Mantêm as vistas de leitura                                                                                |
+| `ReferenceDataService`                                                                            | Mantém `route_ref` e `aircraft_ref`; recurso a REST (`ReferenceLookup`) só para referências desconhecidas  |
+| `OutboxWriter` / `OutboxRelay`                                                                    | *Transactional outbox*: grava o evento com o agregado e publica-o no broker                                |
+| `AircraftReferenceService`                                                                        | Aplica os eventos do Aircraft ao `aircraft_ref` (só alterações mais recentes) e recalcula o humor          |
+| `AircraftGroundingHandler`                                                                        | Decide o grounding: atualiza o `aircraft_ref` e chama o `GroundingService` se o avião não estiver `ACTIVE` |
+| `SnapshotBootstrapper`                                                                            | Réplica com a BD vazia: copia os voos da outra réplica no arranque                                         |
+| `FlightEventListener` / `RouteEventListener` / `AircraftEventListener` / `GroundingEventListener` | Consumidores AMQP idempotentes (`IdempotencyGuard`)                                                        |
+| `AirportsRoutesTranslator` / `AircraftEventTranslator`                                            | *Anti-Corruption Layer* para os eventos do Airports & Routes e do Aircraft                                 |
 
 ## E2.3 Comunicação entre serviços
 
@@ -109,14 +112,33 @@ transfer*), pelo que cada evento basta para atualizar a cópia, sem chamadas de 
 
 **Eventos consumidos pelo FO:**
 
-| Origem            | Exchange                      | Fila (uma por réplica) | Uso                                                                       |
-|-------------------|-------------------------------|------------------------|---------------------------------------------------------------------------|
-| Outra réplica FO  | `flights.events` (`flight.#`) | `fo.flights.<réplica>` | Replicação dos voos                                                       |
-| Airports & Routes | `airports.events` (fanout)    | `fo.routes.<réplica>`  | `ROUTE_CREATED`, `ROUTE_UPDATED`, `ROUTE_DEACTIVATED` → `route_ref` (ACL) |
+| Origem            | Exchange                                      | Fila (uma por réplica)          | Uso                                                                       |
+|-------------------|-----------------------------------------------|---------------------------------|---------------------------------------------------------------------------|
+| Outra réplica FO  | `flights.events` (`flight.#`)                 | `fo.flights.<réplica>`          | Replicação dos voos                                                       |
+| Airports & Routes | `airports.events` (fanout)                    | `fo.routes.<réplica>`           | `ROUTE_CREATED`, `ROUTE_UPDATED`, `ROUTE_DEACTIVATED` → `route_ref` (ACL) |
+| Aircraft          | `aircraft.events` (`aircraft.#`)              | `fo.aircraft.<réplica>`         | Registo e alterações dos aviões → `aircraft_ref` e humor (ACL)            |
+| Aircraft          | `aircraft.events` (`aircraft.status-changed`) | `fo.grounding` (**partilhada**) | Avião deixa de estar `ACTIVE` → grounding, feito por **uma só** réplica   |
+| Flight Operations | `flights.events` (`fo.grounding.requested`)   | `fo.grounding` (**partilhada**) | Pedido explícito de grounding (`GroundingRequested`)                      |
+
+Contrato proposto ao serviço Aircraft (exchange `aircraft.events`, tipo `topic`; routing keys `aircraft.registered`,
+`aircraft.status-changed` e `aircraft.updated`):
+
+```json
+{"eventId": "...", "type": "AircraftStatusChanged", "occurredAt": "2026-11-16T10:00:00Z",
+ "aggregateId": "CS-TTA", "revision": 4,
+ "payload": {"registrationNumber": "CS-TTA", "modelCode": "A320", "status": "UNDER_MAINTENANCE",
+             "maximumRange": 6100, "seatingCapacity": 180}}
+```
+
+O `AircraftEventTranslator` é tolerante: ignora campos desconhecidos, aceita o `payload` como texto JSON e a matrícula
+só no `aggregateId`. Um evento com uma revisão antiga é ignorado, pelo que não imobiliza um avião que já voltou a
+`ACTIVE`.
 
 Padrões usados:
 
 - ***Publish/subscribe* com uma fila por réplica.** Cada réplica recebe todos os eventos.
+- ***Work queue* (*competing consumers*).** A fila `fo.grounding` é partilhada pelas duas réplicas: cada mensagem é
+  processada por **uma** delas, e as reatribuições chegam à outra como eventos normais (`FlightReassigned`).
 - ***Transactional outbox*.** Um evento nunca se perde se a transação foi confirmada, e nunca é publicado se a
   transação falhou. O `OutboxRelay` usa *publisher confirms* e mensagens `mandatory`. Para no primeiro envio falhado
   (preserva a ordem) e tenta de novo com backoff exponencial (até 30 s).
@@ -169,6 +191,8 @@ Todo o tráfego AMQP usa **TLS (AMQPS, porta 5671)**; a porta 5672 sem TLS está
 | Conflito entre réplicas                                     | Resolvido de forma determinística; o voo perdedor é cancelado (secção E2.4)                                    |
 | Grounding sem avião livre                                   | O voo passa a `DELAYED` com o motivo `NO_REPLACEMENT_AIRCRAFT`                                                 |
 | Primário da BD do Keycloak em baixo                         | Failover automático (testado: promoção em menos de 45 s, novos logins continuam a funcionar)                   |
+| Avião deixa de estar `ACTIVE` (evento do Aircraft)          | Uma só réplica faz o grounding (fila `fo.grounding`); se ela falhar a meio, a mensagem volta à fila            |
+| Réplica arranca com a BD vazia (disco perdido)              | `SnapshotBootstrapper` copia os voos da outra réplica (tenta de 5 em 5 s) enquanto consome a sua fila          |
 
 ## E2.7 `GET /api/v2/unicorns` (humor dos aviões)
 
@@ -211,11 +235,11 @@ também recalculada a cada 5 min (`app.mood.refresh-interval`).
 - Novo: `GET /api/v2/unicorns` (secção E2.7).
 - API interna (`/internal/scheduled-flights`, exige `X-API-Key`, bloqueada na gateway):
 
-| Método | Endpoint                                   | Descrição                                                                 |
-|--------|--------------------------------------------|---------------------------------------------------------------------------|
-| `GET`  | `/`                                        | Estado completo de todos os voos da réplica (`FlightState`)               |
-| `GET`  | `/{id}`                                    | Estado completo de um voo                                                 |
-| `POST` | `/aircraft/{registrationNumber}/grounding` | Grounding: reatribui os voos futuros a aviões `ACTIVE` livres             |
+| Método | Endpoint                                   | Descrição                                                                                                             |
+|--------|--------------------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+| `GET`  | `/`                                        | Estado completo de todos os voos da réplica (`FlightState`)                                                           |
+| `GET`  | `/{id}`                                    | Estado completo de um voo                                                                                             |
+| `POST` | `/aircraft/{registrationNumber}/grounding` | Grounding por REST (mantido enquanto o Aircraft o usar); mesmo `GroundingService` do caminho por eventos, idempotente |
 
 ## E2.9 Configuração (novas variáveis)
 
@@ -232,30 +256,36 @@ também recalculada a cada 5 min (`app.mood.refresh-interval`).
 | `app.outbox.max-backoff`                  | `30s`           | Espera máxima entre tentativas com o broker em baixo |
 | `app.outbox.retention`                    | `7d`            | Tempo até apagar eventos já publicados               |
 | `app.mood.refresh-interval`               | `5m`            | Recálculo periódico do humor dos aviões              |
+| `app.bootstrap.retry-interval`            | `5s`            | Intervalo entre tentativas do snapshot no arranque   |
+| `app.bootstrap.max-attempts`              | `24`            | Número máximo de tentativas do snapshot              |
 
 No Modo B todas as palavras-passe (BD, RabbitMQ, *Erlang cookie*, BD do Keycloak, repmgr) vêm do `.env`, gerado com
 valores aleatórios pelo `gen-certs.ps1` e fora do Git.
 
 ## E2.10 Testes
 
-**JUnit – 125 testes** (`.\mvnw.cmd test` na pasta do serviço; a base de dados de teste é H2 em modo PostgreSQL, com as
+**JUnit – 144 testes** (`.\mvnw.cmd test` na pasta do serviço; a base de dados de teste é H2 em modo PostgreSQL, com as
 mesmas migrações Flyway). Além dos testes da P1, cobrem:
 
 - lado dos comandos (`FlightCommandServiceTest`) e das consultas (`FlightQueryServiceTest`);
 - projeções (`FlightProjectorTest`, `MoodProjectorTest`);
 - replicação por eventos e resolução de conflitos (`FlightReplicaServiceTest`, `FlightEventParsingTest`);
 - ACL dos eventos do Airports & Routes (`AirportsRoutesTranslatorTest`) e dados de referência (`ReferenceDataTest`);
-- grounding (`GroundingServiceTest`);
+- grounding (`GroundingServiceTest`) e eventos do Aircraft (`AircraftEventTranslatorTest`,
+  `AircraftReferenceServiceTest`, `AircraftGroundingHandlerTest`);
+- snapshot no arranque (`SnapshotBootstrapperTest`);
 - regras RBAC do novo endpoint (`SecurityRulesTest`).
 
 ## E2.11 Limitações conhecidas
 
-| Limitação                                         | Impacto                                                                | Trabalho futuro                            |
-|---------------------------------------------------|------------------------------------------------------------------------|--------------------------------------------|
-| Um só anfitrião Docker                            | Se a máquina falhar, falha tudo                                        | Docker Swarm ou Kubernetes em vários nós   |
-| Imagem `bitnamilegacy/postgresql-repmgr` (fixada) | Repositório sem atualizações desde 2025                                | Fork mantido `soldevelo/postgresql-repmgr` |
-| *Last writer wins*                                | Em alterações concorrentes ao mesmo voo, uma perde-se                  | Resolução no domínio por tipo de alteração |
-| Consistência eventual entre réplicas              | Logo após uma escrita, a outra réplica pode ainda não ter o voo (~1 s) | —  (escolha consciente: AP)                |
+| Limitação                                                               | Impacto                                                                                            | Trabalho futuro                                                         |
+|-------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------|
+| Um só anfitrião Docker                                                  | Se a máquina falhar, falha tudo                                                                    | Docker Swarm ou Kubernetes em vários nós                                |
+| Imagem `bitnamilegacy/postgresql-repmgr` (fixada)                       | Repositório sem atualizações desde 2025                                                            | Fork mantido `soldevelo/postgresql-repmgr`                              |
+| *Last writer wins*                                                      | Em alterações concorrentes ao mesmo voo, uma perde-se                                              | Resolução no domínio por tipo de alteração                              |
+| Consistência eventual entre réplicas                                    | Logo após uma escrita, a outra réplica pode ainda não ter o voo (~1 s)                             | —  (escolha consciente: AP)                                             |
+| Voo agendado numa réplica que ainda não recebeu a imobilização do avião | Esse voo não é reatribuído automaticamente                                                         | Voltar a pedir o grounding (REST ou `GroundingRequested`, idempotentes) |
+| Eventos do Aircraft dependem do serviço Aircraft                        | Enquanto não forem publicados, o `aircraft_ref` vem do recurso a REST e o grounding chega por REST | Publicação dos eventos pelo Aircraft (contrato na secção E2.3)          |
 
 ## E2.12 Estrutura do projeto
 
@@ -293,4 +323,44 @@ Pasta `docs/` deste serviço (PlantUML):
 - `sd-aircraft-grounding`: reatribuição de voos
 - `sd-failure-recovery`: falhas do broker e de uma réplica, e recuperação
 - `sd-unicorns`: `GET /api/v2/unicorns` como consulta CQRS pura
+
+Os restantes diagramas da pasta (`sd-replication`, `sd-get-flight-forwarding`, `sd-change-flight-status`,
+`sd-check-availability` e `sd-route-utilization`) são da Entrega 1.
+
+## E2.14 Capturas (Modo B)
+
+**Todos os contentores a correr** (2 gateways, 2 Keycloak, 3 nós da BD do Keycloak, 3 nós RabbitMQ, 2 réplicas de cada
+serviço e uma PostgreSQL por réplica do FO):
+
+![Contentores do Modo B](docs/screenshots/e2-01-containers.png)
+
+**Cluster RabbitMQ com 3 nós** e **filas *quorum* do FO**:
+
+![Nós do RabbitMQ](docs/screenshots/e2-02-rabbitmq-nodes.png)
+
+![Filas do FO](docs/screenshots/e2-03-rabbitmq-queues.png)
+
+**Agendar numa réplica e ler nas duas** (a gateway alterna entre réplicas; `X-Served-By` mostra qual respondeu):
+
+![Agendar e ler nas duas réplicas](docs/screenshots/e2-04-agendar-e-ler.png)
+
+**`GET /api/v2/unicorns`**:
+
+![Humor dos aviões](docs/screenshots/e2-05-unicorns.png)
+
+**Broker totalmente em baixo:** o agendamento é aceite (AP); a outra réplica só recebe o voo quando o broker volta:
+
+![Broker em baixo e recuperação](docs/screenshots/e2-06-broker-em-baixo.png)
+
+**Failover da BD do Keycloak** (o repmgr promove um standby):
+
+![Failover da BD do Keycloak](docs/screenshots/e2-07-keycloak-db-failover.png)
+
+**Réplica com a BD vazia:** o `SnapshotBootstrapper` copia os voos da outra réplica:
+
+![Snapshot no arranque](docs/screenshots/e2-08-snapshot-bootstrap.png)
+
+**Testes JUnit:**
+
+![144 testes JUnit](docs/screenshots/e2-09-junit.png)
 
