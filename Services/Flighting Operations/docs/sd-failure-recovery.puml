@@ -42,17 +42,18 @@ F2 -> D2 : idempotent apply (processed_event, revision)
 note right : until the backlog is consumed, reads on FO-2\nmay be slightly stale (eventual consistency)
 
 == E. FO-2 starts with an EMPTY database (disk lost / new replica) ==
-F2 -> F1 : GET /internal/scheduled-flights (X-API-Key)\nall flights as FlightState
+F2 -> F2 : SnapshotBootstrapper (background thread):\ncommand store empty -> snapshot needed
+F2 -> F1 : GET /internal/scheduled-flights (X-API-Key)\nall flights as FlightState (retry every 5 s if FO-1 is down)
 F1 --> F2 : snapshot (each item with its revision)
 F2 -> D2 : apply each flight (command store + views);\nreferences fetched once by REST if missing
-R2 -> F2 : queue backlog (events after and around the snapshot)
+R2 -> F2 : queue backlog, consumed IN PARALLEL with the snapshot
 F2 -> D2 : apply; older revisions ignored -> converges with no gap
 note right : queues are declared in the broker definitions\n(not by the application), so they exist and\nstore events even before the replica first starts
 
 == F. Aircraft and Airports & Routes completely down ==
 GW -> F1 : POST /api/scheduled-flights
 F1 -> D1 : validates with local AircraftRef / RouteRef (last known state)
-F1 --> GW : 201 / 409 (no 503 any more; stale references are the accepted AP trade-off)
+F1 --> GW : 201 / 409 (503 only if the route or aircraft was never seen;\nstale references are the accepted AP trade-off)
 
 == G. One gateway fails ==
 GW -> GW : client uses the other gateway (:8443 <-> :8444)
