@@ -1,0 +1,52 @@
+@startuml c4-container-p2
+!include <C4/C4_Container>
+LAYOUT_TOP_DOWN()
+
+title AISafe - C4 Level 2 (Containers), second delivery (docker-compose.secure.yml): no single point of failure besides the Docker host
+
+Person(user, "AISafe User", "Admin, Backoffice, ATCC, Maintenance Technician/Supervisor")
+
+System_Boundary(aisafe, "AISafe Flight Management System") {
+    Container(gw, "API Gateway (x2)", "NGINX, HTTPS :8443 and :8444", "Two identical instances. Routing by service, round-robin and failover between replicas, rate limiting, blocking of /internal, /actuator and /h2-console.")
+    Container(kc, "Keycloak (x2, cluster)", "Keycloak 26, aisafe realm", "Login (OpenID Connect) and RS256 JWT with the roles. Two nodes; public key published as JWKS.")
+    ContainerDb(kcdb, "Keycloak DB (x3)", "PostgreSQL 17 + repmgr", "1 primary + 2 streaming standbys; automatic failover. Keycloak connects with targetServerType=primary.")
+
+    ContainerQueue(mq, "Message broker (x3)", "RabbitMQ 3.13 cluster, AMQPS :5671", "Quorum queues (majority of 2 of 3 nodes), pause_minority, dead-letter exchange. Topology imported before the services start (rabbitmq-init).")
+
+    Container(fo, "Flight Operations Service (x2)", "Java 17, Spring Boot 4, CQRS", "Command side: aggregate + transactional outbox in one transaction. Query side: read models (flights, route utilization, aircraft mood /api/v2/unicorns). Idempotent consumers, deterministic conflict resolution.")
+    ContainerDb(fodb, "Flight Ops DB (one per replica)", "PostgreSQL 16, Flyway", "fo_command (aggregate, references, outbox, processed events) and fo_query (read models)")
+
+    Container(ar, "Airports & Routes Service (x2)", "Java 17, Spring Boot 4, CQRS", "Airports, routes and history. Write model + flat read model; transactional outbox to airports.events.")
+    ContainerDb(ardb, "Airports & Routes DB (one per replica)", "PostgreSQL 16", "Write model and read model")
+
+    Container(ac, "Aircraft Service (x2)", "Java 17, Spring Boot 4", "Aircraft models and instances, operational status. Integration as in the first delivery (REST).")
+    ContainerDb(acdb, "Aircraft DB (one per replica)", "H2", "Aircraft")
+    Container(mt, "Maintenance Service (x2)", "Java 17, Spring Boot 4", "Maintenance templates and records. Integration as in the first delivery (REST).")
+    ContainerDb(mtdb, "Maintenance DB (one per replica)", "H2", "Maintenance")
+}
+
+Rel(user, gw, "Login and requests (Bearer JWT); if one gateway fails, uses the other", "HTTPS")
+Rel(gw, kc, "/realms/... (login, JWKS), failover between nodes", "HTTP")
+Rel(kc, kcdb, "Reads/Writes (current primary)", "JDBC")
+Rel(gw, fo, "/api/scheduled-flights/..., /api/v2/unicorns", "HTTPS, round-robin")
+Rel(gw, ar, "/api/airports/..., /api/routes/...", "HTTPS, round-robin")
+Rel(gw, ac, "/api/aircraft/...", "HTTPS, round-robin")
+Rel(gw, mt, "/api/maintenance/...", "HTTPS, round-robin")
+
+Rel(fo, mq, "Publishes flight.* (flights.events); consumes fo.flights.<replica>, fo.routes.<replica>, fo.aircraft.<replica>, fo.grounding", "AMQPS")
+Rel(ar, mq, "Publishes ROUTE_* / AIRPORT_* (airports.events); consumes airports.events.<replica>", "AMQPS")
+Rel_U(ac, mq, "Planned: publishes aircraft.* (aircraft.events)", "AMQPS")
+
+Rel(fo, ac, "Fallback only: aircraft unknown locally", "HTTPS GET /api/aircraft/{reg}")
+Rel(fo, ar, "Fallback only: route unknown locally", "HTTPS GET /api/routes/{id}")
+Rel(ac, fo, "Aircraft grounded: reassignment of future flights (until aircraft events exist)", "HTTPS POST /internal/.../grounding, X-API-Key")
+Rel(mt, ac, "Updates operational status", "HTTPS /internal/..., X-API-Key")
+Rel(ac, ar, "Route data for the compatible-routes query", "HTTPS GET /api/routes")
+Rel(fo, kc, "Public key to validate the JWT (cached; every service does the same)", "JWKS")
+
+Rel(fo, fodb, "Reads/Writes", "JPA")
+Rel(ar, ardb, "Reads/Writes", "JPA")
+Rel(ac, acdb, "Reads/Writes", "JPA")
+Rel(mt, mtdb, "Reads/Writes", "JPA")
+
+@enduml
