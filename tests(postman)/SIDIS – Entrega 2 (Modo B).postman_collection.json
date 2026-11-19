@@ -1,0 +1,1330 @@
+{
+ "info": {
+  "_postman_id": "75328178-7748-4a17-81b5-7fc3a10191d1",
+  "name": "SIDIS – Entrega 2 (Modo B)",
+  "description": "AISafe Entrega 2 (CQRS + AMQP/RabbitMQ + Database-per-Service), Modo B: docker compose -f infrastructure/docker-compose.secure.yml up --build -d.\nEntry through the gateways https://localhost:8443 and https://localhost:8444. Use the SIDIS environment (gateway, gateway2, realm, clientId, pwd*). Turn off SSL verification (or newman --insecure).\nRole tag in each request name: {ADMIN} {ATCC} {BACKOFFICE} {TECH} {SUPERVISOR} {NONE}.\nFolders 00 to 04 and 06: automatic (Runner / Newman). They write on one gateway and read on the other and poll until the other instance converges (eventual consistency). Airports reads carry X-P2P-Hops: 1 so that a 200 proves the event arrived through RabbitMQ and not through P2P forwarding.\nFolder 05: the mandatory /api/v2/unicorns mock; create a Postman Mock Server for it and set the collection variable mockUrl.\nFolder 07: MANUAL; run the docker command between [ ] before sending each request.\nScope: Airports & Routes, Flight Operations and /api/v2/unicorns. Aircraft and Maintenance only have a smoke test (folder 05) until their Entrega 2 migration is finished.",
+  "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+ },
+ "item": [
+  {
+   "name": "00 Startup",
+   "item": [
+    {
+     "name": "00.00 Keycloak realm is reachable – starts a new run {NONE} → 200",
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+         "pm.test('Realm info matches the configured realm', () => pm.expect(pm.response.json().realm).to.eql(pm.environment.get('realm')));"
+        ]
+       }
+      }
+     ],
+     "request": {
+      "method": "GET",
+      "header": [],
+      "url": {
+       "raw": "{{gateway}}/realms/{{realm}}",
+       "host": [
+        "{{gateway}}"
+       ],
+       "path": [
+        "realms",
+        "{{realm}}"
+       ]
+      }
+     },
+     "response": []
+    }
+   ]
+  },
+  {
+   "name": "01 Airports & Routes: commands, AMQP events, eventual consistency",
+   "item": [
+    {
+     "name": "01.01 [Airports] Create an airport on gateway 1 {BACKOFFICE} → 201",
+     "event": [
+      {
+       "listen": "prerequest",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "const A='QWXYZJKV'; pm.environment.set('e2Iata', [0,1,2].map(() => A[Math.floor(Math.random()*A.length)]).join(''));"
+        ]
+       }
+      },
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test('Status code is 201', () => pm.response.to.have.status(201));",
+         "pm.test('Airport is returned with its IATA code', () => pm.expect(pm.response.json().iataCode).to.eql(pm.environment.get('e2Iata')));"
+        ]
+       }
+      }
+     ],
+     "request": {
+      "method": "POST",
+      "header": [],
+      "url": {
+       "raw": "{{gateway}}/api/airports",
+       "host": [
+        "{{gateway}}"
+       ],
+       "path": [
+        "api",
+        "airports"
+       ]
+      },
+      "body": {
+       "mode": "raw",
+       "raw": "{\"iataCode\": \"{{e2Iata}}\", \"name\": \"E2 Test Airport\", \"city\": \"Testville\", \"country\": \"Portugal\", \"timezone\": \"Europe/Lisbon\", \"type\": \"REGIONAL\", \"latitude\": 41.0, \"longitude\": -8.0}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "response": []
+    },
+    {
+     "name": "01.02 The airport reaches the other instance through RabbitMQ (read on gateway 2) {BACKOFFICE} → 200",
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "const L = eval(pm.collectionVariables.get('lib'));",
+         "// Poll `path` until `n` consecutive answers satisfy `pred`. With 2 replicas behind round-robin, n consecutive",
+         "// good answers mean that BOTH replicas hold the data (reads are local: no forwarding between FO replicas).",
+         "const until = async (role, path, pred, o = {}) => {",
+         "  const n = o.n || 6, end = Date.now() + (o.ms || 30000); let ok = 0, last;",
+         "  while (Date.now() < end) {",
+         "    last = await L.call('GET', path, null, role, o.base, o.h);",
+         "    let good = false; try { good = !!pred(last); } catch (e) {}",
+         "    ok = good ? ok + 1 : 0;",
+         "    if (ok >= n) return {ok: true, last};",
+         "    await L.sleep(good ? 150 : 1000);",
+         "  }",
+         "  return {ok: false, last};",
+         "};",
+         "const r = await until('BACKOFFICE', '/api/airports/' + pm.environment.get('e2Iata'), x => x.code === 200, {base: pm.environment.get('gateway2'), h: {'X-P2P-Hops': '1'}});",
+         "pm.test('Gateway 2 answers 200 on 6 consecutive reads WITHOUT P2P forwarding (event applied by RabbitMQ)', () => pm.expect(r.ok, 'last status ' + r.last.code).to.be.true);"
+        ]
+       }
+      }
+     ],
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "X-P2P-Hops",
+        "value": "1"
+       }
+      ],
+      "url": {
+       "raw": "{{gateway2}}/api/airports/{{e2Iata}}",
+       "host": [
+        "{{gateway2}}"
+       ],
+       "path": [
+        "api",
+        "airports",
+        "{{e2Iata}}"
+       ]
+      }
+     },
+     "response": []
+    },
+    {
+     "name": "01.03 Change the airport status to CLOSED on gateway 2 {BACKOFFICE} → 200",
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+         "pm.test('Status is CLOSED in the response', () => pm.expect(pm.response.json().status).to.eql('CLOSED'));"
+        ]
+       }
+      }
+     ],
+     "request": {
+      "method": "PATCH",
+      "header": [],
+      "url": {
+       "raw": "{{gateway2}}/api/airports/{{e2Iata}}/status",
+       "host": [
+        "{{gateway2}}"
+       ],
+       "path": [
+        "api",
+        "airports",
+        "{{e2Iata}}",
+        "status"
+       ]
+      },
+      "body": {
+       "mode": "raw",
+       "raw": "\"CLOSED\"",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "response": []
+    },
+    {
+     "name": "01.04 Gateway 1 converges to CLOSED (last-writer-wins) {BACKOFFICE} → 200",
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "const L = eval(pm.collectionVariables.get('lib'));",
+         "// Poll `path` until `n` consecutive answers satisfy `pred`. With 2 replicas behind round-robin, n consecutive",
+         "// good answers mean that BOTH replicas hold the data (reads are local: no forwarding between FO replicas).",
+         "const until = async (role, path, pred, o = {}) => {",
+         "  const n = o.n || 6, end = Date.now() + (o.ms || 30000); let ok = 0, last;",
+         "  while (Date.now() < end) {",
+         "    last = await L.call('GET', path, null, role, o.base, o.h);",
+         "    let good = false; try { good = !!pred(last); } catch (e) {}",
+         "    ok = good ? ok + 1 : 0;",
+         "    if (ok >= n) return {ok: true, last};",
+         "    await L.sleep(good ? 150 : 1000);",
+         "  }",
+         "  return {ok: false, last};",
+         "};",
+         "const r = await until('BACKOFFICE', '/api/airports/' + pm.environment.get('e2Iata'), x => x.code === 200 && x.json().status === 'CLOSED', {h: {'X-P2P-Hops': '1'}});",
+         "pm.test('Both instances show CLOSED', () => pm.expect(r.ok, 'last status ' + r.last.code).to.be.true);"
+        ]
+       }
+      }
+     ],
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "X-P2P-Hops",
+        "value": "1"
+       }
+      ],
+      "url": {
+       "raw": "{{gateway}}/api/airports/{{e2Iata}}",
+       "host": [
+        "{{gateway}}"
+       ],
+       "path": [
+        "api",
+        "airports",
+        "{{e2Iata}}"
+       ]
+      }
+     },
+     "response": []
+    },
+    {
+     "name": "01.05 [Airports] Create a route on gateway 1 {ADMIN} → 201",
+     "event": [
+      {
+       "listen": "prerequest",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.environment.set('tempRouteId', 'RT-E2' + pm.environment.get('runId'));"
+        ]
+       }
+      },
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test('Status code is 201', () => pm.response.to.have.status(201));",
+         "pm.environment.set('tempRouteStatus', pm.response.json().status);",
+         "pm.test('Route is returned', () => pm.expect(pm.response.json().routeId).to.eql(pm.environment.get('tempRouteId')));"
+        ]
+       }
+      }
+     ],
+     "request": {
+      "method": "POST",
+      "header": [],
+      "url": {
+       "raw": "{{gateway}}/api/routes",
+       "host": [
+        "{{gateway}}"
+       ],
+       "path": [
+        "api",
+        "routes"
+       ]
+      },
+      "body": {
+       "mode": "raw",
+       "raw": "{\"routeId\": \"RT-E2{{runId}}\", \"originIata\": \"LIS\", \"destinationIata\": \"OPO\", \"estimatedFlightTime\": 50, \"minimumRange\": 300, \"minimumCapacity\": 50}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "response": []
+    },
+    {
+     "name": "01.06 The route reaches the other instance (read on gateway 2) {ATCC} → 200",
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "const L = eval(pm.collectionVariables.get('lib'));",
+         "// Poll `path` until `n` consecutive answers satisfy `pred`. With 2 replicas behind round-robin, n consecutive",
+         "// good answers mean that BOTH replicas hold the data (reads are local: no forwarding between FO replicas).",
+         "const until = async (role, path, pred, o = {}) => {",
+         "  const n = o.n || 6, end = Date.now() + (o.ms || 30000); let ok = 0, last;",
+         "  while (Date.now() < end) {",
+         "    last = await L.call('GET', path, null, role, o.base, o.h);",
+         "    let good = false; try { good = !!pred(last); } catch (e) {}",
+         "    ok = good ? ok + 1 : 0;",
+         "    if (ok >= n) return {ok: true, last};",
+         "    await L.sleep(good ? 150 : 1000);",
+         "  }",
+         "  return {ok: false, last};",
+         "};",
+         "const r = await until('ATCC', '/api/routes/' + pm.environment.get('tempRouteId'), x => x.code === 200, {base: pm.environment.get('gateway2'), h: {'X-P2P-Hops': '1'}});",
+         "pm.test('Route readable on gateway 2 (6 consecutive 200, no P2P forwarding)', () => pm.expect(r.ok, 'last status ' + r.last.code).to.be.true);"
+        ]
+       }
+      }
+     ],
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "X-P2P-Hops",
+        "value": "1"
+       }
+      ],
+      "url": {
+       "raw": "{{gateway2}}/api/routes/{{tempRouteId}}",
+       "host": [
+        "{{gateway2}}"
+       ],
+       "path": [
+        "api",
+        "routes",
+        "{{tempRouteId}}"
+       ]
+      }
+     },
+     "response": []
+    },
+    {
+     "name": "01.07 CQRS query side: GeoJSON export from the read model {ADMIN} → 200",
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+         "pm.test('Is a FeatureCollection', () => pm.expect(pm.response.text()).to.include('FeatureCollection'));"
+        ]
+       }
+      }
+     ],
+     "request": {
+      "method": "GET",
+      "header": [],
+      "url": {
+       "raw": "{{gateway}}/api/routes/export/geojson",
+       "host": [
+        "{{gateway}}"
+       ],
+       "path": [
+        "api",
+        "routes",
+        "export",
+        "geojson"
+       ]
+      }
+     },
+     "response": []
+    },
+    {
+     "name": "01.08 CQRS query side: busiest airports (route_read_model + airport_read_model) {ADMIN} → 200",
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+         "pm.test('Response has content', () => pm.expect(pm.response.text().length).to.be.above(2));"
+        ]
+       }
+      }
+     ],
+     "request": {
+      "method": "GET",
+      "header": [],
+      "url": {
+       "raw": "{{gateway}}/api/routes/statistics/busiest-airports",
+       "host": [
+        "{{gateway}}"
+       ],
+       "path": [
+        "api",
+        "routes",
+        "statistics",
+        "busiest-airports"
+       ]
+      }
+     },
+     "response": []
+    }
+   ]
+  },
+  {
+   "name": "02 Flight Operations: CQRS and replication by events",
+   "item": [
+    {
+     "name": "02.01 [FO command] Schedule a flight {ATCC} → 201",
+     "event": [
+      {
+       "listen": "prerequest",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "const base = Date.UTC(2031 + Math.floor(Math.random() * 8), Math.floor(Math.random() * 12), 1 + Math.floor(Math.random() * 25));",
+         "[0, 1, 2, 3].forEach(i => pm.environment.set('day' + i, new Date(base + i * 86400000).toISOString().slice(0, 10)));"
+        ]
+       }
+      },
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test('Status code is 201', () => pm.response.to.have.status(201));",
+         "const j = pm.response.json();",
+         "pm.test('Flight is SCHEDULED with revision >= 1', () => { pm.expect(j.id).to.be.a('string'); pm.expect(j.status).to.eql('SCHEDULED'); pm.expect(j.revision).to.be.at.least(1); });",
+         "pm.environment.set('e2FlightId', j.id);"
+        ]
+       }
+      }
+     ],
+     "request": {
+      "method": "POST",
+      "header": [],
+      "url": {
+       "raw": "{{gateway}}/api/scheduled-flights",
+       "host": [
+        "{{gateway}}"
+       ],
+       "path": [
+        "api",
+        "scheduled-flights"
+       ]
+      },
+      "body": {
+       "mode": "raw",
+       "raw": "{\"routeId\": \"RT-OPOLIS\", \"registrationNumber\": \"CS-TTA\", \"scheduledDateTime\": \"{{day1}}T08:00:00\"}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "response": []
+    },
+    {
+     "name": "02.02 [FO query] The flight reaches BOTH replicas through AMQP; ETag = revision {ATCC} → 200",
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "const L = eval(pm.collectionVariables.get('lib'));",
+         "// Poll `path` until `n` consecutive answers satisfy `pred`. With 2 replicas behind round-robin, n consecutive",
+         "// good answers mean that BOTH replicas hold the data (reads are local: no forwarding between FO replicas).",
+         "const until = async (role, path, pred, o = {}) => {",
+         "  const n = o.n || 6, end = Date.now() + (o.ms || 30000); let ok = 0, last;",
+         "  while (Date.now() < end) {",
+         "    last = await L.call('GET', path, null, role, o.base, o.h);",
+         "    let good = false; try { good = !!pred(last); } catch (e) {}",
+         "    ok = good ? ok + 1 : 0;",
+         "    if (ok >= n) return {ok: true, last};",
+         "    await L.sleep(good ? 150 : 1000);",
+         "  }",
+         "  return {ok: false, last};",
+         "};",
+         "const r = await until('ATCC', '/api/scheduled-flights/' + pm.environment.get('e2FlightId'), x => x.code === 200);",
+         "pm.test('6 consecutive 200 (both replicas have the flight)', () => pm.expect(r.ok, 'last status ' + r.last.code).to.be.true);",
+         "pm.test('ETag header carries the revision', () => pm.expect(r.last.headers.get('ETag')).to.be.a('string'));"
+        ]
+       }
+      }
+     ],
+     "request": {
+      "method": "GET",
+      "header": [],
+      "url": {
+       "raw": "{{gateway}}/api/scheduled-flights/{{e2FlightId}}",
+       "host": [
+        "{{gateway}}"
+       ],
+       "path": [
+        "api",
+        "scheduled-flights",
+        "{{e2FlightId}}"
+       ]
+      }
+     },
+     "response": []
+    },
+    {
+     "name": "02.03 [FO command] Change the status to DELAYED on gateway 2 {ATCC} → 200",
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+         "pm.test('Status is DELAYED', () => pm.expect(pm.response.json().status).to.eql('DELAYED'));"
+        ]
+       }
+      }
+     ],
+     "request": {
+      "method": "PATCH",
+      "header": [],
+      "url": {
+       "raw": "{{gateway2}}/api/scheduled-flights/{{e2FlightId}}/status",
+       "host": [
+        "{{gateway2}}"
+       ],
+       "path": [
+        "api",
+        "scheduled-flights",
+        "{{e2FlightId}}",
+        "status"
+       ]
+      },
+      "body": {
+       "mode": "raw",
+       "raw": "{\"status\": \"DELAYED\"}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "response": []
+    },
+    {
+     "name": "02.04 Both replicas converge: DELAYED with the same revision {ATCC} → 200",
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "const L = eval(pm.collectionVariables.get('lib'));",
+         "// Poll `path` until `n` consecutive answers satisfy `pred`. With 2 replicas behind round-robin, n consecutive",
+         "// good answers mean that BOTH replicas hold the data (reads are local: no forwarding between FO replicas).",
+         "const until = async (role, path, pred, o = {}) => {",
+         "  const n = o.n || 6, end = Date.now() + (o.ms || 30000); let ok = 0, last;",
+         "  while (Date.now() < end) {",
+         "    last = await L.call('GET', path, null, role, o.base, o.h);",
+         "    let good = false; try { good = !!pred(last); } catch (e) {}",
+         "    ok = good ? ok + 1 : 0;",
+         "    if (ok >= n) return {ok: true, last};",
+         "    await L.sleep(good ? 150 : 1000);",
+         "  }",
+         "  return {ok: false, last};",
+         "};",
+         "const revs = new Set();",
+         "const r = await until('ATCC', '/api/scheduled-flights/' + pm.environment.get('e2FlightId'), x => { const ok = x.code === 200 && x.json().status === 'DELAYED'; if (ok) revs.add(x.json().revision); return ok; });",
+         "pm.test('6 consecutive answers with DELAYED (eventual consistency)', () => pm.expect(r.ok, 'last status ' + r.last.code).to.be.true);",
+         "pm.test('All answers carry the same revision', () => pm.expect(revs.size).to.eql(1));"
+        ]
+       }
+      }
+     ],
+     "request": {
+      "method": "GET",
+      "header": [],
+      "url": {
+       "raw": "{{gateway}}/api/scheduled-flights/{{e2FlightId}}",
+       "host": [
+        "{{gateway}}"
+       ],
+       "path": [
+        "api",
+        "scheduled-flights",
+        "{{e2FlightId}}"
+       ]
+      }
+     },
+     "response": []
+    },
+    {
+     "name": "02.05 [FO query] Route utilization read model {BACKOFFICE} → 200|204",
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test('Status code is 200 or 204', () => pm.expect(pm.response.code).to.be.oneOf([200, 204]));"
+        ]
+       }
+      }
+     ],
+     "request": {
+      "method": "GET",
+      "header": [],
+      "url": {
+       "raw": "{{gateway}}/api/scheduled-flights/route-utilization",
+       "host": [
+        "{{gateway}}"
+       ],
+       "path": [
+        "api",
+        "scheduled-flights",
+        "route-utilization"
+       ]
+      }
+     },
+     "response": []
+    }
+   ]
+  },
+  {
+   "name": "03 Cross-service events: Airports to Flight Operations",
+   "item": [
+    {
+     "name": "03.01 FO learns the new route from the Airports event: schedule on it {ATCC} → 201",
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test('Status code is 201 (route_ref updated by ROUTE_CREATED)', () => pm.response.to.have.status(201));"
+        ]
+       }
+      }
+     ],
+     "request": {
+      "method": "POST",
+      "header": [],
+      "url": {
+       "raw": "{{gateway}}/api/scheduled-flights",
+       "host": [
+        "{{gateway}}"
+       ],
+       "path": [
+        "api",
+        "scheduled-flights"
+       ]
+      },
+      "body": {
+       "mode": "raw",
+       "raw": "{\"routeId\": \"{{tempRouteId}}\", \"registrationNumber\": \"CS-TTA\", \"scheduledDateTime\": \"{{day2}}T08:00:00\"}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "response": []
+    },
+    {
+     "name": "03.02 [Airports] Deactivate the route on gateway 2 {ADMIN} → 200",
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test('Status code is 200', () => pm.response.to.have.status(200));"
+        ]
+       }
+      }
+     ],
+     "request": {
+      "method": "PATCH",
+      "header": [],
+      "url": {
+       "raw": "{{gateway2}}/api/routes/{{tempRouteId}}/deactivate",
+       "host": [
+        "{{gateway2}}"
+       ],
+       "path": [
+        "api",
+        "routes",
+        "{{tempRouteId}}",
+        "deactivate"
+       ]
+      }
+     },
+     "response": []
+    },
+    {
+     "name": "03.02b Airports converge: route INACTIVE on gateway 1 without P2P forwarding {ATCC} → 200",
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "const L = eval(pm.collectionVariables.get('lib'));",
+         "// Poll `path` until `n` consecutive answers satisfy `pred`. With 2 replicas behind round-robin, n consecutive",
+         "// good answers mean that BOTH replicas hold the data (reads are local: no forwarding between FO replicas).",
+         "const until = async (role, path, pred, o = {}) => {",
+         "  const n = o.n || 6, end = Date.now() + (o.ms || 30000); let ok = 0, last;",
+         "  while (Date.now() < end) {",
+         "    last = await L.call('GET', path, null, role, o.base, o.h);",
+         "    let good = false; try { good = !!pred(last); } catch (e) {}",
+         "    ok = good ? ok + 1 : 0;",
+         "    if (ok >= n) return {ok: true, last};",
+         "    await L.sleep(good ? 150 : 1000);",
+         "  }",
+         "  return {ok: false, last};",
+         "};",
+         "const r = await until('ATCC', '/api/routes/' + pm.environment.get('tempRouteId'), x => x.code === 200 && x.json().status === 'INACTIVE', {h: {'X-P2P-Hops': '1'}});",
+         "pm.test('ROUTE_DEACTIVATED applied on the other instance', () => pm.expect(r.ok, 'last status ' + r.last.code).to.be.true);"
+        ]
+       }
+      }
+     ],
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "X-P2P-Hops",
+        "value": "1"
+       }
+      ],
+      "url": {
+       "raw": "{{gateway}}/api/routes/{{tempRouteId}}",
+       "host": [
+        "{{gateway}}"
+       ],
+       "path": [
+        "api",
+        "routes",
+        "{{tempRouteId}}"
+       ]
+      }
+     },
+     "response": []
+    },
+    {
+     "name": "03.03 FO applies ROUTE_DEACTIVATED: scheduling on the inactive route is refused {ATCC} → 409",
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "const L = eval(pm.collectionVariables.get('lib'));",
+         "// Poll `path` until `n` consecutive answers satisfy `pred`. With 2 replicas behind round-robin, n consecutive",
+         "// good answers mean that BOTH replicas hold the data (reads are local: no forwarding between FO replicas).",
+         "const until = async (role, path, pred, o = {}) => {",
+         "  const n = o.n || 6, end = Date.now() + (o.ms || 30000); let ok = 0, last;",
+         "  while (Date.now() < end) {",
+         "    last = await L.call('GET', path, null, role, o.base, o.h);",
+         "    let good = false; try { good = !!pred(last); } catch (e) {}",
+         "    ok = good ? ok + 1 : 0;",
+         "    if (ok >= n) return {ok: true, last};",
+         "    await L.sleep(good ? 150 : 1000);",
+         "  }",
+         "  return {ok: false, last};",
+         "};",
+         "// The first attempts may still return 201 until FO consumes the event; retry on other time slots until 409.",
+         "let code = pm.response.code, i = 0; const slots = ['09', '12', '15', '18', '21'];",
+         "while (code !== 409 && i < slots.length) {",
+         "  await L.sleep(3000);",
+         "  const r = await L.call('POST', '/api/scheduled-flights', {routeId: pm.environment.get('tempRouteId'), registrationNumber: 'CS-TTA', scheduledDateTime: pm.environment.get('day3') + 'T' + slots[i] + ':00:00'}, 'ATCC');",
+         "  code = r.code; i++;",
+         "}",
+         "pm.test('Scheduling on an inactive route ends in 409', () => pm.expect(code).to.eql(409));"
+        ]
+       }
+      }
+     ],
+     "request": {
+      "method": "POST",
+      "header": [],
+      "url": {
+       "raw": "{{gateway}}/api/scheduled-flights",
+       "host": [
+        "{{gateway}}"
+       ],
+       "path": [
+        "api",
+        "scheduled-flights"
+       ]
+      },
+      "body": {
+       "mode": "raw",
+       "raw": "{\"routeId\": \"{{tempRouteId}}\", \"registrationNumber\": \"CS-TTA\", \"scheduledDateTime\": \"{{day3}}T06:00:00\"}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "response": []
+    }
+   ]
+  },
+  {
+   "name": "04 GET /api/v2/unicorns (mood read model)",
+   "item": [
+    {
+     "name": "04.01 GET /api/v2/unicorns: mood of every aircraft {ATCC} → 200",
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+         "const j = pm.response.json();",
+         "pm.test('Body is an array', () => pm.expect(j).to.be.an('array'));",
+         "pm.test('Every item has the mood fields', () => j.forEach(u => { pm.expect(u.registrationNumber).to.be.a('string'); pm.expect(['HAPPY', 'BUSY', 'GRUMPY', 'SLEEPING']).to.include(u.mood); pm.expect(u.delayedOrCanceledLast7Days).to.be.a('number'); pm.expect(u.flightsNext24h).to.be.a('number'); }));"
+        ]
+       }
+      }
+     ],
+     "request": {
+      "method": "GET",
+      "header": [],
+      "url": {
+       "raw": "{{gateway}}/api/v2/unicorns",
+       "host": [
+        "{{gateway}}"
+       ],
+       "path": [
+        "api",
+        "v2",
+        "unicorns"
+       ]
+      }
+     },
+     "response": []
+    },
+    {
+     "name": "04.02 Filter by mood (?mood=HAPPY) {BACKOFFICE} → 200",
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+         "pm.test('Only HAPPY aircraft are returned', () => pm.response.json().forEach(u => pm.expect(u.mood).to.eql('HAPPY')));"
+        ]
+       }
+      }
+     ],
+     "request": {
+      "method": "GET",
+      "header": [],
+      "url": {
+       "raw": "{{gateway}}/api/v2/unicorns?mood=HAPPY",
+       "host": [
+        "{{gateway}}"
+       ],
+       "path": [
+        "api",
+        "v2",
+        "unicorns?mood=HAPPY"
+       ]
+      }
+     },
+     "response": []
+    },
+    {
+     "name": "04.03 CQRS: the read model is fed by the flight events (CS-TTA is listed) {ADMIN} → 200",
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "const L = eval(pm.collectionVariables.get('lib'));",
+         "// Poll `path` until `n` consecutive answers satisfy `pred`. With 2 replicas behind round-robin, n consecutive",
+         "// good answers mean that BOTH replicas hold the data (reads are local: no forwarding between FO replicas).",
+         "const until = async (role, path, pred, o = {}) => {",
+         "  const n = o.n || 6, end = Date.now() + (o.ms || 30000); let ok = 0, last;",
+         "  while (Date.now() < end) {",
+         "    last = await L.call('GET', path, null, role, o.base, o.h);",
+         "    let good = false; try { good = !!pred(last); } catch (e) {}",
+         "    ok = good ? ok + 1 : 0;",
+         "    if (ok >= n) return {ok: true, last};",
+         "    await L.sleep(good ? 150 : 1000);",
+         "  }",
+         "  return {ok: false, last};",
+         "};",
+         "const r = await until('ADMIN', '/api/v2/unicorns', x => x.code === 200 && x.json().some(u => u.registrationNumber === 'CS-TTA'), {n: 4});",
+         "pm.test('CS-TTA appears in aircraft_mood_view after its flights were scheduled', () => pm.expect(r.ok, 'last status ' + r.last.code).to.be.true);"
+        ]
+       }
+      }
+     ],
+     "request": {
+      "method": "GET",
+      "header": [],
+      "url": {
+       "raw": "{{gateway}}/api/v2/unicorns",
+       "host": [
+        "{{gateway}}"
+       ],
+       "path": [
+        "api",
+        "v2",
+        "unicorns"
+       ]
+      }
+     },
+     "response": []
+    },
+    {
+     "name": "04.04 No token {NONE} → 401",
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test('Status code is 401', () => pm.response.to.have.status(401));"
+        ]
+       }
+      }
+     ],
+     "request": {
+      "method": "GET",
+      "header": [],
+      "url": {
+       "raw": "{{gateway}}/api/v2/unicorns",
+       "host": [
+        "{{gateway}}"
+       ],
+       "path": [
+        "api",
+        "v2",
+        "unicorns"
+       ]
+      }
+     },
+     "response": []
+    },
+    {
+     "name": "04.05 MAINTENANCE_TECHNICIAN has no access {TECH} → 403",
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test('Status code is 403', () => pm.response.to.have.status(403));"
+        ]
+       }
+      }
+     ],
+     "request": {
+      "method": "GET",
+      "header": [],
+      "url": {
+       "raw": "{{gateway}}/api/v2/unicorns",
+       "host": [
+        "{{gateway}}"
+       ],
+       "path": [
+        "api",
+        "v2",
+        "unicorns"
+       ]
+      }
+     },
+     "response": []
+    }
+   ]
+  },
+  {
+   "name": "05 Mock server /api/v2/unicorns (mandatory; set the collection variable mockUrl)",
+   "item": [
+    {
+     "name": "05.01 GET /api/v2/unicorns (mock server) {NONE} → 200",
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test('Status 200', () => pm.response.to.have.status(200));",
+         "pm.test('Resposta em JSON', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'));",
+         "const body = pm.response.json();",
+         "pm.test('Tem lista de avioes', () => pm.expect(body.unicorns).to.be.an('array').that.is.not.empty);",
+         "pm.test('Cada aviao tem aircraftId, mood e lastUpdated', () => body.unicorns.forEach(u => { pm.expect(u).to.have.property('aircraftId'); pm.expect(u).to.have.property('mood'); pm.expect(u).to.have.property('lastUpdated'); }));",
+         "pm.test('mood tem um valor valido', () => body.unicorns.forEach(u => pm.expect(['HAPPY','TIRED','GROUNDED']).to.include(u.mood)));"
+        ]
+       }
+      }
+     ],
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "Accept",
+        "value": "application/json"
+       }
+      ],
+      "url": {
+       "raw": "{{mockUrl}}/api/v2/unicorns",
+       "host": [
+        "{{mockUrl}}"
+       ],
+       "path": [
+        "api",
+        "v2",
+        "unicorns"
+       ]
+      }
+     },
+     "response": []
+    }
+   ],
+   "description": "Mock exigido pelo enunciado: devolve o mood status dos avioes em JSON.\nLigacao ao CQRS: e um endpoint so de LEITURA (query). No CQRS, as queries sao servidas por um modelo de leitura derivado dos eventos dos comandos (como airport_read_model / route_read_model neste projeto) e nao pelo modelo de escrita. O mood seria uma vista materializada no modelo de leitura, atualizada pelos eventos do broker e eventualmente consistente."
+  },
+  {
+   "name": "06 Aircraft and Maintenance (smoke only, pending their migration)",
+   "item": [
+    {
+     "name": "06.01 Aircraft CS-TTA {ATCC} → 200",
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+         "const j = pm.response.json();",
+         "pm.test('CS-TTA has 180 seats', () => { pm.expect(j.registrationNumber).to.eql('CS-TTA'); pm.expect(j.capacity).to.eql(180); });",
+         "pm.test('CS-TTA is available to schedule flights', () => pm.expect(String(j.status).toUpperCase()).to.eql('ACTIVE'));"
+        ]
+       }
+      }
+     ],
+     "request": {
+      "method": "GET",
+      "header": [],
+      "url": {
+       "raw": "{{gateway}}/api/aircraft/CS-TTA",
+       "host": [
+        "{{gateway}}"
+       ],
+       "path": [
+        "api",
+        "aircraft",
+        "CS-TTA"
+       ]
+      }
+     },
+     "response": []
+    },
+    {
+     "name": "06.02 Ongoing maintenance records {SUPERVISOR} → 200",
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+         "pm.test('Response is valid JSON', () => pm.expect(() => pm.response.json()).to.not.throw());"
+        ]
+       }
+      }
+     ],
+     "request": {
+      "method": "GET",
+      "header": [],
+      "url": {
+       "raw": "{{gateway}}/api/maintenance/records/ongoing",
+       "host": [
+        "{{gateway}}"
+       ],
+       "path": [
+        "api",
+        "maintenance",
+        "records",
+        "ongoing"
+       ]
+      }
+     },
+     "response": []
+    }
+   ]
+  },
+  {
+   "name": "07 MANUAL (2 quick pairs, ~1 min each): FO replica down and Airports instance down",
+   "item": [
+    {
+     "name": "07.01 [docker stop flight-operations-2] Schedule a flight with one FO replica down {ATCC} → 201",
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test('Status code is 201', () => pm.response.to.have.status(201));",
+         "pm.environment.set('mFlight2', pm.response.json().id);"
+        ]
+       }
+      }
+     ],
+     "request": {
+      "method": "POST",
+      "header": [],
+      "url": {
+       "raw": "{{gateway}}/api/scheduled-flights",
+       "host": [
+        "{{gateway}}"
+       ],
+       "path": [
+        "api",
+        "scheduled-flights"
+       ]
+      },
+      "body": {
+       "mode": "raw",
+       "raw": "{\"routeId\": \"RT-OPOLIS\", \"registrationNumber\": \"CS-TTA\", \"scheduledDateTime\": \"{{day2}}T14:00:00\"}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "response": []
+    },
+    {
+     "name": "07.02 [docker start flight-operations-2; wait ~40 s] Its queue kept the event: flight on BOTH replicas {ATCC} → 200",
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "const L = eval(pm.collectionVariables.get('lib'));",
+         "// Poll `path` until `n` consecutive answers satisfy `pred`. With 2 replicas behind round-robin, n consecutive",
+         "// good answers mean that BOTH replicas hold the data (reads are local: no forwarding between FO replicas).",
+         "const until = async (role, path, pred, o = {}) => {",
+         "  const n = o.n || 6, end = Date.now() + (o.ms || 30000); let ok = 0, last;",
+         "  while (Date.now() < end) {",
+         "    last = await L.call('GET', path, null, role, o.base, o.h);",
+         "    let good = false; try { good = !!pred(last); } catch (e) {}",
+         "    ok = good ? ok + 1 : 0;",
+         "    if (ok >= n) return {ok: true, last};",
+         "    await L.sleep(good ? 150 : 1000);",
+         "  }",
+         "  return {ok: false, last};",
+         "};",
+         "const r = await until('ATCC', '/api/scheduled-flights/' + pm.environment.get('mFlight2'), x => x.code === 200, {ms: 90000});",
+         "pm.test('Replica recovered the missed event from its own queue', () => pm.expect(r.ok, 'last status ' + r.last.code).to.be.true);"
+        ]
+       }
+      }
+     ],
+     "request": {
+      "method": "GET",
+      "header": [],
+      "url": {
+       "raw": "{{gateway}}/api/scheduled-flights/{{mFlight2}}",
+       "host": [
+        "{{gateway}}"
+       ],
+       "path": [
+        "api",
+        "scheduled-flights",
+        "{{mFlight2}}"
+       ]
+      }
+     },
+     "response": []
+    },
+    {
+     "name": "07.03 [docker stop airports-routes-2] Create an airport with one instance down {BACKOFFICE} → 201",
+     "event": [
+      {
+       "listen": "prerequest",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "const A='QWXYZJKV'; pm.environment.set('e2Iata2', [0,1,2].map(() => A[Math.floor(Math.random()*A.length)]).join(''));"
+        ]
+       }
+      },
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "pm.test('Status code is 201', () => pm.response.to.have.status(201));"
+        ]
+       }
+      }
+     ],
+     "request": {
+      "method": "POST",
+      "header": [],
+      "url": {
+       "raw": "{{gateway}}/api/airports",
+       "host": [
+        "{{gateway}}"
+       ],
+       "path": [
+        "api",
+        "airports"
+       ]
+      },
+      "body": {
+       "mode": "raw",
+       "raw": "{\"iataCode\": \"{{e2Iata2}}\", \"name\": \"E2 Test Airport\", \"city\": \"Testville\", \"country\": \"Portugal\", \"timezone\": \"Europe/Lisbon\", \"type\": \"REGIONAL\", \"latitude\": 41.0, \"longitude\": -8.0}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     },
+     "response": []
+    },
+    {
+     "name": "07.04 [docker start airports-routes-2; wait ~40 s] Instance 2 drained its queue: airport readable on BOTH (no P2P) {BACKOFFICE} → 200",
+     "event": [
+      {
+       "listen": "test",
+       "script": {
+        "type": "text/javascript",
+        "exec": [
+         "const L = eval(pm.collectionVariables.get('lib'));",
+         "// Poll `path` until `n` consecutive answers satisfy `pred`. With 2 replicas behind round-robin, n consecutive",
+         "// good answers mean that BOTH replicas hold the data (reads are local: no forwarding between FO replicas).",
+         "const until = async (role, path, pred, o = {}) => {",
+         "  const n = o.n || 6, end = Date.now() + (o.ms || 30000); let ok = 0, last;",
+         "  while (Date.now() < end) {",
+         "    last = await L.call('GET', path, null, role, o.base, o.h);",
+         "    let good = false; try { good = !!pred(last); } catch (e) {}",
+         "    ok = good ? ok + 1 : 0;",
+         "    if (ok >= n) return {ok: true, last};",
+         "    await L.sleep(good ? 150 : 1000);",
+         "  }",
+         "  return {ok: false, last};",
+         "};",
+         "const r = await until('BACKOFFICE', '/api/airports/' + pm.environment.get('e2Iata2'), x => x.code === 200, {ms: 90000, h: {'X-P2P-Hops': '1'}});",
+         "pm.test('Airport on both instances without forwarding (queue airports.events.airports-routes-2 drained)', () => pm.expect(r.ok, 'last status ' + r.last.code).to.be.true);"
+        ]
+       }
+      }
+     ],
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "X-P2P-Hops",
+        "value": "1"
+       }
+      ],
+      "url": {
+       "raw": "{{gateway}}/api/airports/{{e2Iata2}}",
+       "host": [
+        "{{gateway}}"
+       ],
+       "path": [
+        "api",
+        "airports",
+        "{{e2Iata2}}"
+       ]
+      }
+     },
+     "response": []
+    }
+   ]
+  }
+ ],
+ "event": [
+  {
+   "listen": "prerequest",
+   "script": {
+    "type": "text/javascript",
+    "exec": [
+     "const name = pm.info.requestName, env = k => pm.environment.get(k);",
+     "if (!env('runId') || name.startsWith('00.00')) {",
+     "  const base = Date.UTC(2031 + Math.floor(Math.random() * 8), Math.floor(Math.random() * 12), 1 + Math.floor(Math.random() * 25));",
+     "  pm.environment.set('runId', String(1000 + Math.floor(Math.random() * 9000)));",
+     "  [0, 1, 2, 3].forEach(i => pm.environment.set('day' + i, new Date(base + i * 86400000).toISOString().slice(0, 10)));",
+     "}",
+     "const m = name.match(/\\{(ADMIN|ATCC|BACKOFFICE|TECH|SUPERVISOR|NONE)\\}/);",
+     "const role = m ? m[1] : 'ATCC';",
+     "if (role === 'NONE' || pm.request.url.getPath().startsWith('/realms')) return;",
+     "const K = {ADMIN: 'Admin', ATCC: 'Atcc', BACKOFFICE: 'Backoffice', TECH: 'Tech', SUPERVISOR: 'Supervisor'}[role];",
+     "const U = {ADMIN: 'admin.user', ATCC: 'atcc.user', BACKOFFICE: 'backoffice.user', TECH: 'tech.user', SUPERVISOR: 'supervisor.user'}[role];",
+     "const setH = t => pm.request.headers.upsert({key: 'Authorization', value: 'Bearer ' + t});",
+     "if (env('token' + K) && Number(env('exp' + K) || 0) > Date.now() + 15000) { setH(env('token' + K)); return; }",
+     "const login = (b, cb) => pm.sendRequest({url: b + '/realms/' + env('realm') + '/protocol/openid-connect/token', method: 'POST', header: {'Content-Type': 'application/x-www-form-urlencoded'}, body: {mode: 'urlencoded', urlencoded: [{key: 'grant_type', value: 'password'}, {key: 'client_id', value: env('clientId')}, {key: 'username', value: U}, {key: 'password', value: env('pwd' + K)}]}}, cb);",
+     "const ok = (e, r) => { if (e || r.code !== 200) return false; const j = r.json(); pm.environment.set('token' + K, j.access_token); pm.environment.set('exp' + K, String(Date.now() + j.expires_in * 1000)); setH(j.access_token); return true; };",
+     "login(env('gateway'), (e, r) => { if (!ok(e, r)) login(env('gateway2'), (e2, r2) => { if (!ok(e2, r2)) console.error('Login failed for role ' + role); }); });"
+    ]
+   }
+  },
+  {
+   "listen": "test",
+   "script": {
+    "type": "text/javascript",
+    "exec": [
+     "pm.test('Response body does not leak a stack trace', () => pm.expect(pm.response.text()).to.not.match(/\\.java:\\d+/));"
+    ]
+   }
+  }
+ ],
+ "variable": [
+  {
+   "key": "jwtSecret",
+   "value": "change-this-development-secret-key-with-at-least-32-bytes"
+  },
+  {
+   "key": "lib",
+   "value": "(() => { const env = k => pm.environment.get(k); const sleep = ms => new Promise(r => setTimeout(r, ms)); const send = o => new Promise(r => pm.sendRequest(o, (e, res) => r(res || {code: 0, headers: {get: () => null, has: () => false}, text: () => String(e), json: () => ({})}))); const U = {ADMIN: ['admin.user', 'pwdAdmin'], ATCC: ['atcc.user', 'pwdAtcc'], BACKOFFICE: ['backoffice.user', 'pwdBackoffice'], TECH: ['tech.user', 'pwdTech'], SUPERVISOR: ['supervisor.user', 'pwdSupervisor']}; const cache = {}; const tok = async (role, gw) => { const g = gw || env('gateway'); const k = role + g; if (cache[k]) return cache[k]; const r = await send({url: g + '/realms/' + env('realm') + '/protocol/openid-connect/token', method: 'POST', header: {'Content-Type': 'application/x-www-form-urlencoded'}, body: {mode: 'urlencoded', urlencoded: [{key: 'grant_type', value: 'password'}, {key: 'client_id', value: env('clientId')}, {key: 'username', value: U[role][0]}, {key: 'password', value: env(U[role][1])}]}}); cache[k] = r.json().access_token; return cache[k]; }; const call = async (m, p, b, role, base, extra) => { const h = Object.assign({'Content-Type': 'application/json'}, extra || {}); if (role && role !== 'NONE') h.Authorization = 'Bearer ' + await tok(role); let r; for (let i = 0; i < 4; i++) { r = await send({url: (base || env('gateway')) + p, method: m, header: h, body: b ? {mode: 'raw', raw: typeof b === 'string' ? b : JSON.stringify(b)} : undefined}); if (r.code !== 429) break; await sleep(1200); } await sleep(110); return r; }; const b64u = s => { const C = require('crypto-js'); return C.enc.Base64.stringify(C.enc.Utf8.parse(s)).replace(/=+$/, '').replace(/\\+/g, '-').replace(/\\//g, '_'); }; const hs = (secret, claims) => { const C = require('crypto-js'); const h = b64u(JSON.stringify({alg: 'HS256', typ: 'JWT'})); const now = Math.floor(Date.now() / 1000); const p = b64u(JSON.stringify(Object.assign({iat: now, exp: now + 3600}, claims))); const s = C.enc.Base64.stringify(C.HmacSHA256(h + '.' + p, secret)).replace(/=+$/, '').replace(/\\+/g, '-').replace(/\\//g, '_'); return h + '.' + p + '.' + s; }; return {env, sleep, send, tok, call, hs, b64u, U}; })()"
+  },
+  {
+   "key": "mockUrl",
+   "value": ""
+  }
+ ]
+}
