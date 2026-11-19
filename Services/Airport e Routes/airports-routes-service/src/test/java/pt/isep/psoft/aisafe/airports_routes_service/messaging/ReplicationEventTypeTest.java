@@ -14,6 +14,8 @@ class ReplicationEventTypeTest {
                 ReplicationEventType.from("PATCH", "/api/airports/LIS/details"));
         assertEquals(ReplicationEventType.AIRPORT_STATUS_CHANGED,
                 ReplicationEventType.from("PATCH", "/api/airports/LIS/status"));
+        assertEquals(ReplicationEventType.AIRPORT_IMAGE_UPDATED,
+                ReplicationEventType.from("PATCH", "/api/airports/LIS/image"));
     }
 
     @Test
