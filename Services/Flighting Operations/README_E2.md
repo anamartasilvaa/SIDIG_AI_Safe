@@ -89,7 +89,10 @@ scheduled_flight outbox_event    (read-your-writes)       flight_view
 | `OutboxWriter` / `OutboxRelay`                                                                    | *Transactional outbox*: grava o evento com o agregado e publica-o no broker                                |
 | `AircraftReferenceService`                                                                        | Aplica os eventos do Aircraft ao `aircraft_ref` (só alterações mais recentes) e recalcula o humor          |
 | `AircraftGroundingHandler`                                                                        | Decide o grounding: atualiza o `aircraft_ref` e chama o `GroundingService` se o avião não estiver `ACTIVE` |
-| `SnapshotBootstrapper`                                                                            | Réplica com a BD vazia: copia os voos da outra réplica no arranque                                         |
+| `SnapshotBootstrapper`                                                                            | Réplica com a BD vazia: copia os voos da outra réplica no arranque (tenta até a outra responder)           |
+| `MissingFlightRecovery`                                                                           | Comando sobre um voo que ainda não chegou a esta réplica: copia-o da outra réplica antes de o executar     |
+| `GroundingReconciler`                                                                             | De 30 em 30 s, pede o grounding de aviões não `ACTIVE` que ainda tenham voos futuros por tratar            |
+| `ProcessedEventCleanup`                                                                           | Limpa a tabela de idempotência (`processed_event`) ao fim de 7 dias                                        |
 | `FlightEventListener` / `RouteEventListener` / `AircraftEventListener` / `GroundingEventListener` | Consumidores AMQP idempotentes (`IdempotencyGuard`)                                                        |
 | `AirportsRoutesTranslator` / `AircraftEventTranslator`                                            | *Anti-Corruption Layer* para os eventos do Airports & Routes e do Aircraft                                 |
 
@@ -143,7 +146,8 @@ Padrões usados:
   transação falhou. O `OutboxRelay` usa *publisher confirms* e mensagens `mandatory`. Para no primeiro envio falhado
   (preserva a ordem) e tenta de novo com backoff exponencial (até 30 s).
 - **Consumidores idempotentes.** A tabela `processed_event` (chave `consumer` + `eventId`) é gravada na mesma transação
-  que o efeito. A mensagem só é confirmada (*ack*) depois do *commit*.
+  que o efeito. A mensagem só é confirmada (*ack*) depois do *commit*. As entradas com mais de 7 dias são apagadas de
+  hora a hora (`ProcessedEventCleanup`): uma mensagem é reentregue em segundos, nunca dias depois.
 - ***Dead-letter*.** Todas as filas são *quorum*, com `x-delivery-limit: 5`. Uma mensagem que falha 5 vezes vai para
   `fo.dlx` → `fo.dead-letter`, para análise, sem bloquear a fila.
 - **Topologia declarada antes do arranque.** O `rabbitmq-init` importa `infrastructure/rabbitmq/definitions.json`
@@ -154,7 +158,9 @@ Padrões usados:
 - **Dentro de uma réplica:** consistência forte. O agregado e o evento são gravados na mesma transação, e a réplica
   que recebe a escrita atualiza logo as suas vistas (*read-your-writes*).
 - **Entre réplicas:** **consistência eventual**. A outra réplica fica atualizada quando consome o evento (normalmente
-  em menos de 1 s).
+  em menos de 1 s). Se um **comando** (`PATCH /{id}/status`) chegar a uma réplica antes do evento do voo, essa réplica
+  copia o voo da outra (`GET /internal/scheduled-flights/{id}`) e executa o comando, em vez de responder 404
+  (`MissingFlightRecovery`). As **leituras** continuam só locais (CQRS).
 - **Convergência:** *last writer wins* por `revision`; em empate, `lastModifiedAt` e depois a ordem do estado. Eventos
   repetidos ou fora de ordem não alteram o resultado.
 - **Conflitos de horário entre réplicas** (dois voos do mesmo avião a menos de 2 h, aceites em réplicas diferentes):
@@ -178,21 +184,23 @@ Todo o tráfego AMQP usa **TLS (AMQPS, porta 5671)**; a porta 5672 sem TLS está
 
 ## E2.6 Tolerância a falhas
 
-| Cenário                                                     | Comportamento                                                                                                  |
-|-------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------|
-| Broker totalmente em baixo                                  | As escritas são aceites (AP); os eventos ficam no outbox e são publicados quando o broker volta                |
-| Um nó RabbitMQ em baixo                                     | Sem impacto: *quorum queues* com maioria; os clientes ligam-se a outro nó da lista                             |
-| Dois nós RabbitMQ em baixo                                  | O nó restante pausa (`pause_minority`); tratado como broker em baixo (outbox)                                  |
-| Uma réplica FO em baixo                                     | A gateway usa a outra; a fila da réplica parada acumula os eventos e ela recupera-os ao voltar                 |
-| Mensagem repetida                                           | Ignorada (`processed_event`)                                                                                   |
-| Mensagem que falha sempre                                   | Ao fim de 5 entregas vai para `fo.dead-letter`                                                                 |
-| Airports & Routes ou Aircraft em baixo                      | O agendamento usa os dados de referência locais; só falha (503) se a rota ou o avião nunca tiverem sido vistos |
-| Dois pedidos simultâneos para o mesmo avião (mesma réplica) | Lock na linha do avião (`aircraft_ref`): só um é aceite, o outro recebe 409                                    |
-| Conflito entre réplicas                                     | Resolvido de forma determinística; o voo perdedor é cancelado (secção E2.4)                                    |
-| Grounding sem avião livre                                   | O voo passa a `DELAYED` com o motivo `NO_REPLACEMENT_AIRCRAFT`                                                 |
-| Primário da BD do Keycloak em baixo                         | Failover automático (testado: promoção em menos de 45 s, novos logins continuam a funcionar)                   |
-| Avião deixa de estar `ACTIVE` (evento do Aircraft)          | Uma só réplica faz o grounding (fila `fo.grounding`); se ela falhar a meio, a mensagem volta à fila            |
-| Réplica arranca com a BD vazia (disco perdido)              | `SnapshotBootstrapper` copia os voos da outra réplica (tenta de 5 em 5 s) enquanto consome a sua fila          |
+| Cenário                                                             | Comportamento                                                                                                                                                   |
+|---------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Broker totalmente em baixo                                          | As escritas são aceites (AP); os eventos ficam no outbox e são publicados quando o broker volta                                                                 |
+| Um nó RabbitMQ em baixo                                             | Sem impacto: *quorum queues* com maioria; os clientes ligam-se a outro nó da lista                                                                              |
+| Dois nós RabbitMQ em baixo                                          | O nó restante pausa (`pause_minority`); tratado como broker em baixo (outbox)                                                                                   |
+| Uma réplica FO em baixo                                             | A gateway usa a outra; a fila da réplica parada acumula os eventos e ela recupera-os ao voltar                                                                  |
+| Mensagem repetida                                                   | Ignorada (`processed_event`)                                                                                                                                    |
+| Mensagem que falha sempre                                           | Ao fim de 5 entregas vai para `fo.dead-letter`                                                                                                                  |
+| Airports & Routes ou Aircraft em baixo                              | O agendamento usa os dados de referência locais; só falha (503) se a rota ou o avião nunca tiverem sido vistos                                                  |
+| Dois pedidos simultâneos para o mesmo avião (mesma réplica)         | Lock na linha do avião (`aircraft_ref`): só um é aceite, o outro recebe 409                                                                                     |
+| Conflito entre réplicas                                             | Resolvido de forma determinística; o voo perdedor é cancelado (secção E2.4)                                                                                     |
+| Grounding sem avião livre                                           | O voo passa a `DELAYED` com o motivo `NO_REPLACEMENT_AIRCRAFT`                                                                                                  |
+| Primário da BD do Keycloak em baixo                                 | Failover automático (testado: promoção em menos de 45 s, novos logins continuam a funcionar)                                                                    |
+| Avião deixa de estar `ACTIVE` (evento do Aircraft)                  | Uma só réplica faz o grounding (fila `fo.grounding`); se ela falhar a meio, a mensagem volta à fila                                                             |
+| Réplica arranca com a BD vazia (disco perdido)                      | `SnapshotBootstrapper` copia os voos da outra réplica enquanto consome a sua fila; se a outra estiver em baixo, tenta até ela voltar (5 s, a duplicar até 60 s) |
+| Comando sobre um voo que ainda não chegou a esta réplica            | O voo é copiado da outra réplica e o comando é executado (sem 404); se a outra não responder, 404 como antes                                                    |
+| Voo agendado durante o grounding (réplica ainda sem a imobilização) | O `GroundingReconciler` deteta-o (até 30 s) e publica um `GroundingRequested`; uma só réplica reatribui o voo                                                   |
 
 ## E2.7 `GET /api/v2/unicorns` (humor dos aviões)
 
@@ -250,21 +258,23 @@ também recalculada a cada 5 min (`app.mood.refresh-interval`).
 | `RABBITMQ_USER` / `RABBITMQ_PASSWORD`  | `aisafe` / *(dev)*                            | Credenciais do broker                   |
 | `RABBITMQ_SSL`                         | `false`                                       | `true` para AMQPS (Modo B)              |
 
-| Propriedade                               | Valor           | Descrição                                            |
-|-------------------------------------------|-----------------|------------------------------------------------------|
-| `app.outbox.poll-interval` / `batch-size` | `500ms` / `100` | Frequência e tamanho de cada envio do outbox         |
-| `app.outbox.max-backoff`                  | `30s`           | Espera máxima entre tentativas com o broker em baixo |
-| `app.outbox.retention`                    | `7d`            | Tempo até apagar eventos já publicados               |
-| `app.mood.refresh-interval`               | `5m`            | Recálculo periódico do humor dos aviões              |
-| `app.bootstrap.retry-interval`            | `5s`            | Intervalo entre tentativas do snapshot no arranque   |
-| `app.bootstrap.max-attempts`              | `24`            | Número máximo de tentativas do snapshot              |
+| Propriedade                                      | Valor           | Descrição                                                          |
+|--------------------------------------------------|-----------------|--------------------------------------------------------------------|
+| `app.outbox.poll-interval` / `batch-size`        | `500ms` / `100` | Frequência e tamanho de cada envio do outbox                       |
+| `app.outbox.max-backoff`                         | `30s`           | Espera máxima entre tentativas com o broker em baixo               |
+| `app.outbox.retention`                           | `7d`            | Tempo até apagar eventos já publicados                             |
+| `app.mood.refresh-interval`                      | `5m`            | Recálculo periódico do humor dos aviões                            |
+| `app.bootstrap.retry-interval`                   | `5s`            | Primeiro intervalo entre tentativas do snapshot (duplica até 60 s) |
+| `app.bootstrap.max-attempts`                     | `0`             | Tentativas do snapshot; `0` = sem limite                           |
+| `app.grounding.reconcile-interval`               | `30s`           | Verificação de voos que ficaram em aviões imobilizados             |
+| `app.idempotency.retention` / `cleanup-interval` | `7d` / `1h`     | Retenção e limpeza da tabela `processed_event`                     |
 
 No Modo B todas as palavras-passe (BD, RabbitMQ, *Erlang cookie*, BD do Keycloak, repmgr) vêm do `.env`, gerado com
 valores aleatórios pelo `gen-certs.ps1` e fora do Git.
 
 ## E2.10 Testes
 
-**JUnit – 144 testes** (`.\mvnw.cmd test` na pasta do serviço; a base de dados de teste é H2 em modo PostgreSQL, com as
+**JUnit – 151 testes** (`.\mvnw.cmd test` na pasta do serviço; a base de dados de teste é H2 em modo PostgreSQL, com as
 mesmas migrações Flyway). Além dos testes da P1, cobrem:
 
 - lado dos comandos (`FlightCommandServiceTest`) e das consultas (`FlightQueryServiceTest`);
@@ -273,19 +283,19 @@ mesmas migrações Flyway). Além dos testes da P1, cobrem:
 - ACL dos eventos do Airports & Routes (`AirportsRoutesTranslatorTest`) e dados de referência (`ReferenceDataTest`);
 - grounding (`GroundingServiceTest`) e eventos do Aircraft (`AircraftEventTranslatorTest`,
   `AircraftReferenceServiceTest`, `AircraftGroundingHandlerTest`);
-- snapshot no arranque (`SnapshotBootstrapperTest`);
+- snapshot no arranque (`SnapshotBootstrapperTest`), cópia de um voo em falta (`MissingFlightRecoveryTest`),
+  reconciliação do grounding (`GroundingReconcilerTest`) e limpeza da idempotência (`ProcessedEventCleanupTest`);
 - regras RBAC do novo endpoint (`SecurityRulesTest`).
 
 ## E2.11 Limitações conhecidas
 
-| Limitação                                                               | Impacto                                                                                            | Trabalho futuro                                                         |
-|-------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------|
-| Um só anfitrião Docker                                                  | Se a máquina falhar, falha tudo                                                                    | Docker Swarm ou Kubernetes em vários nós                                |
-| Imagem `bitnamilegacy/postgresql-repmgr` (fixada)                       | Repositório sem atualizações desde 2025                                                            | Fork mantido `soldevelo/postgresql-repmgr`                              |
-| *Last writer wins*                                                      | Em alterações concorrentes ao mesmo voo, uma perde-se                                              | Resolução no domínio por tipo de alteração                              |
-| Consistência eventual entre réplicas                                    | Logo após uma escrita, a outra réplica pode ainda não ter o voo (~1 s)                             | —  (escolha consciente: AP)                                             |
-| Voo agendado numa réplica que ainda não recebeu a imobilização do avião | Esse voo não é reatribuído automaticamente                                                         | Voltar a pedir o grounding (REST ou `GroundingRequested`, idempotentes) |
-| Eventos do Aircraft dependem do serviço Aircraft                        | Enquanto não forem publicados, o `aircraft_ref` vem do recurso a REST e o grounding chega por REST | Publicação dos eventos pelo Aircraft (contrato na secção E2.3)          |
+| Limitação                                         | Impacto                                                                                                                                                                    | Trabalho futuro                                                                                                                         |
+|---------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------|
+| Um só anfitrião Docker (ambiente de demonstração) | Dentro da máquina não há pontos únicos de falha (todos os componentes têm réplicas); se a própria máquina falhar, falha tudo. Não é eliminável com um só computador físico | Docker Swarm (3 nós gestores) ou Kubernetes em 3 máquinas, com cada réplica, nó do broker e nó da BD do Keycloak numa máquina diferente |
+| Imagem `bitnamilegacy/postgresql-repmgr` (fixada) | Repositório sem atualizações desde 2025                                                                                                                                    | Fork mantido `soldevelo/postgresql-repmgr`                                                                                              |
+| *Last writer wins*                                | Em alterações concorrentes ao mesmo voo, uma perde-se                                                                                                                      | Resolução no domínio por tipo de alteração                                                                                              |
+| Consistência eventual entre réplicas              | Logo após uma escrita, uma **leitura** na outra réplica pode ainda não ter o voo (~1 s); os comandos já não são afetados                                                   | —  (escolha consciente: AP)                                                                                                             |
+| Eventos do Aircraft dependem do serviço Aircraft  | Enquanto não forem publicados, o `aircraft_ref` vem do recurso a REST e o grounding chega por REST                                                                         | Publicação dos eventos pelo Aircraft (contrato na secção E2.3)                                                                          |
 
 ## E2.12 Estrutura do projeto
 
@@ -362,5 +372,5 @@ serviço e uma PostgreSQL por réplica do FO):
 
 **Testes JUnit:**
 
-![144 testes JUnit](docs/screenshots/e2-09-junit.png)
+![151 testes JUnit](docs/screenshots/e2-09-junit.png)
 
