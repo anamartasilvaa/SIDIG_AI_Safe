@@ -72,6 +72,8 @@ public class ReplicationEventConsumer {
                         id, mapper.readValue(payload, UpdateAirportDetailsDTO.class), true, lastModified, origin);
                 case AIRPORT_STATUS_CHANGED -> airportService.updateAirportStatus(
                         id, payload.replace("\"", ""), true, lastModified, origin);
+                case AIRPORT_IMAGE_UPDATED -> airportService.applyReplicatedImage(
+                        id, mapper.readValue(payload, String.class), lastModified, origin);
                 case ROUTE_CREATED -> routeService.createRoute(
                         mapper.readValue(payload, CreateRouteDTO.class), true, lastModified, origin);
                 case ROUTE_UPDATED -> routeService.updateRoute(

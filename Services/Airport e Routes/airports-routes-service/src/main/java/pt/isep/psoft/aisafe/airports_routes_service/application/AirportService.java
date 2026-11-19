@@ -181,6 +181,11 @@ public class AirportService {
             airport.applyReplicationMetadata(isReplication ? null : Instant.now(), isReplication ? null : nodeId);
 
             airport = airportRepository.save(airport);
+            // A imagem so e replicada por AMQP (por HTTP o endpoint de destino e multipart).
+            if (!isReplication && replicationOutbox.isAmqp()) {
+                replicationOutbox.enqueue(peerUrls, "PATCH", "/api/airports/" + iataCode.toUpperCase() + "/image",
+                        fileUrl, airport.getLastModified(), airport.getOriginNodeId());
+            }
             auditService.record("UPDATE", iataCode, "SUCCESS", isReplication);
             return project(airport);
 
@@ -188,6 +193,25 @@ public class AirportService {
             auditService.record("UPDATE", iataCode, "ERROR", isReplication);
             throw new RuntimeException("Failed to save airport image: " + e.getMessage());
         }
+    }
+
+    /** Aplica uma imagem recebida por evento (last-writer-wins; eventos mais antigos sao ignorados). */
+    @Transactional
+    public AirportViewDTO applyReplicatedImage(String iataCode, String imageDataUrl,
+                                               Instant receivedAt, String receivedNode) {
+        Airport airport = airportRepository.findByIataCodeString(iataCode.toUpperCase())
+                .orElseThrow(() -> {
+                    auditService.record("UPDATE", iataCode, "ERROR", true);
+                    return new NotFoundException("Airport not found: " + iataCode);
+                });
+        if (receivedAt != null && !isNewer(receivedAt, receivedNode, airport.getLastModified(), airport.getOriginNodeId())) {
+            return project(airport);
+        }
+        airport.updateImage(imageDataUrl);
+        airport.applyReplicationMetadata(receivedAt, receivedNode);
+        airport = airportRepository.save(airport);
+        auditService.record("UPDATE", iataCode, "SUCCESS", true);
+        return project(airport);
     }
 
     /** CQRS: modelo de leitura atualizado pelo projetor (opcional para permitir testes unitarios). */

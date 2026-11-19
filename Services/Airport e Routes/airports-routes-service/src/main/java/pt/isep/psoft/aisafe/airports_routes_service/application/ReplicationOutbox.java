@@ -22,6 +22,8 @@ public class ReplicationOutbox {
     @Value("${app.replication.transport:http}")
     private String transport = "http";
     public ReplicationOutbox(ReplicationTaskRepository repository, ObjectMapper mapper){this.repository=repository;this.mapper=mapper;}
+    /** True quando a replicacao e feita por eventos AMQP (e nao por HTTP direto aos pares). */
+    public boolean isAmqp() { return "amqp".equalsIgnoreCase(transport); }
     public void enqueue(List<String> peers, String method, String path, Object payload) {
         Instant lastModified = null; String originNodeId = null;
         if (payload instanceof RegisterAirportDTO p) { lastModified=p.lastModified(); originNodeId=p.originNodeId(); }

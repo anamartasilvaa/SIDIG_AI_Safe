@@ -9,6 +9,7 @@ public enum ReplicationEventType {
     AIRPORT_CREATED,
     AIRPORT_DETAILS_UPDATED,
     AIRPORT_STATUS_CHANGED,
+    AIRPORT_IMAGE_UPDATED,
     ROUTE_CREATED,
     ROUTE_UPDATED,
     ROUTE_DEACTIVATED;
@@ -21,6 +22,7 @@ public enum ReplicationEventType {
             if ("POST".equals(m)) return AIRPORT_CREATED;
             if ("PATCH".equals(m) && p.endsWith("/details")) return AIRPORT_DETAILS_UPDATED;
             if ("PATCH".equals(m) && p.endsWith("/status")) return AIRPORT_STATUS_CHANGED;
+            if ("PATCH".equals(m) && p.endsWith("/image")) return AIRPORT_IMAGE_UPDATED;
         } else if (p.startsWith("/api/routes")) {
             if ("POST".equals(m)) return ROUTE_CREATED;
             if ("PATCH".equals(m) && p.endsWith("/deactivate")) return ROUTE_DEACTIVATED;
