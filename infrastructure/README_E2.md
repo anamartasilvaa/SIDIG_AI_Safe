@@ -134,20 +134,26 @@ Cada comando escreve-se como `docker compose -f docker-compose.secure.yml <coman
 
 As capturas destes testes estão no `README_E2.md` do Flight Operations (secção E2.14).
 
+Os mesmos cenários (e mais alguns: partição com compensação, réplica do Airports em baixo, recuperação total) estão
+automatizados na pasta **07** da coleção do Postman `SIDIS – E2 Testes` (`tests(postman)/`): corre-se o comando que
+está entre `[ ]` no nome de cada pedido e depois envia-se o pedido. As pastas 00–06 correm no Runner (125 testes).
+Environment `SIDIS` com `rabbitMgmt`, `rabbitUser` e `rabbitPassword` (o valor do `.env`).
+
 ---
 
 ## 6. Resolução de problemas (novos)
 
-| Sintoma                                                                                 | Causa                                                                    | O que fazer                                                                                     |
-|-----------------------------------------------------------------------------------------|--------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------|
-| `required variable X is missing a value` ao fazer `up` ou `down`                        | O `.env` não tem uma variável nova                                       | Acrescentá-la (secção 2.1) e repetir                                                            |
-| `unknown anchor '...' referenced`                                                       | Âncora YAML mal escrita no compose                                       | Confirmar o nome da âncora (`&nome` / `*nome`)                                                  |
-| `could not get current user name` no `repmgr`                                           | A imagem Bitnami corre com um utilizador sem nome                        | Chamar o `repmgr` através do `entrypoint.sh` (secção 4)                                         |
-| `port is already allocated` (15672)                                                     | Ficou um contentor antigo do RabbitMQ                                    | `docker compose -f docker-compose.secure.yml down --remove-orphans`                             |
-| O FO não arranca: `connection to ... refused` na BD                                     | A BD da réplica ainda não está `healthy` ou falta `DB_URL`               | Esperar pelo `healthy`; confirmar `DB_URL` no compose                                           |
-| Depois de recriar um serviço, `403`/`404` ou só uma réplica responde                    | O NGINX guardou os IPs antigos                                           | `docker compose -f docker-compose.secure.yml restart gateway-1 gateway-2`                       |
-| Mensagens na fila `fo.dead-letter`                                                      | Mensagens mal formadas ou que falharam 5 vezes                           | Ver a mensagem na consola (*Queues → fo.dead-letter → Get messages*) e o log do serviço         |
-| Testes do Postman que publicam no RabbitMQ dão `401`                                    | `rabbitPassword` do environment diferente do `.env`                      | Atualizar a variável `rabbitPassword` no environment `SIDIS`                                    |
+| Sintoma                                                                 | Causa                                                           | O que fazer                                                                                                                                           |
+|-------------------------------------------------------------------------|-----------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `required variable X is missing a value` ao fazer `up` ou `down`        | O `.env` não tem uma variável nova                              | Acrescentá-la (secção 2.1) e repetir                                                                                                                  |
+| `unknown anchor '...' referenced`                                       | Âncora YAML mal escrita no compose                              | Confirmar o nome da âncora (`&nome` / `*nome`)                                                                                                        |
+| `could not get current user name` no `repmgr`                           | A imagem Bitnami corre com um utilizador sem nome               | Chamar o `repmgr` através do `entrypoint.sh` (secção 4)                                                                                               |
+| `port is already allocated` (15672)                                     | Ficou um contentor antigo do RabbitMQ                           | `docker compose -f docker-compose.secure.yml down --remove-orphans`                                                                                   |
+| O FO não arranca: `connection to ... refused` na BD                     | A BD da réplica ainda não está `healthy` ou falta `DB_URL`      | Esperar pelo `healthy`; confirmar `DB_URL` no compose                                                                                                 |
+| Depois de recriar um serviço, `403`/`404` ou só uma réplica responde    | O NGINX guardou os IPs antigos                                  | `docker compose -f docker-compose.secure.yml restart gateway-1 gateway-2`                                                                             |
+| Mensagens na fila `fo.dead-letter`                                      | Mensagens mal formadas ou que falharam 5 vezes                  | Ver a mensagem na consola (*Queues → fo.dead-letter → Get messages*) e o log do serviço                                                               |
+| Testes do Postman que publicam no RabbitMQ dão `401`                    | `rabbitPassword` do environment diferente do `.env`             | Atualizar a variável `rabbitPassword` no environment `SIDIS`                                                                                          |
+| Erros `merge_schema` / `mnesia` no log de um nó do RabbitMQ ao arrancar | O nó arrancou antes dos outros e ainda não se juntou ao cluster | Transitório: confirmar com `exec rabbitmq-1 rabbitmqctl cluster_status` (3 *Running Nodes*) e `rabbitmq-diagnostics check_if_node_is_quorum_critical` |
 
 ---
 

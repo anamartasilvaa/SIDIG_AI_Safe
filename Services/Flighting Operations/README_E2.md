@@ -128,9 +128,9 @@ Contrato proposto ao serviço Aircraft (exchange `aircraft.events`, tipo `topic`
 
 ```json
 {"eventId": "...", "type": "AircraftStatusChanged", "occurredAt": "2026-11-16T10:00:00Z",
- "aggregateId": "CS-TTA", "revision": 4,
- "payload": {"registrationNumber": "CS-TTA", "modelCode": "A320", "status": "UNDER_MAINTENANCE",
-             "maximumRange": 6100, "seatingCapacity": 180}}
+  "aggregateId": "CS-TTA", "revision": 4,
+  "payload": {"registrationNumber": "CS-TTA", "modelCode": "A320", "status": "UNDER_MAINTENANCE",
+    "maximumRange": 6100, "seatingCapacity": 180}}
 ```
 
 O `AircraftEventTranslator` é tolerante: ignora campos desconhecidos, aceita o `payload` como texto JSON e a matrícula
@@ -155,7 +155,7 @@ Padrões usados:
 
 ## E2.4 Modelo de consistência
 
-- **Dentro de uma réplica:** consistência forte. O agregado e o evento são gravados na mesma transação, e a réplica
+- **Numa réplica:** consistência forte. O agregado e o evento são gravados na mesma transação, e a réplica
   que recebe a escrita atualiza logo as suas vistas (*read-your-writes*).
 - **Entre réplicas:** **consistência eventual**. A outra réplica fica atualizada quando consome o evento (normalmente
   em menos de 1 s). Se um **comando** (`PATCH /{id}/status`) chegar a uma réplica antes do evento do voo, essa réplica
@@ -286,6 +286,22 @@ mesmas migrações Flyway). Além dos testes da P1, cobrem:
 - snapshot no arranque (`SnapshotBootstrapperTest`), cópia de um voo em falta (`MissingFlightRecoveryTest`),
   reconciliação do grounding (`GroundingReconcilerTest`) e limpeza da idempotência (`ProcessedEventCleanupTest`);
 - regras RBAC do novo endpoint (`SecurityRulesTest`).
+
+**Postman – coleção `SIDIS – E2 Testes`** (`tests(postman)/SIDIS-E2-Testes.postman_collection.json`, environment
+`SIDIS`, verificação SSL desligada). As coleções da Entrega 1 mantêm-se sem alterações.
+
+| Pasta | Tipo       | O que cobre                                                                                                                                                                                                                                                       |
+|-------|------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 00–06 | Automática | Runner com 100 ms de atraso: **125 testes, 0 falhas**                                                                                                                                                                                                             |
+| 02    |            | Comandos e consultas do FO, convergência das duas réplicas, ETag = revisão, 8 reservas simultâneas do mesmo slot (fica um voo), evento fora de ordem ignorado, sequência rápida de comandos entre réplicas, disponibilidade                                       |
+| 03    |            | Eventos do Airports & Routes: rota nova e rota desativada chegam ao FO                                                                                                                                                                                            |
+| 04    |            | `/api/v2/unicorns`: filtro, RBAC (401/403/405), HAPPY → BUSY → GRUMPY, e eventos do Aircraft publicados pela API de gestão do RabbitMQ (grounding → SLEEPING, duplicado, ordem por revisão, *dead-letter*)                                                        |
+| 05    |            | Mock server obrigatório (variável `mockUrl`), mesmo contrato do endpoint real                                                                                                                                                                                     |
+| 07    | Manual     | 14 testes: réplica do FO/Airports em baixo, broker todo em baixo (outbox), partição e compensação, um nó do broker em baixo, snapshot de uma réplica reconstruída, failover da BD do Keycloak, serviços vizinhos em baixo, recuperação total — **todos passaram** |
+
+Os testes da pasta 04 que publicam no RabbitMQ precisam de `rabbitMgmt` (`http://localhost:15672`), `rabbitUser` e
+`rabbitPassword` (o valor do `.env`) no environment. Na pasta 07, o comando entre `[ ]` no nome de cada pedido corre-se
+antes de o enviar.
 
 ## E2.11 Limitações conhecidas
 
