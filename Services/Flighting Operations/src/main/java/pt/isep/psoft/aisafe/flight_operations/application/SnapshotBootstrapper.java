@@ -24,13 +24,16 @@ import java.util.*;
  * - runs in the background, so the replica starts and consumes its queues at the same time;
  * - every flight goes through FlightReplicaService (last-writer-wins by revision), so a
  *   snapshot older than an event already consumed changes nothing;
- * - if no peer answers, tries again (retry-interval, max-attempts).
+ * - if no peer answers, tries again with exponential backoff (retry-interval, doubled up to 60 s)
+ *   until a peer answers; max-attempts = 0 (default) means no limit, so a replica that starts
+ *   while its peer is down still recovers the old flights when the peer returns.
  */
 @Component
 public class SnapshotBootstrapper {
 
     static final String SNAPSHOT_PATH = "/internal/scheduled-flights";
     private static final Logger log = LoggerFactory.getLogger(SnapshotBootstrapper.class);
+    private static final Duration MAX_BACKOFF = Duration.ofSeconds(60);
     private static final ParameterizedTypeReference<List<FlightState>> FLIGHT_LIST =
             new ParameterizedTypeReference<>() {};
 
@@ -43,7 +46,7 @@ public class SnapshotBootstrapper {
     public SnapshotBootstrapper(ScheduledFlightRepository flights, PeerClient peers,
                                 FlightReplicaService replicas,
                                 @Value("${app.bootstrap.retry-interval:5s}") Duration retryInterval,
-                                @Value("${app.bootstrap.max-attempts:24}") int maxAttempts) {
+                                @Value("${app.bootstrap.max-attempts:0}") int maxAttempts) {
         this.flights = flights;
         this.peers = peers;
         this.replicas = replicas;
@@ -63,18 +66,19 @@ public class SnapshotBootstrapper {
     }
 
     void run() {
-        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+        Duration delay = retryInterval;
+        for (int attempt = 1; maxAttempts <= 0 || attempt <= maxAttempts; attempt++) {
             if (bootstrapOnce()) {
                 return;
             }
-            log.warn("BOOTSTRAP: no peer answered (attempt {}/{}); trying again in {}.",
-                    attempt, maxAttempts, retryInterval);
+            log.warn("BOOTSTRAP: no peer answered (attempt {}); trying again in {}.", attempt, delay);
             try {
-                Thread.sleep(retryInterval.toMillis());
+                Thread.sleep(delay.toMillis());
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return;
             }
+            delay = delay.multipliedBy(2).compareTo(MAX_BACKOFF) > 0 ? MAX_BACKOFF : delay.multipliedBy(2);
         }
         log.error("BOOTSTRAP: gave up after {} attempts; only new events will be received.", maxAttempts);
     }
