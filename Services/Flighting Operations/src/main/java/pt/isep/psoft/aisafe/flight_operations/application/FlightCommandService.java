@@ -23,13 +23,6 @@ import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Optional;
 
-/**
- * Command side (CQRS): the only way to change a flight.
- * Each command is ONE local transaction: validate with the local copies, save the aggregate,
- * write the event to the outbox and update THIS replica's views (read-your-writes on this
- * replica; the other replicas get it through the event). No remote call happens inside the
- * transaction, and the response does not depend on RabbitMQ or on the other replicas (AP).
- */
 @Service
 public class FlightCommandService {
 
@@ -63,13 +56,13 @@ public class FlightCommandService {
         this.instanceId = instanceId;
     }
 
-    /**
-     * US212: schedules a flight.
-     * @throws IllegalArgumentException   invalid input (400)
-     * @throws SchedulingRuleViolation    business rule violated or unknown route/aircraft (409)
-     * @throws pt.isep.psoft.aisafe.flight_operations.infrastructure.DependencyUnavailableException
-     *         route/aircraft unknown locally and its service is down (503)
-     */
+    private MissingFlightRecovery missingFlights;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setMissingFlightRecovery(MissingFlightRecovery missingFlights) {
+        this.missingFlights = missingFlights;
+    }
+
     public ScheduledFlight schedule(CreateScheduledFlightDTO dto, String correlationId) {
         LocalDateTime now = LocalDateTime.now(clock);
         ScheduledFlight flight = new ScheduledFlight(RouteId.of(dto.routeId()),
@@ -112,13 +105,12 @@ public class FlightCommandService {
         });
     }
 
-    /**
-     * Changes the status of a flight stored on this replica (every replica stores every flight).
-     * @return empty if the flight does not exist (404).
-     */
     public Optional<ScheduledFlight> changeStatus(String id, String statusText, String correlationId) {
         String flightId = FlightId.of(id).value();
         FlightStatus target = FlightStatus.parse(statusText);
+        if (missingFlights != null) {
+            missingFlights.fetchIfMissing(flightId);
+        }
         return tx.execute(status -> flights.findByFlightId_Uuid(flightId).map(flight -> {
             FlightStatus previous = flight.getStatus();
             flight.changeStatus(target, LocalDateTime.now(clock));

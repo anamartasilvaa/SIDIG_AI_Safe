@@ -1,0 +1,57 @@
+@startuml sd-fault-tolerance-p2
+title AISafe - Fault tolerance added in the second delivery (broker, Keycloak DB, empty replica)
+skinparam shadowing false
+skinparam sequenceArrowThickness 2
+autonumber
+
+actor "Client" as C
+participant "Gateway" as G
+participant "flight-operations-1" as F1
+participant "flight-operations-2" as F2
+participant "rabbitmq-1" as R1
+participant "rabbitmq-2 / -3" as R23
+participant "Keycloak" as K
+database "keycloak-db\nprimary" as KP
+database "keycloak-db\nstandby" as KS
+
+== 1. One broker node fails ==
+R1 -[#red]-> R1 : node down
+F1 -> R23 : reconnects to another node of the list (AMQPS)
+note over R23 : quorum queues keep working with 2 of 3 nodes
+C -> G : POST /api/scheduled-flights
+G -> F1 : proxy
+F1 --> G : 201 (aggregate + outbox in one transaction)
+F1 -> R23 : publish FlightScheduled (publisher confirm)
+R23 -> F2 : fo.flights.flight-operations-2
+F2 -> F2 : idempotent apply (processed_event, revision)
+
+== 2. The whole broker is down ==
+C -> G : POST /api/scheduled-flights
+G -> F1 : proxy
+F1 --> G : 201: the write does not depend on the broker (AP)
+F1 -> F1 : event stays in the outbox; retries with backoff (max 30 s)
+C -> G : GET the flight
+G -> F2 : proxy
+F2 --> G : 404 (eventual consistency: event not delivered yet)
+note over R1, R23 : broker restarts
+F1 -> R23 : outbox publishes the pending events in order
+R23 -> F2 : event delivered
+C -> G : GET the flight
+G -> F2 : proxy
+F2 --> G : 200
+
+== 3. Primary of the Keycloak DB fails ==
+KP -[#red]-> KP : down
+KS -> KS : repmgr promotes the standby (tested: under 45 s)
+C -> G : POST /realms/.../token
+G -> K : proxy
+K -> KS : new connection (targetServerType=primary)
+K --> G : 200 access_token
+note over KP : when it returns, the old primary rejoins as a standby
+
+== 4. A FO replica starts with an empty database ==
+F2 -> F2 : SnapshotBootstrapper: command store empty
+F2 -> F1 : GET /internal/scheduled-flights (X-API-Key)
+F1 --> F2 : all flights (FlightState, with revision)
+F2 -> F2 : apply each flight (last-writer-wins), in parallel with its queue backlog
+@enduml

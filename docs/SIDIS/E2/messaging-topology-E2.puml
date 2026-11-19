@@ -1,0 +1,62 @@
+@startuml messaging-topology-p2
+title AISafe - RabbitMQ topology (second delivery)
+skinparam shadowing false
+skinparam defaultFontSize 12
+left to right direction
+
+package "Publishers" {
+  rectangle "Flight Operations\n(outbox relay, both replicas)" as foPub #DDEBFF
+  rectangle "Airports & Routes\n(outbox, both replicas)" as arPub #E8F5E9
+  rectangle "Aircraft\n(planned)" as acPub #EEEEEE
+}
+
+package "RabbitMQ cluster (rabbitmq-1, rabbitmq-2, rabbitmq-3)" {
+  collections "flights.events\n<<topic>>" as exF #FFF4D6
+  collections "airports.events\n<<fanout>>" as exR #FFF4D6
+  collections "aircraft.events\n<<topic>>" as exA #FFF4D6
+  collections "fo.dlx\n<<fanout>>" as exD #FCE4E4
+
+  queue "fo.flights.flight-operations-1/2\n<<quorum>>" as qF
+  queue "fo.routes.flight-operations-1/2\n<<quorum>>" as qR
+  queue "fo.aircraft.flight-operations-1/2\n<<quorum>>" as qA
+  queue "fo.grounding\n<<quorum, shared>>" as qG
+  queue "airports.events.<nodeId>\n(+ .dlq)" as qAR
+  queue "fo.dead-letter\n<<quorum>>" as qD
+}
+
+package "Consumers" {
+  rectangle "Flight Operations\n(each replica)" as foC #DDEBFF
+  rectangle "Flight Operations\n(ONE replica per message)" as foG #DDEBFF
+  rectangle "Airports & Routes\n(each replica)" as arC #E8F5E9
+}
+
+foPub --> exF : flight.scheduled\nflight.status-changed\nflight.reassigned
+arPub --> exR : ROUTE_* / AIRPORT_*
+acPub ..> exA : aircraft.registered\naircraft.status-changed\naircraft.updated
+
+exF --> qF : flight.#
+exF --> qG : fo.grounding.requested
+exR --> qR
+exR --> qAR
+exA --> qA : aircraft.#
+exA --> qG : aircraft.status-changed
+
+qF --> foC
+qR --> foC
+qA --> foC
+qG --> foG
+qAR --> arC
+
+qF ..> exD : 5 failed deliveries
+qR ..> exD
+qA ..> exD
+qG ..> exD
+exD --> qD
+
+note bottom
+  Publish/subscribe: one queue per replica, so every replica receives every event.
+  Work queue: fo.grounding is shared, so each grounding is executed once.
+  Delivery is at-least-once; consumers are idempotent (processed_event / last-writer-wins).
+  All FO queues and bindings are declared in infrastructure/rabbitmq/definitions.json.
+end note
+@enduml

@@ -22,7 +22,6 @@ F1 --> A : 201
 B -> F2 : POST flight Y: CS-TTA 11:00
 F2 -> D2 : X not received yet -> commit Y + outbox
 F2 --> B : 201
-note over F1, F2 : both accepted (AP): the system stays available during the partition
 
 == Partition heals: the outboxes are delivered ==
 F1 -> MQ : FlightScheduled(X)
@@ -32,11 +31,6 @@ F2 -> F2 : ConflictResolver: X and Y overlap (< 2 h, same aircraft)
 MQ -> F1 : Y
 F1 -> F1 : ConflictResolver: same check
 
-note over F1, F2
-  Deterministic winner, computed identically on every replica:
-  the flight with the smallest (createdAt, flightId) wins -> X wins, Y loses.
-  No coordinator, no vote, no extra message needed to agree.
-end note
 
 par
   F1 -> D1 : Y.changeStatus(CANCELED, reason = SCHEDULE_CONFLICT_WITH X)\nrevision r+1 + outbox

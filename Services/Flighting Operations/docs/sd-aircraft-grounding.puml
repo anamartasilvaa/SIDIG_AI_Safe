@@ -11,53 +11,57 @@ queue "fo.grounding\n(shared, quorum)" as QG
 queue "fo.aircraft.fo-1 /\nfo.aircraft.fo-2" as QA
 end box
 box "ONE FO replica (competing consumers)" #F4F7FF
-participant "GroundingHandler" as GH
-participant "FlightCommandService" as Svc
+participant "GroundingEventListener" as GL
+participant "AircraftGroundingHandler" as GH
+participant "AircraftReferenceService" as Ref
+participant "GroundingService" as GS
 database "Replica DB" as DB
 end box
 participant "flights.events" as FEX
 
 User -> AC : PATCH /api/aircraft-models/instances/{reg}/status\n(UNDER_MAINTENANCE)
-AC -> EX : AircraftStatusChanged(reg, ACTIVE -> UNDER_MAINTENANCE)\n(via the Aircraft outbox)
-EX -> QA : aircraft.# (every FO replica updates AircraftRef)
+AC -> EX : AircraftStatusChanged(reg, status, revision)
+EX -> QA : aircraft.# (every FO replica: AircraftEventListener updates aircraft_ref and the mood)
 EX -> QG : aircraft.status-changed (ONE copy for the whole FO service)
-QG -> GH : deliver (only one of FO-1 / FO-2 gets it)
-activate GH
-alt new status is ACTIVE
-  GH -> QG : basicAck (nothing to do)
+QG -> GL : deliver (only one of FO-1 / FO-2 gets it)
+activate GL
+GL -> GL : AircraftEventTranslator (ACL)\nmalformed -> reject -> fo.dead-letter
+GL -> DB : BEGIN; processed_event(consumer = "fo.grounding", eventId)
+GL -> GH : onAircraftStatus(change)
+GH -> Ref : apply(change)
+Ref -> DB : SELECT aircraft_ref ... FOR UPDATE;\nupdate only if newer (revision, then time); recompute mood
+GH -> Ref : isGrounded(reg)?
+alt aircraft ACTIVE (or an old event: a newer ACTIVE status is already known)
+  GH --> GL : nothing to do
 else not ACTIVE
-  GH -> DB : BEGIN; processed_event(consumer = "fo.grounding", eventId)\n(key per consumer: the same event is also projected by fo.aircraft.*)
-  GH -> DB : UPDATE aircraft_ref SET status (from the event payload)
-  GH -> DB : future flights of reg with status SCHEDULED / DELAYED
+  GH -> GS : ground(reg)
+  GS -> DB : future flights of reg (SCHEDULED / DELAYED)
   loop each affected flight (ordered by scheduled date)
-    GH -> DB : candidates = aircraft_ref WHERE status = ACTIVE\nAND seats >= route.minimumCapacity AND range >= route.distance\nORDER BY registration_number
-    GH -> GH : first candidate without a 2 h conflict
+    GS -> DB : candidates = aircraft_ref WHERE status = ACTIVE\nORDER BY registration_number
+    GS -> GS : first candidate that fits the route\n(range, capacity) and has no 2 h conflict
     alt free candidate found
-      GH -> Svc : reassignAircraft(flight, candidate)
-      Svc -> DB : revision + 1; INSERT outbox FlightReassigned
+      GS -> DB : reassignAircraft (revision + 1) + outbox FlightReassigned
     else no candidate
-      GH -> Svc : changeStatus(flight, DELAYED, reason = NO_REPLACEMENT_AIRCRAFT)
-      Svc -> DB : revision + 1; INSERT outbox FlightStatusChanged
+      GS -> DB : DELAYED, reason NO_REPLACEMENT_AIRCRAFT\n(revision + 1) + outbox FlightStatusChanged
     end
   end
-  GH -> DB : COMMIT
-  GH -> QG : basicAck
 end
-deactivate GH
+GL -> DB : COMMIT
+GL -> QG : basicAck
+deactivate GL
 DB -> FEX : OutboxRelay publishes FlightReassigned / FlightStatusChanged
-FEX -> QA : (fo.flights.*) every replica updates replicas, views and moods
+FEX -> QA : (fo.flights.*) every replica updates its copy, views and moods
 
-== Late flight: scheduled on a replica that had not yet seen the grounding ==
-note over GH, DB
-  FO-2 accepts a flight for reg just before consuming AircraftStatusChanged.
-  When any replica applies that FlightScheduled and its local AircraftRef says reg is not ACTIVE,
-  it writes a GroundingRequested(reg) command to its outbox\n(flights.events, routing key fo.grounding.requested) -> routed to fo.grounding.
-  The handler is idempotent: flights already moved are skipped, so repeated requests are harmless.
+== Other triggers (same GroundingService, idempotent) ==
+note over GL, GS
+  - REST: POST /internal/scheduled-flights/aircraft/{reg}/grounding (kept while the Aircraft Service uses it);
+  - GroundingRequested (flights.events, routing key fo.grounding.requested) -> fo.grounding.
+  Flights already moved are skipped, so a repeated trigger changes nothing.
 end note
 
 == Failures ==
-note over QG, GH
-  Replica crashes mid-way: transaction rolled back, no ack -> the message is redelivered to the other replica.
+note over QG, GL
+  Replica crashes mid-way: transaction rolled back, no ack -> the message is redelivered (possibly to the other replica).
   Both FO replicas down: the message waits in fo.grounding (quorum, durable) until one comes back.
   Aircraft Service down after publishing: irrelevant, the event is already in the broker.
 end note

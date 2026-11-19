@@ -21,7 +21,7 @@ Container_Boundary(fo, "Flight Operations Service (one replica)") {
         Component(cmdSvc, "FlightCommandService", "@Service, @Transactional", "Loads the aggregate, applies the policy, saves the aggregate and the outbox event in ONE transaction.")
         Component(policy, "FlightSchedulingPolicy", "Domain service", "Active route, ACTIVE aircraft, range, capacity, 2 h conflicts.")
         Component(agg, "ScheduledFlight", "Aggregate root", "State machine, revision, reassignAircraft(), raises domain events.")
-        Component(grounding, "GroundingHandler", "@RabbitListener fo.grounding (competing consumers)", "On AircraftStatusChanged (not ACTIVE): picks a free, compatible ACTIVE aircraft from the local reference data.")
+        Component(grounding, "GroundingEventListener + AircraftGroundingHandler", "@RabbitListener fo.grounding (competing consumers)", "On AircraftStatusChanged: updates aircraft_ref and, if the aircraft is not ACTIVE, calls GroundingService (free, compatible ACTIVE aircraft from the local reference data; otherwise DELAYED).")
         Component(conflict, "ConflictResolver", "@Component", "Deterministic rule for conflicts created during a partition: every replica elects the same winner; the losing flight is cancelled (idempotent compensation).")
     }
 
@@ -39,7 +39,7 @@ Container_Boundary(fo, "Flight Operations Service (one replica)") {
         Component(proj, "Projectors", "FlightProjector, MoodProjector", "Update the views (only newer revisions are applied).")
     }
 
-    Component(boot, "SnapshotBootstrapper", "ApplicationRunner", "Only for an EMPTY database: copies a snapshot from the peer replica before consuming the queues.")
+    Component(boot, "SnapshotBootstrapper", "ApplicationReadyEvent, background thread", "Only for an EMPTY database: copies all flights from the peer replica (retries every 5 s) while the queues are consumed; last-writer-wins makes the order irrelevant.")
     Component(audit, "AuditLog", "logger AUDIT", "Who created / changed each flight.")
 }
 
@@ -55,7 +55,7 @@ Rel(cmdCtrl, audit, "CREATE / UPDATE_STATUS")
 Rel(cmdSvc, agg, "Creates / changes")
 Rel(cmdSvc, policy, "Validates")
 Rel(cmdSvc, db, "Aggregate + outbox row (1 transaction)", "JDBC")
-Rel(grounding, cmdSvc, "reassignAircraft")
+Rel(grounding, db, "Reassigns flights + outbox (1 transaction)", "JDBC")
 Rel(conflict, cmdSvc, "cancel (compensation)")
 
 Rel(outbox, db, "Reads pending rows", "JDBC")

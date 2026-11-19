@@ -16,7 +16,7 @@ package "Publishers" {
 package "RabbitMQ cluster (rabbitmq-1, rabbitmq-2, rabbitmq-3)" {
   collections "flights.events\n<<topic exchange>>" as exF #FFF4D6
   collections "aircraft.events\n<<topic exchange>>" as exA #FFF4D6
-  collections "routes.events\n<<topic exchange>>" as exR #FFF4D6
+  collections "airports.events\n<<fanout exchange>>" as exR #FFF4D6
   collections "fo.dlx\n<<fanout exchange>>" as dlx #FFE0E0
 
   queue "fo.flights.fo-1\n<<quorum>>" as qF1
@@ -32,13 +32,13 @@ package "RabbitMQ cluster (rabbitmq-1, rabbitmq-2, rabbitmq-3)" {
 package "Consumers" {
   rectangle "FO-1\nFlightEventListener\nRouteEventListener\nAircraftEventListener" as c1 #DDEBFF
   rectangle "FO-2\nFlightEventListener\nRouteEventListener\nAircraftEventListener" as c2 #DDEBFF
-  rectangle "FO-1 or FO-2\nGroundingHandler\n(competing consumers)" as cg #DDEBFF
+  rectangle "FO-1 or FO-2\nGroundingEventListener\n(competing consumers)" as cg #DDEBFF
   rectangle "Other services\n(e.g. Aircraft: flights per aircraft)" as other #EEEEEE
 }
 
-foPub --> exF : flight.scheduled\nflight.status-changed\nflight.reassigned\nfo.grounding.requested
+foPub --> exF : flight.scheduled\nflight.status-changed\nflight.reassigned
 acPub --> exA : aircraft.registered\naircraft.status-changed
-arPub --> exR : route.created\nroute.updated\nroute.deactivated
+arPub --> exR : ROUTE_CREATED\nROUTE_UPDATED\nROUTE_DEACTIVATED\n(+ AIRPORT_*, ignored by FO)
 
 exF --> qF1 : flight.#
 exF --> qF2 : flight.#
@@ -47,8 +47,8 @@ exA --> qA1 : aircraft.#
 exA --> qA2 : aircraft.#
 exA --> qG : aircraft.status-changed
 exF --> qG : fo.grounding.requested
-exR --> qR1 : route.#
-exR --> qR2 : route.#
+exR --> qR1 : (fanout)
+exR --> qR2 : (fanout)
 
 qF1 --> c1
 qA1 --> c1
@@ -62,16 +62,4 @@ qF1 ..> dlx : rejected after\n5 deliveries
 qG ..> dlx
 dlx --> qDL
 
-note bottom of exF
-  Event envelope (JSON):
-  eventId (UUID), type, version, occurredAt,
-  idempotency key per consumer: (consumer, eventId)
-  aggregateId, revision, sourceInstance, correlationId, payload
-  Persistent messages; publisher confirms; manual ack after commit.
-end note
-
-note bottom of qG
-  One queue per replica = every replica receives every event (pub/sub, multicast).
-  Shared fo.grounding = exactly one replica reassigns the flights (work queue).
-end note
 @enduml

@@ -1,0 +1,51 @@
+@startuml replication-overview-p2
+title AISafe - Replication and consistency per service (second delivery)
+skinparam shadowing false
+skinparam defaultFontSize 12
+skinparam packageStyle rectangle
+skinparam nodesep 60
+skinparam ranksep 40
+left to right direction
+
+queue "RabbitMQ cluster\n(3 nodes, quorum queues)" as MQ
+
+rectangle "Flight Operations (2 replicas)" as FO {
+  component "replica A\n+ PostgreSQL" as FA
+  component "replica B\n+ PostgreSQL" as FB
+}
+rectangle "Airports & Routes (2 replicas)" as AR {
+  component "replica A\n+ PostgreSQL" as RA
+  component "replica B\n+ PostgreSQL" as RB
+}
+rectangle "Aircraft (2 replicas)" as AC {
+  component "replica A" as CA
+  component "replica B" as CB
+}
+rectangle "Maintenance (2 replicas)" as MT {
+  component "replica A" as MA
+  component "replica B" as MB
+}
+
+FA --> MQ : flights.events
+MQ --> FB : fo.flights.<replica>
+RA --> MQ : airports.events
+MQ --> RB : airports.events.<replica>
+MQ --> FA : routes (ACL)
+CA <--> CB : HTTPS (first delivery)
+MA <--> MB : HTTPS (first delivery)
+
+note right of FB
+  Flight Operations: CQRS. Aggregate + outbox in one local transaction;
+  events carry the full flight state; idempotent consumers; last-writer-wins
+  by revision; deterministic conflict resolution (compensation);
+  snapshot from a peer when a replica starts with an empty database. AP.
+end note
+note right of RB
+  Airports & Routes: CQRS (write model + flat read model), transactional
+  outbox with publisher confirms, at-least-once delivery, idempotent
+  consumers, last-writer-wins by lastModified; dead-letter queue.
+end note
+note right of CB
+  Aircraft and Maintenance: replication as in the first delivery (HTTPS).
+end note
+@enduml
