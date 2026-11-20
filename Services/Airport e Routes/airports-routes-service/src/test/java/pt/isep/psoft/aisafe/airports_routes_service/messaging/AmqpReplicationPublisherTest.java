@@ -87,6 +87,18 @@ class AmqpReplicationPublisherTest {
         assertEquals("backoffice", envelope.get("originalUser").asText());
         assertEquals("airports-routes-1", envelope.get("originNodeId").asText());
         assertEquals("2026-11-15T10:00:00Z", envelope.get("lastModified").asText());
+        assertEquals(task.getEventId(), envelope.get("eventId").asText());
+        assertEquals(task.getEventId(), message.getMessageProperties().getMessageId());
+    }
+
+    @Test
+    void everyTaskGetsADifferentUuidEventId() {
+        ReplicationTask a = task();
+        ReplicationTask b = task();
+
+        assertNotNull(a.getEventId());
+        assertEquals(36, a.getEventId().length());
+        assertNotEquals(a.getEventId(), b.getEventId());
     }
 
     @Test

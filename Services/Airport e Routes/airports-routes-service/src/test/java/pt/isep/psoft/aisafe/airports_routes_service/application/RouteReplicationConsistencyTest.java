@@ -211,6 +211,45 @@ class RouteReplicationConsistencyTest {
         verify(routeRepository, never()).save(any());
     }
 
+    // ---------- history (regression: ROUTE_UPDATED right after ROUTE_CREATED went to the DLQ) ----------
+
+    @Test
+    void replicatedCreateThenReplicatedUpdateKeepsAValidHistory() {
+        RouteId newId = new RouteId("RT-9");
+        Instant created = Instant.now().minusSeconds(3);   // event time on the origin instance
+        Instant updated = created.plusSeconds(1);           // still before "now" on this instance
+        when(routeRepository.findByRouteId(newId)).thenReturn(Optional.empty());
+        org.mockito.ArgumentCaptor<pt.isep.psoft.aisafe.airports_routes_service.domain.RouteHistory> history =
+                org.mockito.ArgumentCaptor.forClass(pt.isep.psoft.aisafe.airports_routes_service.domain.RouteHistory.class);
+
+        service.createRoute(new CreateRouteDTO("RT-9", "LIS", "OPO", 50, 300.0, 50, created, NODE_B), true, created, NODE_B);
+        verify(routeHistoryRepository).save(history.capture());
+        pt.isep.psoft.aisafe.airports_routes_service.domain.RouteHistory createdEntry = history.getValue();
+        assertEquals(java.time.LocalDateTime.ofInstant(created, java.time.ZoneOffset.UTC), createdEntry.getStartDate());
+
+        Route saved = new Route(newId, lis, opo, 50, 300.0, 50);
+        saved.applyReplicationMetadata(created, NODE_B);
+        when(routeRepository.findByRouteId(newId)).thenReturn(Optional.of(saved));
+        when(routeHistoryRepository.findFirstByRouteIdAndEndDateIsNull("RT-9")).thenReturn(Optional.of(createdEntry));
+
+        assertDoesNotThrow(() ->
+                service.updateRoute("RT-9", new UpdateRouteDTO(77, 350.0, 60), true, updated, NODE_B));
+        assertEquals(77, saved.getEstimatedFlightTime());
+        assertTrue(createdEntry.getEndDate().isAfter(createdEntry.getStartDate()));
+    }
+
+    @Test
+    void outOfOrderHistoryNeverEndsBeforeItStarts() {
+        pt.isep.psoft.aisafe.airports_routes_service.domain.RouteHistory open =
+                new pt.isep.psoft.aisafe.airports_routes_service.domain.RouteHistory("RT-1", "CREATED",
+                        java.time.LocalDateTime.ofInstant(base.plusSeconds(60), java.time.ZoneOffset.UTC));
+        when(routeHistoryRepository.findFirstByRouteIdAndEndDateIsNull("RT-1")).thenReturn(Optional.of(open));
+
+        assertDoesNotThrow(() ->
+                service.updateRoute("RT-1", new UpdateRouteDTO(70, 500.0, 90), true, base.plusSeconds(5), NODE_B));
+        assertTrue(open.getEndDate().isAfter(open.getStartDate()));
+    }
+
     @Test
     void localCreateOfAnExistingRouteIsRejected() {
         CreateRouteDTO dto = new CreateRouteDTO("RT-1", "LIS", "OPO", 65, 450.0, 70, null, null);

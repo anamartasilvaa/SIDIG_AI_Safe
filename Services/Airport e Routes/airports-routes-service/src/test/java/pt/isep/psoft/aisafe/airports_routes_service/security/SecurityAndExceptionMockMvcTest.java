@@ -24,7 +24,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 
-@SpringBootTest(properties = {"peer.urls=", "app.replication.transport=http"})
+@SpringBootTest(properties = {"peer.urls=", "app.replication.transport=http",
+        "spring.datasource.url=jdbc:h2:mem:mockmvc-test;DB_CLOSE_DELAY=-1"})
 @AutoConfigureMockMvc
 class SecurityAndExceptionMockMvcTest {
     @Autowired MockMvc mockMvc;
