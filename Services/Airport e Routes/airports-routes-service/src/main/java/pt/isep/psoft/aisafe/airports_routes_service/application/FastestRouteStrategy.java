@@ -32,6 +32,10 @@ public class FastestRouteStrategy implements RouteSearchStrategy {
     private static final int MINIMUM_CONNECTING_TIME_MINUTES = 60; // Regra do MCT (Minimum Connection Time)
     private static final int MAX_FLIGHTS = 3; // Limite fixo: máximo de 3 voos (2 escalas).
 
+    /** Entrega 2: 0 = as leituras sao so locais (sem pedidos HTTP as outras instancias). */
+    @Value("${peer.forwarding.max-hops:1}")
+    private int maxForwardingHops = 1;
+
     public FastestRouteStrategy(RouteReadRepository routeReadRepository, RestTemplate restTemplate,
                                 ObjectMapper objectMapper,
                                 @Value("${peer.urls:}") List<String> peerUrls) {
@@ -108,7 +112,7 @@ public class FastestRouteStrategy implements RouteSearchStrategy {
                 .findByOriginIataAndStatus(iataCode.toUpperCase(), "ACTIVE")
                 .stream().map(this::convertToDTO).toList());
 
-        for (String peerUrl : peerUrls) {
+        for (String peerUrl : maxForwardingHops > 0 ? peerUrls : List.<String>of()) {
             try {
                 String url = UriComponentsBuilder.fromUriString(peerUrl)
                         .pathSegment("api", "routes", "airport", iataCode.toUpperCase())
