@@ -17,7 +17,7 @@ System_Boundary(aisafe, "AISafe Flight Management System") {
     ContainerDb(fodb, "Flight Ops DB (one per replica)", "PostgreSQL 16, Flyway", "fo_command (aggregate, references, outbox, processed events) and fo_query (read models)")
 
     Container(ar, "Airports & Routes Service (x2)", "Java 17, Spring Boot 4, CQRS", "Airports, routes and history. Write model + flat read model; transactional outbox to airports.events.")
-    ContainerDb(ardb, "Airports & Routes DB (one per replica)", "PostgreSQL 16", "Write model and read model")
+    ContainerDb(ardb, "Airports & Routes DB (one per replica)", "PostgreSQL 16, Flyway", "Write model, read model, outbox and inbox")
 
     Container(ac, "Aircraft Service (x2)", "Java 17, Spring Boot 4", "Aircraft models and instances, operational status. Integration as in the first delivery (REST).")
     ContainerDb(acdb, "Aircraft DB (one per replica)", "H2", "Aircraft")

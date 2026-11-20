@@ -59,6 +59,18 @@ um **Mock Server** no Postman que devolve o mesmo tipo de informação em JSON (
 
 Escolher **um** modo. O Modo A e o Modo B **não podem correr ao mesmo tempo** (ambos usam as portas 8443 e 15672).
 
+> **Base de dados do Airports & Routes (Flyway).** O esquema é criado por migrações Flyway
+> (`db/migration/V1__airports_routes_schema.sql`) e só numa base **vazia**. Bases criadas antes pelo Hibernate têm de ser
+> apagadas **uma vez** (comandos em cada modo, abaixo). Os dados iniciais voltam a ser carregados no arranque.
+> No IntelliJ, depois de alterar o `pom.xml`: janela **Maven → Reload All Maven Projects**.
+
+### Trocar de modo
+
+| De → Para | Comandos (PowerShell, na pasta `infrastructure`) |
+|---|---|
+| Modo A → Modo B | Parar os serviços no IntelliJ e fechar a janela do Keycloak; `.\start-infra.ps1 -Stop`; `docker stop aisafe-rabbitmq-1 fo-db-a1 fo-db-a2 fo-db-a3` |
+| Modo B → Modo A | `docker compose -f docker-compose.secure.yml stop` |
+
 ### Modo B – Docker (recomendado para a demonstração)
 
 Tudo em containers: 2 gateways, 2 Keycloak (+ BD com failover), cluster RabbitMQ de 3 nós, 2 instâncias de cada serviço,
@@ -69,6 +81,14 @@ cd infrastructure
 .\docker\gen-certs.ps1      # só na primeira vez: certificados + .env com segredos aleatórios
 docker compose -f docker-compose.secure.yml up -d --build
 docker compose -f docker-compose.secure.yml ps -a   # esperar por "healthy"; rabbitmq-init fica "Exited (0)"
+```
+
+**Só uma vez, ao passar para o Flyway** (apaga apenas as bases do Airports & Routes; FO e Keycloak ficam intactos):
+```powershell
+docker compose -f docker-compose.secure.yml down
+docker volume rm aisafe_airports-db-1-data aisafe_airports-db-2-data
+docker compose -f docker-compose.secure.yml up -d --build
+docker compose -f docker-compose.secure.yml logs airports-routes-1 | Select-String "migration"   # "Successfully applied 1 migration"
 ```
 
 | O quê | Onde |
@@ -114,7 +134,15 @@ keytool -importcert -alias aisafe -file aisafe.crt -keystore truststore.p12 -sto
 | Airports - Instância 1, 2, 3 | `SPRING_RABBITMQ_USERNAME=aisafe`, `SPRING_RABBITMQ_PASSWORD=aisafe-mq` |
 | FlightOperationsApplication - Instance 1 / 2 / 3 | `DB_URL=jdbc:postgresql://localhost:5441/flightops` / `5442` / `5443` |
 
-**5. Arrancar os serviços** (por esta ordem): Aircraft 1-3 → Airports 1-3 → Flight Operations 1-3.
+**5. Só uma vez, ao passar para o Flyway:** com as instâncias do Airports paradas, apagar as bases H2 antigas
+(na raiz do repositório):
+```powershell
+Remove-Item data\airports_db_*.mv.db, data\airports_db_*.trace.db -ErrorAction SilentlyContinue
+```
+
+**6. Arrancar os serviços** (por esta ordem): Aircraft 1-3 → Airports 1-3 → Flight Operations 1-3.
+Na consola de cada instância do Airports aparece `Successfully applied 1 migration` (só na primeira vez) e
+`Modelo de leitura reconstruido: N aeroportos, M rotas`.
 
 | Serviço | Portas |
 |---|---|
@@ -149,6 +177,8 @@ Os testes de convergência escrevem numa instância e leem noutra até os dados 
 é enviado `X-P2P-Hops: 1`, que desliga o reencaminhamento entre instâncias: um 200 prova que o evento chegou pelo RabbitMQ.
 
 ### JUnit
+
+No IntelliJ, depois de alterar o `pom.xml`: **Maven → Reload All Maven Projects**.
 
 Em cada serviço: `.\mvnw.cmd test` (não precisa de Docker; usa H2 e mocks).
 

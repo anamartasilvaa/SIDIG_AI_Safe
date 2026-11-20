@@ -29,7 +29,9 @@ note over A1, A2
   Rule: the update with the later lastModified wins.
   On a tie, the larger originNodeId wins.
   Both instances converge to the same state
-  (eventual consistency). Events are idempotent:
-  applying the same event twice changes nothing.
+  (eventual consistency), whatever the arrival order.
+  Duplicates are filtered first by the inbox
+  (processed_event); last-writer-wins also makes
+  a repeated or older event harmless.
 end note
 @enduml

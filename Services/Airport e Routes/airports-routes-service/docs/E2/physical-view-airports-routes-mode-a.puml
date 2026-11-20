@@ -40,7 +40,8 @@ FO --> FODB : JDBC
 
 note bottom of H2
   Database-per-instance also in Mode A: each instance has
-  its own H2 file (write model + read model + outbox).
+  its own H2 file (write + read model, outbox, inbox),
+  created by the same Flyway migrations as in Mode B.
   Queues: airports.events.<port> (quorum), one per instance.
 end note
 note right of MQ

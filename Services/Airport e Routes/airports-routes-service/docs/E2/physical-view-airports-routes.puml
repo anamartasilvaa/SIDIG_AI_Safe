@@ -18,9 +18,9 @@ node "Docker host" {
     node "rabbitmq-init\n(imports definitions.json,\nexits with code 0)" as RBI
 
     node "airports-routes-1\nSpring Boot :8443 (HTTPS)" as AR1
-    database "airports-db-1\nPostgreSQL 16\n(write model + read model + outbox)" as DB1
+    database "airports-db-1\nPostgreSQL 16\n(write + read model,\noutbox, inbox; schema by Flyway)" as DB1
     node "airports-routes-2\nSpring Boot :8443 (HTTPS)" as AR2
-    database "airports-db-2\nPostgreSQL 16\n(write model + read model + outbox)" as DB2
+    database "airports-db-2\nPostgreSQL 16\n(write + read model,\noutbox, inbox; schema by Flyway)" as DB2
 
     node "flight-operations-1 / -2\n(each with its own database)" as FO
     node "aircraft-1 / -2\nmaintenance-1 / -2\n(REST only, no broker yet)" as OTHER
@@ -48,14 +48,15 @@ RB1 -- RB2 : cluster
 RB2 -- RB3 : cluster
 RB1 -- RB3 : cluster
 RBI ..> RB1 : HTTP management API\n(one-shot, at startup)
-AR1 <..> AR2 : HTTPS\nP2P read forwarding (X-P2P-Hops)
 
 note bottom of DB1
   Database-per-Service pattern: a dedicated
   PostgreSQL instance per service instance.
   Replicas never share a database; state
   converges through AMQP events only.
-  Each instance has its own outbox table.
+  Each instance has its own outbox (replication_task)
+  and inbox (processed_event); the schema is created
+  by Flyway migrations (V1, V2) when the database is empty.
 end note
 
 note right of RB2

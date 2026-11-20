@@ -20,7 +20,7 @@ package "RabbitMQ cluster (rabbitmq-1/2/3, AMQPS 5671)" {
   queue "airports.events.airports-routes-1.dlq\n<<quorum>> max-length 10000" as dlq1 #FFE0E0
   queue "airports.events.airports-routes-2.dlq\n<<quorum>> max-length 10000" as dlq2 #FFE0E0
 
-  queue "fo.routes.flight-operations-1\n(declared by Flight Operations)" as qf1 #EEEEEE
+  queue "fo.routes.flight-operations-1\n(declared by Flight Operations;\nFO inbox also uses the messageId)" as qf1 #EEEEEE
   queue "fo.routes.flight-operations-2\n(declared by Flight Operations)" as qf2 #EEEEEE
 }
 
@@ -48,9 +48,9 @@ q2 ..> dlq2
 
 note bottom of ex
   Event envelope (JSON, persistent):
-  taskId, eventType, method, path, payload,
+  eventId (UUID), taskId, eventType, method, path, payload,
   originalUser, lastModified, originNodeId.
-  messageId = <originNodeId>-<taskId>.
+  messageId = eventId (UUID, never reused).
   Publisher confirms: the outbox task is only marked DONE
   after the broker ack (at-least-once delivery).
   One outbox task per event (not one per peer).
@@ -60,8 +60,9 @@ note bottom of q1
   One quorum queue per instance = every instance receives
   every event (pub/sub). If an instance is down, its queue
   buffers the events (until the 1 h TTL).
-  Consumers ignore events with their own originNodeId and
-  apply the rest idempotently (last-writer-wins: lastModified,
+  Consumers ignore events with their own originNodeId,
+  skip duplicates (inbox: processed_event by eventId) and
+  apply the rest with last-writer-wins (lastModified,
   tie-break by originNodeId).
 end note
 @enduml

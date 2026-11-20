@@ -1,13 +1,12 @@
 @startuml sd-cqrs-query-read-model
 skinparam style strictuml
 autonumber
-title SD - CQRS query side: read model + P2P forwarding (P2)
+title SD - CQRS query side: local read model only (P2)
 
 actor "ATCC" as User
 participant "RouteController" as Ctrl
 participant "RouteQueryService" as Query
 participant "RouteReadRepository\n(route_read_model)" as RM
-participant "Peer replica\n(RouteQueryService)" as Peer
 
 == Startup ==
 note over Query, RM
@@ -23,15 +22,19 @@ activate Ctrl
 Ctrl -> Query : getRoute(id, hops)
 activate Query
 Query -> RM : findById(id)
-alt found locally
+alt found in this instance's read model
     RM --> Query : RouteReadModel
     Query --> Ctrl : RouteViewDTO (toView)
-else not found and hops < max-hops (1)
-    Query -> Peer : GET /api/routes/{id}\nX-P2P-Hops: hops+1
-    Peer --> Query : 200 RouteViewDTO / 404
-    Query --> Ctrl : view or 404
-else not found and hops = max-hops
+else not found
     Query --> Ctrl : 404 Not Found
+    note right of Query
+      No HTTP call to other instances
+      (peer.forwarding.max-hops = 0).
+      If the route was just created on another
+      instance, it appears here as soon as the
+      ROUTE_CREATED event is consumed
+      (eventual consistency, ~1-2 s).
+    end note
 end
 Ctrl --> User : 200 / 404
 deactivate Query

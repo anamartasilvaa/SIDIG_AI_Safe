@@ -13,6 +13,7 @@ participant "ReplicationOutbox" as Outbox
 participant "AmqpReplicationPublisher" as Pub
 participant "airports.events\n(fanout)" as Ex
 participant "ReplicationEventConsumer\n(instance 2)" as Cons2
+participant "IdempotencyGuard\n(inbox)" as Inbox
 participant "RouteService\n(instance 2)" as Svc2
 
 User -> Ctrl : POST /api/routes (CreateRouteDTO)
@@ -32,7 +33,7 @@ deactivate Ctrl
 
 == Background publisher (every 2 s) ==
 Pub -> Pub : findTop100ByStatus(PENDING)
-Pub -> Ex : publish persistent JSON envelope\n(eventType=ROUTE_CREATED,\nmessageId=<origin>-<taskId>)
+Pub -> Ex : publish persistent JSON envelope\n(eventType=ROUTE_CREATED,\nmessageId=eventId (UUID))
 Ex --> Pub : publisher confirm (<= 5 s)
 Pub -> Pub : task.markDone()
 note right of Pub : no confirm -> retry with backoff\nmin(60 s, 5*2^attempts), 10 attempts -> FAILED
@@ -41,12 +42,18 @@ note right of Pub : no confirm -> retry with backoff\nmin(60 s, 5*2^attempts), 1
 Ex -> Cons2 : deliver from queue\nairports.events.airports-routes-2
 activate Cons2
 Cons2 -> Cons2 : originNodeId == own id?\nyes -> ignore (ack)
-Cons2 -> Svc2 : createRoute(dto, isReplication=true)
+Cons2 -> Inbox : runOnce(eventId)
+activate Inbox
+Inbox -> Inbox : processed_event has (consumer, eventId)?\nyes -> duplicate, return (ack)
+Inbox -> Svc2 : createRoute(dto, isReplication=true)
 activate Svc2
 Svc2 -> Svc2 : idempotent apply\n(existing id -> return existing;\nlast-writer-wins by lastModified)
-Svc2 -> Svc2 : save write model\n+ project() read model
-Svc2 --> Cons2 : ok -> ack
+Svc2 -> Svc2 : save write model\n+ project() read model\n+ history with the event time (UTC)
+Svc2 --> Inbox : ok
 deactivate Svc2
+Inbox -> Inbox : insert processed_event\n(same transaction as the effect)
+Inbox --> Cons2 : applied -> ack
+deactivate Inbox
 deactivate Cons2
 note right of Cons2 : failure -> listener retry (3 attempts,\n1 s * 2) -> dead-letter queue (.dlq)
 note over Ex : Flight Operations consumes the same event\nfrom its own queue (local copy of routes)

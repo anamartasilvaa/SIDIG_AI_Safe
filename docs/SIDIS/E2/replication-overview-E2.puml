@@ -42,8 +42,9 @@ note right of FB
 end note
 note right of RB
   Airports & Routes: CQRS (write model + flat read model), transactional
-  outbox with publisher confirms, at-least-once delivery, idempotent
-  consumers, last-writer-wins by lastModified; dead-letter queue.
+  outbox with publisher confirms, at-least-once delivery, inbox
+  (processed_event by eventId UUID), last-writer-wins by lastModified;
+  dead-letter queue; reads only from the local read model.
 end note
 note right of CB
   Aircraft and Maintenance: replication as in the first delivery (HTTPS).
