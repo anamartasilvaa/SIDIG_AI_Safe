@@ -94,7 +94,7 @@ rotas nas suas próprias filas (`fo.routes.flight-operations-N`).
 - **Conflitos: *last-writer-wins*.** Ganha a alteração com `lastModified` mais recente; em caso de empate ganha o `originNodeId` maior.
   Um evento mais antigo do que o estado atual é ignorado. Os eventos da própria instância (devolvidos pelo fanout) também são ignorados.
 
-Ver `docs/sd-conflict-resolution.puml`.
+Ver `docs/E2/sd-conflict-resolution.puml`.
 
 ## E2.5 Infraestrutura sem pontos únicos de falha (Modo B)
 
@@ -118,7 +118,7 @@ Uma instância e a sua base de dados falham em conjunto; o outro par (instância
 | **Instância par inacessível numa leitura** | *Circuit breaker* por par: 3 falhas seguidas abrem o circuito durante 10 s; leituras agregadas devolvem `X-Partial-Result: true`. |
 | **Nó do RabbitMQ em baixo** | O cliente usa a lista de 3 endereços (`SPRING_RABBITMQ_ADDRESSES`) e as filas *quorum* mantêm-se. |
 
-Ver `docs/sd-failure-recovery.puml` e `docs/sd-amqp-event-propagation.puml`.
+Ver `docs/E2/sd-failure-recovery.puml` e `docs/E2/sd-amqp-event-propagation.puml`.
 
 ## E2.7 `GET /api/v2/unicorns` (humor dos aviões)
 
@@ -191,18 +191,18 @@ src/main/java/.../airports_routes_service/
 
 ## E2.13 Diagramas
 
-Pasta [`docs/`](docs/) (PlantUML):
+Pasta [`docs/`](docs/) (PlantUML), organizada por entrega: [`docs/E2/`](docs/E2/) (esta entrega) e [`docs/E1/`](docs/E1/) (Entrega 1, ainda válidos para as leituras entre instâncias).
 
 | Ficheiro | Mostra |
 |---|---|
-| `c4-component-airports-routes-p2.puml` | Componentes (CQRS, outbox, mensageria) |
-| `physical-view-airports-routes.puml` | Vista física (Modo B: gateways, cluster RabbitMQ, bases por instância) |
-| `physical-view-airports-routes-mode-a.puml` | Vista física (Modo A: IntelliJ, H2 por instância, RabbitMQ e PostgreSQL do FO em Docker) |
-| `class-diagram-airports-routes.puml` | Modelo de domínio (lado da escrita), modelo de leitura CQRS e outbox |
-| `messaging-topology-airports-routes.puml` | Topologia AMQP (exchange, filas *quorum*, DLQ) |
-| `sd-amqp-event-propagation.puml` | Propagação de um evento entre instâncias |
-| `sd-cqrs-query-read-model.puml` | Uma query a ler só o modelo de leitura |
-| `sd-failure-recovery.puml` | Broker em baixo, instância parada, mensagem inválida |
-| `sd-conflict-resolution.puml` | Resolução de conflitos (*last-writer-wins*) |
-| `sd-create-airport-outbox.puml`, `sd-create-route-outbox.puml`, `sd-csv-import-outbox.puml` | Comandos com outbox |
-| `sd-circuit-breaker.puml`, `sd-p2p-forwarding-read.puml` | Leituras entre instâncias |
+| `E2/c4-component-airports-routes-p2.puml` | Componentes (CQRS, outbox, mensageria) |
+| `E2/physical-view-airports-routes.puml` | Vista física (Modo B: gateways, cluster RabbitMQ, bases por instância) |
+| `E2/physical-view-airports-routes-mode-a.puml` | Vista física (Modo A: IntelliJ, H2 por instância, RabbitMQ e PostgreSQL do FO em Docker) |
+| `E2/class-diagram-airports-routes.puml` | Modelo de domínio (lado da escrita), modelo de leitura CQRS e outbox |
+| `E2/messaging-topology-airports-routes.puml` | Topologia AMQP (exchange, filas *quorum*, DLQ) |
+| `E2/sd-amqp-event-propagation.puml` | Propagação de um evento entre instâncias |
+| `E2/sd-cqrs-query-read-model.puml` | Uma query a ler só o modelo de leitura |
+| `E2/sd-failure-recovery.puml` | Broker em baixo, instância parada, mensagem inválida |
+| `E2/sd-conflict-resolution.puml` | Resolução de conflitos (*last-writer-wins*) |
+| `E1/sd-create-airport-outbox.puml`, `E1/sd-create-route-outbox.puml`, `E1/sd-csv-import-outbox.puml` | Comandos com outbox (Entrega 1: entrega por HTTP; na Entrega 2 ver `E2/sd-amqp-event-propagation.puml`) |
+| `E1/sd-circuit-breaker.puml`, `E1/sd-p2p-forwarding-read.puml` | Leituras entre instâncias |
