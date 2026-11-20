@@ -25,6 +25,10 @@ docker compose -f docker-compose.secure.yml ps -a
 Quando todos os containers estiverem `healthy` (e o `rabbitmq-init` em `Exited (0)`), o sistema fica disponível em
 `https://localhost:8443` (gateway 1) e `https://localhost:8444` (gateway 2).
 
+O **Modo A (IntelliJ)** também funciona na Entrega 2, com 3 réplicas do FO: ver
+`infrastructure/README_E2.md`, secção "Modo A (IntelliJ)". Os dois modos usam as mesmas portas e não podem correr ao
+mesmo tempo.
+
 ---
 
 ## E2.1 O que mudou face à Entrega 1
@@ -128,9 +132,9 @@ Contrato proposto ao serviço Aircraft (exchange `aircraft.events`, tipo `topic`
 
 ```json
 {"eventId": "...", "type": "AircraftStatusChanged", "occurredAt": "2026-11-16T10:00:00Z",
-  "aggregateId": "CS-TTA", "revision": 4,
-  "payload": {"registrationNumber": "CS-TTA", "modelCode": "A320", "status": "UNDER_MAINTENANCE",
-    "maximumRange": 6100, "seatingCapacity": 180}}
+ "aggregateId": "CS-TTA", "revision": 4,
+ "payload": {"registrationNumber": "CS-TTA", "modelCode": "A320", "status": "UNDER_MAINTENANCE",
+             "maximumRange": 6100, "seatingCapacity": 180}}
 ```
 
 O `AircraftEventTranslator` é tolerante: ignora campos desconhecidos, aceita o `payload` como texto JSON e a matrícula
@@ -155,7 +159,7 @@ Padrões usados:
 
 ## E2.4 Modelo de consistência
 
-- **Numa réplica:** consistência forte. O agregado e o evento são gravados na mesma transação, e a réplica
+- **Dentro de uma réplica:** consistência forte. O agregado e o evento são gravados na mesma transação, e a réplica
   que recebe a escrita atualiza logo as suas vistas (*read-your-writes*).
 - **Entre réplicas:** **consistência eventual**. A outra réplica fica atualizada quando consome o evento (normalmente
   em menos de 1 s). Se um **comando** (`PATCH /{id}/status`) chegar a uma réplica antes do evento do voo, essa réplica
@@ -172,35 +176,40 @@ Padrões usados:
 
 ## E2.5 Infraestrutura sem pontos únicos de falha (Modo B)
 
-| Componente          | Instâncias                                     | Comportamento com uma falha                                                                   |
-|---------------------|------------------------------------------------|-----------------------------------------------------------------------------------------------|
-| API Gateway (NGINX) | 2 (8443, 8444)                                 | O cliente usa a outra gateway                                                                 |
-| Keycloak            | 2                                              | O outro nó continua a emitir tokens                                                           |
-| BD do Keycloak      | 3 (PostgreSQL + repmgr: 1 primário, 2 standby) | O repmgr promove um standby; o Keycloak liga-se ao novo primário (`targetServerType=primary`) |
-| RabbitMQ            | 3 (cluster, `pause_minority`)                  | As *quorum queues* continuam com 2 de 3 nós; os clientes ligam-se a outro nó                  |
-| Flight Operations   | 2, cada uma com a sua PostgreSQL               | A outra réplica continua a servir; a fila da réplica em baixo guarda os eventos               |
+| Componente           | Instâncias                                     | Comportamento com uma falha                                                                                  |
+|----------------------|------------------------------------------------|--------------------------------------------------------------------------------------------------------------|
+| API Gateway (NGINX)  | 2 (8443, 8444)                                 | O cliente usa a outra gateway                                                                                |
+| Keycloak             | 2                                              | O outro nó continua a emitir tokens                                                                          |
+| BD do Keycloak       | 3 (PostgreSQL + repmgr: 1 primário, 2 standby) | O repmgr promove um standby; o Keycloak liga-se ao novo primário (`targetServerType=primary`)                |
+| RabbitMQ             | 3 (cluster, `pause_minority`)                  | As *quorum queues* continuam com 2 de 3 nós; os clientes ligam-se a outro nó                                 |
+| Flight Operations    | 2, cada uma com a sua PostgreSQL               | A outra réplica continua a servir; a fila da réplica em baixo guarda os eventos                              |
+| BD de uma réplica FO | 1 por réplica                                  | A réplica sem BD responde `503`; a gateway repete o pedido na outra réplica (`proxy_next_upstream http_503`) |
 
 Todo o tráfego AMQP usa **TLS (AMQPS, porta 5671)**; a porta 5672 sem TLS está desligada.
 
 ## E2.6 Tolerância a falhas
 
-| Cenário                                                             | Comportamento                                                                                                                                                   |
-|---------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Broker totalmente em baixo                                          | As escritas são aceites (AP); os eventos ficam no outbox e são publicados quando o broker volta                                                                 |
-| Um nó RabbitMQ em baixo                                             | Sem impacto: *quorum queues* com maioria; os clientes ligam-se a outro nó da lista                                                                              |
-| Dois nós RabbitMQ em baixo                                          | O nó restante pausa (`pause_minority`); tratado como broker em baixo (outbox)                                                                                   |
-| Uma réplica FO em baixo                                             | A gateway usa a outra; a fila da réplica parada acumula os eventos e ela recupera-os ao voltar                                                                  |
-| Mensagem repetida                                                   | Ignorada (`processed_event`)                                                                                                                                    |
-| Mensagem que falha sempre                                           | Ao fim de 5 entregas vai para `fo.dead-letter`                                                                                                                  |
-| Airports & Routes ou Aircraft em baixo                              | O agendamento usa os dados de referência locais; só falha (503) se a rota ou o avião nunca tiverem sido vistos                                                  |
-| Dois pedidos simultâneos para o mesmo avião (mesma réplica)         | Lock na linha do avião (`aircraft_ref`): só um é aceite, o outro recebe 409                                                                                     |
-| Conflito entre réplicas                                             | Resolvido de forma determinística; o voo perdedor é cancelado (secção E2.4)                                                                                     |
-| Grounding sem avião livre                                           | O voo passa a `DELAYED` com o motivo `NO_REPLACEMENT_AIRCRAFT`                                                                                                  |
-| Primário da BD do Keycloak em baixo                                 | Failover automático (testado: promoção em menos de 45 s, novos logins continuam a funcionar)                                                                    |
-| Avião deixa de estar `ACTIVE` (evento do Aircraft)                  | Uma só réplica faz o grounding (fila `fo.grounding`); se ela falhar a meio, a mensagem volta à fila                                                             |
-| Réplica arranca com a BD vazia (disco perdido)                      | `SnapshotBootstrapper` copia os voos da outra réplica enquanto consome a sua fila; se a outra estiver em baixo, tenta até ela voltar (5 s, a duplicar até 60 s) |
-| Comando sobre um voo que ainda não chegou a esta réplica            | O voo é copiado da outra réplica e o comando é executado (sem 404); se a outra não responder, 404 como antes                                                    |
-| Voo agendado durante o grounding (réplica ainda sem a imobilização) | O `GroundingReconciler` deteta-o (até 30 s) e publica um `GroundingRequested`; uma só réplica reatribui o voo                                                   |
+| Cenário                                                             | Comportamento                                                                                                                                                                                                                           |
+|---------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Broker totalmente em baixo                                          | As escritas são aceites (AP); os eventos ficam no outbox e são publicados quando o broker volta                                                                                                                                         |
+| Um nó RabbitMQ em baixo                                             | Sem impacto: *quorum queues* com maioria; os clientes ligam-se a outro nó da lista                                                                                                                                                      |
+| Dois nós RabbitMQ em baixo                                          | O nó restante pausa (`pause_minority`); tratado como broker em baixo (outbox)                                                                                                                                                           |
+| Uma réplica FO em baixo                                             | A gateway usa a outra; a fila da réplica parada acumula os eventos e ela recupera-os ao voltar                                                                                                                                          |
+| Mensagem repetida                                                   | Ignorada (`processed_event`)                                                                                                                                                                                                            |
+| Mensagem que falha sempre                                           | Ao fim de 5 entregas vai para `fo.dead-letter`                                                                                                                                                                                          |
+| Airports & Routes ou Aircraft em baixo                              | O agendamento usa os dados de referência locais; só falha (503) se a rota ou o avião nunca tiverem sido vistos                                                                                                                          |
+| Dois pedidos simultâneos para o mesmo avião (mesma réplica)         | Lock na linha do avião (`aircraft_ref`): só um é aceite, o outro recebe 409                                                                                                                                                             |
+| Conflito entre réplicas                                             | Resolvido de forma determinística; o voo perdedor é cancelado (secção E2.4)                                                                                                                                                             |
+| Grounding sem avião livre                                           | O voo passa a `DELAYED` com o motivo `NO_REPLACEMENT_AIRCRAFT`                                                                                                                                                                          |
+| Primário da BD do Keycloak em baixo                                 | Failover automático (testado: promoção em menos de 45 s, novos logins continuam a funcionar)                                                                                                                                            |
+| Avião deixa de estar `ACTIVE` (evento do Aircraft)                  | Uma só réplica faz o grounding (fila `fo.grounding`); se ela falhar a meio, a mensagem volta à fila                                                                                                                                     |
+| Réplica arranca com a BD vazia (disco perdido)                      | `SnapshotBootstrapper` copia os voos da outra réplica enquanto consome a sua fila; se a outra estiver em baixo, tenta até ela voltar (5 s, a duplicar até 60 s)                                                                         |
+| Comando sobre um voo que ainda não chegou a esta réplica            | O voo é copiado da outra réplica e o comando é executado (sem 404); se a outra não responder, 404 como antes                                                                                                                            |
+| Voo agendado durante o grounding (réplica ainda sem a imobilização) | O `GroundingReconciler` deteta-o (até 30 s) e publica um `GroundingRequested`; uma só réplica reatribui o voo                                                                                                                           |
+| BD de uma réplica em baixo (réplica a correr)                       | A réplica responde `503` + `Retry-After` em até 2 s (`GlobalExceptionHandler`, timeout do pool 2 s); a gateway repete na outra réplica, e o cliente não vê o erro. Ao voltar a BD, a réplica consome os eventos que ficaram na sua fila |
+| Dois pedidos aprendem a mesma rota/avião ao mesmo tempo             | A cópia local é inserida numa transação própria (`ReferenceWriter`); quem perde a corrida usa a cópia já gravada (sem 500)                                                                                                              |
+| Disponibilidade pedida a uma réplica que ainda não conhece o avião  | A réplica pergunta uma vez ao Aircraft e responde como as outras; se o Aircraft estiver em baixo, responde `UNKNOWN`                                                                                                                    |
+| Gateway 1 em baixo / um nó do Keycloak em baixo                     | O cliente usa a gateway 2; o outro Keycloak emite os tokens e as duas réplicas continuam a validá-los                                                                                                                                   |
 
 ## E2.7 `GET /api/v2/unicorns` (humor dos aviões)
 
@@ -258,23 +267,24 @@ também recalculada a cada 5 min (`app.mood.refresh-interval`).
 | `RABBITMQ_USER` / `RABBITMQ_PASSWORD`  | `aisafe` / *(dev)*                            | Credenciais do broker                   |
 | `RABBITMQ_SSL`                         | `false`                                       | `true` para AMQPS (Modo B)              |
 
-| Propriedade                                      | Valor           | Descrição                                                          |
-|--------------------------------------------------|-----------------|--------------------------------------------------------------------|
-| `app.outbox.poll-interval` / `batch-size`        | `500ms` / `100` | Frequência e tamanho de cada envio do outbox                       |
-| `app.outbox.max-backoff`                         | `30s`           | Espera máxima entre tentativas com o broker em baixo               |
-| `app.outbox.retention`                           | `7d`            | Tempo até apagar eventos já publicados                             |
-| `app.mood.refresh-interval`                      | `5m`            | Recálculo periódico do humor dos aviões                            |
-| `app.bootstrap.retry-interval`                   | `5s`            | Primeiro intervalo entre tentativas do snapshot (duplica até 60 s) |
-| `app.bootstrap.max-attempts`                     | `0`             | Tentativas do snapshot; `0` = sem limite                           |
-| `app.grounding.reconcile-interval`               | `30s`           | Verificação de voos que ficaram em aviões imobilizados             |
-| `app.idempotency.retention` / `cleanup-interval` | `7d` / `1h`     | Retenção e limpeza da tabela `processed_event`                     |
+| Propriedade                                      | Valor           | Descrição                                                                                      |
+|--------------------------------------------------|-----------------|------------------------------------------------------------------------------------------------|
+| `app.outbox.poll-interval` / `batch-size`        | `500ms` / `100` | Frequência e tamanho de cada envio do outbox                                                   |
+| `app.outbox.max-backoff`                         | `30s`           | Espera máxima entre tentativas com o broker em baixo                                           |
+| `app.outbox.retention`                           | `7d`            | Tempo até apagar eventos já publicados                                                         |
+| `app.mood.refresh-interval`                      | `5m`            | Recálculo periódico do humor dos aviões                                                        |
+| `app.bootstrap.retry-interval`                   | `5s`            | Primeiro intervalo entre tentativas do snapshot (duplica até 60 s)                             |
+| `app.bootstrap.max-attempts`                     | `0`             | Tentativas do snapshot; `0` = sem limite                                                       |
+| `app.grounding.reconcile-interval`               | `30s`           | Verificação de voos que ficaram em aviões imobilizados                                         |
+| `app.idempotency.retention` / `cleanup-interval` | `7d` / `1h`     | Retenção e limpeza da tabela `processed_event`                                                 |
+| `spring.datasource.hikari.connection-timeout`    | `2000` (ms)     | Tempo máximo à espera de uma ligação à BD; com a BD em baixo a réplica responde `503` depressa |
 
 No Modo B todas as palavras-passe (BD, RabbitMQ, *Erlang cookie*, BD do Keycloak, repmgr) vêm do `.env`, gerado com
 valores aleatórios pelo `gen-certs.ps1` e fora do Git.
 
 ## E2.10 Testes
 
-**JUnit – 151 testes** (`.\mvnw.cmd test` na pasta do serviço; a base de dados de teste é H2 em modo PostgreSQL, com as
+**JUnit – 159 testes** (`.\mvnw.cmd test` na pasta do serviço; a base de dados de teste é H2 em modo PostgreSQL, com as
 mesmas migrações Flyway). Além dos testes da P1, cobrem:
 
 - lado dos comandos (`FlightCommandServiceTest`) e das consultas (`FlightQueryServiceTest`);
@@ -285,19 +295,31 @@ mesmas migrações Flyway). Além dos testes da P1, cobrem:
   `AircraftReferenceServiceTest`, `AircraftGroundingHandlerTest`);
 - snapshot no arranque (`SnapshotBootstrapperTest`), cópia de um voo em falta (`MissingFlightRecoveryTest`),
   reconciliação do grounding (`GroundingReconcilerTest`) e limpeza da idempotência (`ProcessedEventCleanupTest`);
-- regras RBAC do novo endpoint (`SecurityRulesTest`).
+- regras RBAC do novo endpoint (`SecurityRulesTest`);
+- concorrência nas referências locais (`ReferenceDataServiceConcurrencyTest`), disponibilidade numa réplica que ainda
+  não conhece o avião (`FlightQueryServiceAvailabilityFallbackTest`) e `503` com a BD em baixo
+  (`GlobalExceptionHandlerDatabaseTest`).
 
-**Postman – coleção `SIDIS – E2 Testes`** (`tests(postman)/SIDIS-E2-Testes.postman_collection.json`, environment
-`SIDIS`, verificação SSL desligada). As coleções da Entrega 1 mantêm-se sem alterações.
+**Postman – Modo B: coleção `SIDIS – Entrega 2 Modo B (Docker)`** (`tests(postman)/SIDIS-E2-Modo-B.postman_collection.json`,
+environment `SIDIS`, verificação SSL desligada). As coleções da Entrega 1 mantêm-se sem alterações.
 
-| Pasta | Tipo       | O que cobre                                                                                                                                                                                                                                                       |
-|-------|------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 00–06 | Automática | Runner com 100 ms de atraso: **125 testes, 0 falhas**                                                                                                                                                                                                             |
-| 02    |            | Comandos e consultas do FO, convergência das duas réplicas, ETag = revisão, 8 reservas simultâneas do mesmo slot (fica um voo), evento fora de ordem ignorado, sequência rápida de comandos entre réplicas, disponibilidade                                       |
-| 03    |            | Eventos do Airports & Routes: rota nova e rota desativada chegam ao FO                                                                                                                                                                                            |
-| 04    |            | `/api/v2/unicorns`: filtro, RBAC (401/403/405), HAPPY → BUSY → GRUMPY, e eventos do Aircraft publicados pela API de gestão do RabbitMQ (grounding → SLEEPING, duplicado, ordem por revisão, *dead-letter*)                                                        |
-| 05    |            | Mock server obrigatório (variável `mockUrl`), mesmo contrato do endpoint real                                                                                                                                                                                     |
-| 07    | Manual     | 14 testes: réplica do FO/Airports em baixo, broker todo em baixo (outbox), partição e compensação, um nó do broker em baixo, snapshot de uma réplica reconstruída, failover da BD do Keycloak, serviços vizinhos em baixo, recuperação total — **todos passaram** |
+| Pasta | Tipo       | O que cobre                                                                                                                                                                                                                                                                                                                                                 |
+|-------|------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 00–06 | Automática | Runner com 100 ms de atraso: **125 testes, 0 falhas**                                                                                                                                                                                                                                                                                                       |
+| 02    |            | Comandos e consultas do FO, convergência das duas réplicas, ETag = revisão, 8 reservas simultâneas do mesmo slot (fica um voo), evento fora de ordem ignorado, sequência rápida de comandos entre réplicas, disponibilidade                                                                                                                                 |
+| 03    |            | Eventos do Airports & Routes: rota nova e rota desativada chegam ao FO                                                                                                                                                                                                                                                                                      |
+| 04    |            | `/api/v2/unicorns`: filtro, RBAC (401/403/405), HAPPY → BUSY → GRUMPY, e eventos do Aircraft publicados pela API de gestão do RabbitMQ (grounding → SLEEPING, duplicado, ordem por revisão, *dead-letter*)                                                                                                                                                  |
+| 05    |            | Mock server obrigatório (variável `mockUrl`), mesmo contrato do endpoint real                                                                                                                                                                                                                                                                               |
+| 07    | Manual     | 18 testes: réplica do FO/Airports em baixo, broker todo em baixo (outbox), partição e compensação, um nó do broker em baixo, snapshot de uma réplica reconstruída, failover da BD do Keycloak, serviços vizinhos em baixo, recuperação total, gateway 1 em baixo, um Keycloak em baixo, BD de uma réplica do FO em baixo e recuperação — **todos passaram** |
+
+**Postman – Modo A: coleção `SIDIS – Entrega 2 Modo A (IntelliJ)`** (`tests(postman)/SIDIS-E2-Modo-A.postman_collection.json`).
+Os testes do FO chamam diretamente as 3 réplicas (`fo1`, `fo2`, `fo3`), à vez.
+
+| Pasta | Tipo       | O que cobre                                                                                                                                                                                                                                                                   |
+|-------|------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 00–07 | Automática | Runner com 100 ms de atraso: **188 testes, 0 falhas** — login, saúde das 9 instâncias, eventos do Airports (incluindo detalhes e parâmetros de rotas), CQRS e convergência das 3 réplicas do FO, concorrência, evento fora de ordem, `/api/v2/unicorns` e eventos do Aircraft |
+| 08–09 | Manual     | Réplica do FO / do Airports parada: a sua fila guarda os eventos e ela recupera-os ao voltar — **passaram**                                                                                                                                                                   |
+| 10    | Manual     | Replicação da imagem de um aeroporto (opcional)                                                                                                                                                                                                                               |
 
 Os testes da pasta 04 que publicam no RabbitMQ precisam de `rabbitMgmt` (`http://localhost:15672`), `rabbitUser` e
 `rabbitPassword` (o valor do `.env`) no environment. Na pasta 07, o comando entre `[ ]` no nome de cada pedido corre-se
@@ -388,5 +410,5 @@ serviço e uma PostgreSQL por réplica do FO):
 
 **Testes JUnit:**
 
-![151 testes JUnit](docs/screenshots/e2-09-junit.png)
+![159 testes JUnit](docs/screenshots/e2-09-junit.png)
 

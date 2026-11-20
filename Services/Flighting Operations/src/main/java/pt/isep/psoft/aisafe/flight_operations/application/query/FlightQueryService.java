@@ -20,11 +20,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 
-/**
- * Query side (CQRS): read-only, served only from local data (the views of schema fo_query and
- * the local reference data). Never calls another service or another replica, so queries keep
- * working with RabbitMQ, Aircraft or Airports &amp; Routes down. Eventually consistent.
- */
 @Service
 @Transactional(readOnly = true)
 public class FlightQueryService {
@@ -45,7 +40,6 @@ public class FlightQueryService {
         this.policy = policy;
     }
 
-    /** GET /api/v2/unicorns: mood of every aircraft, optionally filtered by mood. */
     public List<UnicornDTO> unicorns(String mood) {
         List<AircraftMoodView> rows;
         if (mood == null || mood.isBlank()) {
@@ -86,6 +80,14 @@ public class FlightQueryService {
         List<String> reasons = new ArrayList<>();
 
         Optional<AircraftRef> aircraft = aircraftRefs.findById(reg.value());
+        if (aircraft.isEmpty() && referenceData != null) {
+            try {
+                if (referenceData.ensureAircraft(reg)) {
+                    aircraft = aircraftRefs.findById(reg.value());
+                }
+            } catch (RuntimeException e) {
+            }
+        }
         String aircraftStatus = aircraft.map(AircraftRef::getStatus).orElse("UNKNOWN");
         if (aircraft.isEmpty()) {
             reasons.add("Aircraft " + reg + " is not known by Flight Operations (not registered or not yet synchronised).");
@@ -112,5 +114,12 @@ public class FlightQueryService {
         } catch (DateTimeParseException e) {
             throw new IllegalArgumentException("Invalid date/time '" + value + "'. Expected ISO-8601, e.g. 2027-03-15T10:00:00");
         }
+    }
+
+    private pt.isep.psoft.aisafe.flight_operations.application.reference.ReferenceDataService referenceData;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setReferenceData(pt.isep.psoft.aisafe.flight_operations.application.reference.ReferenceDataService referenceData) {
+        this.referenceData = referenceData;
     }
 }
