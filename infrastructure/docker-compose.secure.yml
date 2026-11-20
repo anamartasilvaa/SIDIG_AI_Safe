@@ -341,7 +341,7 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${AIRPORTS_DB_PASSWORD:?defina AIRPORTS_DB_PASSWORD no .env}
       SPRING_DATASOURCE_DRIVER_CLASS_NAME: org.postgresql.Driver
       SPRING_JPA_DATABASE_PLATFORM: org.hibernate.dialect.PostgreSQLDialect
-      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SPRING_JPA_HIBERNATE_DDL_AUTO: none      # esquema gerido pelo Flyway
       SPRING_H2_CONSOLE_ENABLED: "false"
       APP_SECURITY_JWT_JWK_SET_URI: http://keycloak:8180/realms/aisafe/protocol/openid-connect/certs
       APP_SECURITY_JWT_ISSUER: http://localhost:8180/realms/aisafe
@@ -379,7 +379,7 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${AIRPORTS_DB_PASSWORD:?defina AIRPORTS_DB_PASSWORD no .env}
       SPRING_DATASOURCE_DRIVER_CLASS_NAME: org.postgresql.Driver
       SPRING_JPA_DATABASE_PLATFORM: org.hibernate.dialect.PostgreSQLDialect
-      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SPRING_JPA_HIBERNATE_DDL_AUTO: none      # esquema gerido pelo Flyway
       SPRING_H2_CONSOLE_ENABLED: "false"
       APP_SECURITY_JWT_JWK_SET_URI: http://keycloak:8180/realms/aisafe/protocol/openid-connect/certs
       APP_SECURITY_JWT_ISSUER: http://localhost:8180/realms/aisafe
