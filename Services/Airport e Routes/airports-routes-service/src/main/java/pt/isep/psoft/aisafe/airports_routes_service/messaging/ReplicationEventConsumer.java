@@ -23,8 +23,12 @@ import java.time.Instant;
 /**
  * Consumidor dos eventos publicados pelas outras instancias.
  * Aplica cada evento com os mesmos metodos de servico que a replicacao HTTP usava
- * (isReplication = true), que ja sao idempotentes e resolvem conflitos por lastModified
- * e originNodeId (last-writer-wins).
+ * (isReplication = true), que resolvem conflitos por lastModified e originNodeId (last-writer-wins).
+ *
+ * Idempotencia em duas camadas:
+ *  1. Inbox (IdempotencyGuard / tabela processed_event): um evento com o mesmo eventId (UUID gerado
+ *     no outbox; tambem enviado como messageId) so e aplicado uma vez;
+ *  2. last-writer-wins: um evento mais antigo do que o estado atual nunca o altera.
  */
 @Component
 @ConditionalOnProperty(name = "app.replication.transport", havingValue = "amqp")
@@ -35,15 +39,19 @@ public class ReplicationEventConsumer {
     private final AirportService airportService;
     private final RouteService routeService;
     private final ObjectMapper mapper;
+    private final IdempotencyGuard idempotencyGuard;
     private final String nodeId;
+    static final String CONSUMER = "airports-replication";
 
     public ReplicationEventConsumer(AirportService airportService,
                                     RouteService routeService,
                                     ObjectMapper mapper,
+                                    IdempotencyGuard idempotencyGuard,
                                     @Value("${peer.node-id:${server.port:local}}") String nodeId) {
         this.airportService = airportService;
         this.routeService = routeService;
         this.mapper = mapper;
+        this.idempotencyGuard = idempotencyGuard;
         this.nodeId = nodeId;
     }
 
@@ -65,22 +73,35 @@ public class ReplicationEventConsumer {
             String payload = text(envelope, "payload");
             Instant lastModified = parseInstant(text(envelope, "lastModified"));
 
-            switch (type) {
-                case AIRPORT_CREATED -> airportService.registerAirport(
-                        mapper.readValue(payload, RegisterAirportDTO.class), true, lastModified, origin);
-                case AIRPORT_DETAILS_UPDATED -> airportService.updateAirportDetails(
-                        id, mapper.readValue(payload, UpdateAirportDetailsDTO.class), true, lastModified, origin);
-                case AIRPORT_STATUS_CHANGED -> airportService.updateAirportStatus(
-                        id, payload.replace("\"", ""), true, lastModified, origin);
-                case AIRPORT_IMAGE_UPDATED -> airportService.applyReplicatedImage(
-                        id, mapper.readValue(payload, String.class), lastModified, origin);
-                case ROUTE_CREATED -> routeService.createRoute(
-                        mapper.readValue(payload, CreateRouteDTO.class), true, lastModified, origin);
-                case ROUTE_UPDATED -> routeService.updateRoute(
-                        id, mapper.readValue(payload, UpdateRouteDTO.class), true, lastModified, origin);
-                case ROUTE_DEACTIVATED -> routeService.deactivateRoute(id, true, lastModified, origin);
+            String eventId = text(envelope, "eventId");
+            if (eventId == null || eventId.isBlank()) {
+                eventId = message.getMessageProperties().getMessageId();
             }
-            log.info("Evento {} aplicado (origem {})", type, origin);
+            if (eventId == null || eventId.isBlank()) {
+                String taskId = text(envelope, "taskId");
+                eventId = origin != null && taskId != null ? origin + "-" + taskId : null;
+            }
+
+            boolean applied = idempotencyGuard.runOnce(CONSUMER, eventId, type.name(), () -> {
+                switch (type) {
+                    case AIRPORT_CREATED -> airportService.registerAirport(
+                            mapper.readValue(payload, RegisterAirportDTO.class), true, lastModified, origin);
+                    case AIRPORT_DETAILS_UPDATED -> airportService.updateAirportDetails(
+                            id, mapper.readValue(payload, UpdateAirportDetailsDTO.class), true, lastModified, origin);
+                    case AIRPORT_STATUS_CHANGED -> airportService.updateAirportStatus(
+                            id, payload.replace("\"", ""), true, lastModified, origin);
+                    case AIRPORT_IMAGE_UPDATED -> airportService.applyReplicatedImage(
+                            id, mapper.readValue(payload, String.class), lastModified, origin);
+                    case ROUTE_CREATED -> routeService.createRoute(
+                            mapper.readValue(payload, CreateRouteDTO.class), true, lastModified, origin);
+                    case ROUTE_UPDATED -> routeService.updateRoute(
+                            id, mapper.readValue(payload, UpdateRouteDTO.class), true, lastModified, origin);
+                    case ROUTE_DEACTIVATED -> routeService.deactivateRoute(id, true, lastModified, origin);
+                }
+            });
+            if (applied) {
+                log.info("Evento {} aplicado (origem {}, id {})", type, origin, eventId);
+            }
         } catch (Exception ex) {
             log.error("Falha ao processar evento: {}", ex.getMessage());
             // Depois das tentativas configuradas, a mensagem segue para a dead-letter queue.

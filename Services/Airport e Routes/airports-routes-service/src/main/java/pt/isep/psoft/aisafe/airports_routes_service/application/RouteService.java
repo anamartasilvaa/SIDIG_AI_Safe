@@ -121,7 +121,9 @@ public class RouteService {
         newRoute.applyReplicationMetadata(isReplication ? receivedAt : Instant.now(),
                 isReplication ? receivedNode : nodeId);
         Route savedRoute = routeRepository.save(newRoute);
-        routeHistoryRepository.save(new RouteHistory(savedRoute.getRouteId().id(), "CREATED"));
+        // Hora do evento (lastModified, em UTC), igual em todas as instancias; nao a hora local de quem aplica.
+        routeHistoryRepository.save(new RouteHistory(savedRoute.getRouteId().id(), "CREATED",
+                LocalDateTime.ofInstant(savedRoute.getLastModified(), ZoneOffset.UTC)));
         if (!isReplication) {
             replicateCreate(dto, savedRoute);
         }
@@ -274,6 +276,10 @@ public class RouteService {
         Optional<RouteHistory> activeHistory = routeHistoryRepository.findFirstByRouteIdAndEndDateIsNull(routeId);
         if (activeHistory.isPresent()) {
             RouteHistory old = activeHistory.get();
+            // Protecao para eventos fora de ordem ou relogios desalinhados: o fim nunca fica antes do inicio.
+            if (!eventDateTime.isAfter(old.getStartDate())) {
+                eventDateTime = old.getStartDate().plusNanos(1_000);
+            }
             old.closeHistory(eventDateTime);
             routeHistoryRepository.save(old);
         }

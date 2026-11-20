@@ -18,6 +18,8 @@ public class ReplicationTask {
     @Column(nullable = false) private Instant createdAt;
     private Instant lastModified;
     private String originNodeId;
+    /** Id unico e global do evento (UUID): nunca se repete, mesmo que a base de dados seja recriada. */
+    @Column(name = "event_id", length = 36) private String eventId;
     public enum Status { PENDING, DONE, FAILED }
     protected ReplicationTask() {}
     public ReplicationTask(String peerUrl, String httpMethod, String path, String payload) {
@@ -27,6 +29,7 @@ public class ReplicationTask {
         this.peerUrl = peerUrl; this.httpMethod = httpMethod; this.path = path; this.payload = payload;
         this.originalUser = originalUser == null || originalUser.isBlank() ? "ANONYMOUS" : originalUser;
         this.createdAt = Instant.now(); this.nextAttemptAt = this.createdAt;
+        this.eventId = java.util.UUID.randomUUID().toString();
     }
     public ReplicationTask(String peerUrl, String httpMethod, String path, String payload, String originalUser,
                            Instant lastModified, String originNodeId) {
@@ -39,5 +42,6 @@ public class ReplicationTask {
     public Instant getLastModified(){return lastModified;} public String getOriginNodeId(){return originNodeId;}
     public Status getStatus(){return status;} public Instant getNextAttemptAt(){return nextAttemptAt;}
     public Instant getCreatedAt(){return createdAt;}
+    public String getEventId(){return eventId;}
     public void markDone(){status=Status.DONE;} public void fail(Instant next){attempts++; nextAttemptAt=next; if(attempts>=10) status=Status.FAILED;}
 }

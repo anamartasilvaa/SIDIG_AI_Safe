@@ -76,6 +76,8 @@ public class AmqpReplicationPublisher {
         ReplicationEventType type = ReplicationEventType.from(task.getHttpMethod(), task.getPath());
 
         ObjectNode envelope = mapper.createObjectNode();
+        String eventId = task.getEventId() != null ? task.getEventId() : task.getOriginNodeId() + "-" + task.getId();
+        envelope.put("eventId", eventId);
         envelope.put("taskId", String.valueOf(task.getId()));
         envelope.put("eventType", type.name());
         envelope.put("method", task.getHttpMethod());
@@ -96,7 +98,7 @@ public class AmqpReplicationPublisher {
                 .setContentType("application/json")
                 .setContentEncoding(StandardCharsets.UTF_8.name())
                 .setDeliveryMode(MessageDeliveryMode.PERSISTENT)
-                .setMessageId(task.getOriginNodeId() + "-" + task.getId())
+                .setMessageId(eventId)
                 .setType(type.name())
                 .setHeader("originNodeId", task.getOriginNodeId())
                 .build();
