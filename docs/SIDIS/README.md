@@ -162,6 +162,7 @@ Parar: `.\start-infra.ps1 -Stop` (Keycloak: Ctrl+C na janela dele), `docker comp
 
 | Coleção | Modo | Conteúdo |
 |---|---|---|
+| `SIDIS – Entrega 2 Modo B (Docker).postman_collection.json` / `SIDIS – Entrega 2 Modo A (IntelliJ).postman_collection.json` | B / A | Coleções completas da Entrega 2 (todos os serviços): 125 testes no Modo B e 188 no Modo A, todos a passar |
 | `SIDIS – Entrega 2 (Modo B).postman_collection.json` | B | Login, Airports & Routes (comandos, eventos, consistência eventual), Flight Operations (CQRS e replicação), eventos entre serviços, `/api/v2/unicorns`, mock, smoke de Aircraft/Maintenance, 2 testes manuais de falhas |
 | `SIDIS – Entrega 2 (Modo A).postman_collection.json` | A | O mesmo sobre 3 instâncias de cada serviço, com acesso direto às instâncias, *last-writer-wins* e testes manuais de recuperação de filas |
 | `SIDIS – Modo A (IntelliJ)` / `SIDIS – Modo B (Docker)` | A / B | Coleções da Entrega 1 |
@@ -170,6 +171,9 @@ Como correr:
 1. Importar a coleção e o environment `SIDIS.postman_environment.json`; selecionar o environment **SIDIS**.
 2. Desligar *SSL certificate verification* nas definições do Postman.
 3. Na coleção, separador *Variables*, preencher `mockUrl` com o URL do Mock Server dos unicorns (Modo B).
+   No environment, acrescentar também `rabbitUser`, `rabbitPassword` e `rabbitMgmt` (`http://localhost:15672`), usados pelos
+   testes que publicam diretamente no RabbitMQ: no Modo B os valores de `RABBITMQ_USER` / `RABBITMQ_PASSWORD` do `.env`;
+   no Modo A `aisafe` / `aisafe-mq`. Não guardar a password do `.env` no ficheiro do environment que vai para o Git.
 4. *Collection Runner*, 100 ms de atraso, **sem** as pastas MANUAL. As pastas MANUAL correm-se pedido a pedido,
    executando antes a ação indicada entre `[ ]` (parar/arrancar uma instância).
 

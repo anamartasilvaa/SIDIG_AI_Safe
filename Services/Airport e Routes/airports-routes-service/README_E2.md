@@ -192,13 +192,15 @@ Os endpoints REST (URLs, perfis, códigos) não mudaram. Mudou **como** a replic
   - consistência (`RouteReplicationConsistencyTest`): *last-writer-wins*, desempate por `originNodeId`, idempotência,
     convergência independente da ordem de chegada, eventos replicados nunca republicados;
   - CQRS (`AirportProjectorTest`, `ReadModelRebuilderTest`) e replicação da imagem (`AirportImageReplicationTest`).
-- **Postman (Entrega 2)**, pasta `tests(postman)/` na raiz do repositório:
-  - `SIDIS – Entrega 2 (Modo B)` — **80 testes a passar** (`ar-07-postman-e2-modo-b.png`): escreve por uma gateway e lê
-    pela outra até convergir; as leituras do Airports levam `X-P2P-Hops: 1` (sem reencaminhamento), por isso um 200 prova
-    que o evento chegou pelo RabbitMQ. Inclui Flight Operations, eventos entre serviços, `/api/v2/unicorns` e o mock.
-  - `SIDIS – Entrega 2 (Modo A)` — **119 testes a passar** (`ar-08-postman-e2-modo-a.png`): o mesmo sobre 3 instâncias
-    de cada serviço com acesso direto, mais *last-writer-wins* em escritas concorrentes.
+- **Postman (Entrega 2)**, pasta `tests(postman)/` na raiz do repositório (coleções do sistema completo):
+  - `SIDIS – Entrega 2 Modo B (Docker)` — **125 testes a passar** (`ar-07-postman-e2-modo-b.png`): escreve por uma gateway
+    e lê pela outra até convergir; as leituras do Airports levam `X-P2P-Hops: 1`, por isso um 200 prova que o evento chegou
+    pelo RabbitMQ. Inclui Flight Operations, eventos entre serviços, eventos de Aircraft, DLQ, `/api/v2/unicorns` e o mock.
+  - `SIDIS – Entrega 2 Modo A (IntelliJ)` — **188 testes a passar** (`ar-08-postman-e2-modo-a.png`): o mesmo sobre 3
+    instâncias de cada serviço com acesso direto, incluindo `ROUTE_UPDATED`, `AIRPORT_DETAILS_UPDATED` e *last-writer-wins*.
   - Pastas MANUAL: parar uma instância, escrever noutra e ver a fila dela guardar o evento até voltar.
+  - Os testes que publicam diretamente no RabbitMQ precisam, no environment, de `rabbitUser`, `rabbitPassword`
+    (valores do `.env` no Modo B; `aisafe` / `aisafe-mq` no Modo A) e `rabbitMgmt` (`http://localhost:15672`).
 - **Postman (Entrega 1, Modo B):** 348 testes (`ar-01-postman-348-modo-b.png`).
 - **Evidências:** `docs/screenshots/` — filas *quorum* com TTL, limite, DLX e DLQ no RabbitMQ (`ar-04-rabbitmq-filas.png`),
   modelo de leitura reconstruído (`ar-06-modelo-leitura.png`), mock dos unicorns (`ar-03*`).

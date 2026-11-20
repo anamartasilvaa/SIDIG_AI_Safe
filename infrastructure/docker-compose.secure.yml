@@ -211,9 +211,11 @@ services:
       - ./rabbitmq/definitions.json:/defs/definitions.json:ro
     entrypoint: ["/bin/sh", "-c"]
     command:
+      # O healthcheck do RabbitMQ (ping) fica OK antes da consola de gestao (15672) aceitar pedidos:
+      # ate 40 tentativas de 3 s (~2 min) por no, para o primeiro arranque nao falhar.
       - |
         for n in 1 2 3; do
-          if curl --fail --silent --show-error --retry 10 --retry-delay 3 --retry-all-errors \
+          if curl --fail --silent --show-error --retry 40 --retry-delay 3 --retry-all-errors \
                -u "$$RABBITMQ_USER:$$RABBITMQ_PASSWORD" -H "content-type: application/json" \
                -X POST --data @/defs/definitions.json "http://rabbitmq-$$n:15672/api/definitions"; then
             echo "definitions imported through rabbitmq-$$n"; exit 0
