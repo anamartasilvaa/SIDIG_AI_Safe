@@ -15,6 +15,8 @@ ContainerDb(db, "airports-db-N", "PostgreSQL 16", "One database instance per ser
 Container_Boundary(ar, "Airports & Routes Service (one instance)") {
     Component(ctrl, "Airport/RouteController", "@RestController", "REST API. Routes commands to services, queries to query services.")
 
+    Component(admin, "AdminReplicationController", "@RestController (ADMIN)", "GET /api/admin/replication-tasks: outbox state (PENDING / DONE / FAILED).")
+
     Component(cmdSvc, "AirportService / RouteService", "@Service (COMMAND side)", "CRUD commands on JPA aggregates. Applies replicated events idempotently (last-writer-wins).")
     Component(proj, "AirportProjector / RouteProjector", "@Component", "Updates the read model in the same transaction as each command.")
     Component(qrySvc, "AirportQueryService / RouteQueryService", "@Service (QUERY side)", "Reads only from the read model. P2P forwarding (X-P2P-Hops).")
@@ -44,6 +46,8 @@ Rel(broker, cons, "Delivers to own queue", "AMQP")
 Rel(broker, fo, "Same events, FO queue", "AMQP")
 Rel(cons, cmdSvc, "Applies with isReplication=true")
 Rel(qrySvc, readRepo, "Reads views")
+Rel(gateway, admin, "Admin only", "HTTPS")
+Rel(admin, db, "Reads ReplicationTask", "JDBC")
 Rel(qrySvc, peer, "Forwarding on miss", "HTTPS X-P2P-Hops")
 Rel(bfs, readRepo, "Active routes by origin")
 Rel(rebuild, writeRepo, "findAll() at startup")

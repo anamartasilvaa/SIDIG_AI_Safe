@@ -1,0 +1,51 @@
+@startuml physical-view-airports-routes-mode-a
+skinparam shadowing false
+title Airports & Routes - physical view (Mode A: IntelliJ + infrastructure in Docker)
+
+node "Developer PC (Windows)" {
+  node "start-infra.ps1" {
+    node "NGINX gateway\nhttps://localhost:8443" as GW
+    node "Keycloak\nhttp://localhost:8180" as KC
+  }
+  node "IntelliJ (Spring Boot run configurations)" {
+    node "Airports - Instância 1\n:8091 (profile inst1)" as AR1
+    node "Airports - Instância 2\n:8092 (profile inst2)" as AR2
+    node "Airports - Instância 3\n:8093 (profile inst3)" as AR3
+    node "FlightOperations 1/2/3\n:8081-8083" as FO
+  }
+  database "H2 file\ndata/airports_db_1" as H1
+  database "H2 file\ndata/airports_db_2" as H2
+  database "H2 file\ndata/airports_db_3" as H3
+  node "Docker Desktop" {
+    node "RabbitMQ (single node)\nAMQP :5672, UI :15672\n(docker-compose.services.yml)" as MQ
+    database "fo-db-a1/a2/a3\nPostgreSQL :5441-5443" as FODB
+  }
+}
+
+actor "Client / Postman" as C
+C --> GW : HTTPS
+C --> AR1 : HTTPS (direct access\nfor tests)
+GW --> AR1
+GW --> AR2
+GW --> AR3
+GW --> KC
+AR1 --> H1 : JDBC
+AR2 --> H2 : JDBC
+AR3 --> H3 : JDBC
+AR1 --> MQ : AMQP
+AR2 --> MQ : AMQP
+AR3 --> MQ : AMQP
+FO --> MQ : AMQP (fo.routes.fo-N)
+FO --> FODB : JDBC
+
+note bottom of H2
+  Database-per-instance also in Mode A: each instance has
+  its own H2 file (write model + read model + outbox).
+  Queues: airports.events.<port> (quorum), one per instance.
+end note
+note right of MQ
+  Single node: no broker redundancy in Mode A
+  (development). The 3-node cluster and PostgreSQL
+  per instance are in Mode B.
+end note
+@enduml

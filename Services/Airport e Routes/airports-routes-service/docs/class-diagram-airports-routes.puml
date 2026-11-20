@@ -3,7 +3,7 @@ skinparam classAttributeIconSize 0
 skinparam packageStyle rectangle
 skinparam shadowing false
 hide empty members
-title Airports & Routes Service - Domain Model
+title Airports & Routes Service - Domain Model (write side) + CQRS read model + outbox
 
 package "Airport Aggregate" {
     class Airport <<Entity>> <<Root>> {
@@ -101,7 +101,7 @@ package "Route History" {
 }
 
 package "Replication Infrastructure" {
-    class ReplicationTask <<Infrastructure Entity>> {
+    class ReplicationTask <<Outbox>> {
 - id: Long
 - peerUrl: String
 - httpMethod: String
@@ -109,7 +109,10 @@ package "Replication Infrastructure" {
 - payload: String
 - attempts: int
 - nextAttemptAt: Instant
+- createdAt: Instant
 - originalUser: String
+- lastModified: Instant
+- originNodeId: String
 
         --
         + markDone()
@@ -120,6 +123,48 @@ package "Replication Infrastructure" {
         PENDING, DONE, FAILED
     }
     ReplicationTask "1" --> "1" Status
+    note bottom of ReplicationTask
+      Transactional outbox: saved in the SAME transaction as the aggregate.
+      AMQP mode: one task per event (peerUrl = "amqp://broker");
+      HTTP mode (Entrega 1): one task per peer.
+      Event type derived from method + path (ReplicationEventType).
+    end note
 }
+
+package "CQRS Read Model (query side)" {
+    class AirportReadModel <<Read Model>> {
+- iataCode: String  {id}
+- name: String
+- city: String
+- country: String
+- status: String
+- lastModified: Instant
+- originNodeId: String
+- viewJson: String
+    }
+    class RouteReadModel <<Read Model>> {
+- routeId: String  {id}
+- originIata: String
+- destinationIata: String
+- status: String
+- minimumCapacity: Integer
+- minimumRange: Double
+- estimatedFlightTime: Integer
+- originLatitude / originLongitude: Double
+- destinationLatitude / destinationLongitude: Double
+- lastModified: Instant
+- originNodeId: String
+    }
+    note bottom of RouteReadModel
+      Flat, denormalised tables (airport_read_model, route_read_model)
+      written only by AirportProjector / RouteProjector, in the same
+      transaction as the command. Coordinates are copied into the route
+      row so GeoJSON, statistics and the BFS need no joins.
+      Rebuilt from the write model at startup (ReadModelRebuilder).
+    end note
+}
+
+Airport ..> AirportReadModel : projected to >
+Route ..> RouteReadModel : projected to >
 
 @enduml

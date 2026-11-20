@@ -1,8 +1,10 @@
 # Autoavaliação e avaliação dos colegas
 
-**Projeto:** AISafe Flight Management System (SIDIS – P1)
+**Projeto:** AISafe Flight Management System (SIDIS)
 
-## Autoavaliação
+## Entrega 1
+
+### Autoavaliação
 
 | Nº      | Nome              | Nota (0–20) |
 |---------|-------------------|:-----------:|
@@ -10,25 +12,60 @@
 | 1230859 | Ana Silva         |     18      |
 | 1210665 | Bernardo Oliveira |     18      |
 
-## Avaliação dos colegas
+### Avaliação dos colegas
 
-### Mariana Santos avalia
+#### Mariana Santos avalia
 
 | Colega            | Nota (0–20) |
 |-------------------|:-----------:|
 | Ana Silva         |     18      |
 | Bernardo Oliveira |     18      |
 
-### Ana Silva avalia
+#### Ana Silva avalia
 
 | Colega            | Nota (0–20) |
 |-------------------|:-----------:|
 | Mariana Santos    |     18      |
 | Bernardo Oliveira |     18      |
 
-### Bernardo Oliveira avalia
+#### Bernardo Oliveira avalia
 
 | Colega         | Nota (0–20) |
 |----------------|:-----------:|
 | Mariana Santos |     18      |
 | Ana Silva      |     18      |
+
+---
+
+## Entrega 2
+
+### Autoavaliação
+
+| Nº      | Nome              | Nota (0–20) |
+|---------|-------------------|:-----------:|
+| 1231239 | Mariana Santos    |             |
+| 1230859 | Ana Silva         |             |
+| 1210665 | Bernardo Oliveira |             |
+
+### Avaliação dos colegas
+
+#### Mariana Santos avalia
+
+| Colega            | Nota (0–20) |
+|-------------------|:-----------:|
+| Ana Silva         |             |
+| Bernardo Oliveira |             |
+
+#### Ana Silva avalia
+
+| Colega            | Nota (0–20) |
+|-------------------|:-----------:|
+| Mariana Santos    |             |
+| Bernardo Oliveira |             |
+
+#### Bernardo Oliveira avalia
+
+| Colega         | Nota (0–20) |
+|----------------|:-----------:|
+| Mariana Santos |             |
+| Ana Silva      |             |

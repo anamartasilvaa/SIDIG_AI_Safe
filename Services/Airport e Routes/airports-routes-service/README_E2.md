@@ -147,14 +147,21 @@ Nenhuma alteração aos endpoints REST. Mudou apenas **como** a replicação ent
 
 ## E2.10 Testes
 
-- **Unitários e de integração:** `./mvnw test` na pasta do serviço (captura em `docs/screenshots/ar-02-testes-intellij.png`).
-  Cobrem, entre outros, o consumidor AMQP (`ReplicationEventConsumerTest`: eventos próprios ignorados, rejeição sem reenfileirar),
-  o publicador do outbox (`AmqpReplicationPublisherTest`: DONE só com confirmação do broker, repetição, FAILED às 10 tentativas),
-  o projetor CQRS (`AirportProjectorTest`) e a replicação da imagem (`AirportImageReplicationTest`).
-- **Postman (Entrega 1, Modo B):** coleção completa, 348 testes (captura `ar-01-postman-348-modo-b.png`).
-- **Postman (Entrega 2):** `SISDIS P2 - Testes (sistema completo)` — cria uma rota pela gateway 1, lê-a pela gateway 2 (replicação por eventos),
-  consulta estatísticas e GeoJSON, desativa a rota pela gateway 2 e confirma o estado pela gateway 1; inclui o mock dos unicorns.
-- **Evidências:** `docs/screenshots/` (filas *quorum* com TTL e DLQ no RabbitMQ, modelo de leitura reconstruído, mock dos unicorns).
+- **Unitários e de integração:** `./mvnw test` na pasta do serviço — **52 testes a passar** (4 ignorados), captura
+  `docs/screenshots/ar-02-testes-intellij.png`. Cobrem, entre outros, o consumidor AMQP (`ReplicationEventConsumerTest`:
+  eventos próprios ignorados, rejeição sem reenfileirar), o publicador do outbox (`AmqpReplicationPublisherTest`: DONE só
+  com confirmação do broker, backoff, FAILED às 10 tentativas), o projetor CQRS (`AirportProjectorTest`) e a replicação
+  da imagem (`AirportImageReplicationTest`).
+- **Postman (Entrega 2)**, pasta `tests(postman)/` na raiz do repositório:
+  - `SIDIS – Entrega 2 (Modo B)` — **80 testes a passar** (`ar-07-postman-e2-modo-b.png`): escreve por uma gateway e lê
+    pela outra até convergir; as leituras do Airports levam `X-P2P-Hops: 1` (sem reencaminhamento), por isso um 200 prova
+    que o evento chegou pelo RabbitMQ. Inclui Flight Operations, eventos entre serviços, `/api/v2/unicorns` e o mock.
+  - `SIDIS – Entrega 2 (Modo A)` — **119 testes a passar** (`ar-08-postman-e2-modo-a.png`): o mesmo sobre 3 instâncias
+    de cada serviço com acesso direto, mais *last-writer-wins* em escritas concorrentes.
+  - Pastas MANUAL: parar uma instância, escrever noutra e ver a fila dela guardar o evento até voltar.
+- **Postman (Entrega 1, Modo B):** 348 testes (`ar-01-postman-348-modo-b.png`).
+- **Evidências:** `docs/screenshots/` — filas *quorum* com TTL, limite, DLX e DLQ no RabbitMQ (`ar-04-rabbitmq-filas.png`),
+  modelo de leitura reconstruído (`ar-06-modelo-leitura.png`), mock dos unicorns (`ar-03*`).
 
 ## E2.11 Limitações conhecidas
 
@@ -187,6 +194,8 @@ Pasta [`docs/`](docs/) (PlantUML):
 |---|---|
 | `c4-component-airports-routes-p2.puml` | Componentes (CQRS, outbox, mensageria) |
 | `physical-view-airports-routes.puml` | Vista física (Modo B: gateways, cluster RabbitMQ, bases por instância) |
+| `physical-view-airports-routes-mode-a.puml` | Vista física (Modo A: IntelliJ, H2 por instância, RabbitMQ e PostgreSQL do FO em Docker) |
+| `class-diagram-airports-routes.puml` | Modelo de domínio (lado da escrita), modelo de leitura CQRS e outbox |
 | `messaging-topology-airports-routes.puml` | Topologia AMQP (exchange, filas *quorum*, DLQ) |
 | `sd-amqp-event-propagation.puml` | Propagação de um evento entre instâncias |
 | `sd-cqrs-query-read-model.puml` | Uma query a ler só o modelo de leitura |
