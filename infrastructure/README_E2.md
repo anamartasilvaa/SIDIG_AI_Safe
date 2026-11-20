@@ -4,25 +4,27 @@ A documentação da Entrega 1 está no `README.md` desta pasta e continua válid
 descreve o que mudou na Entrega 2: mensagens assíncronas (RabbitMQ), base de dados por instância e infraestrutura
 sem pontos únicos de falha.
 
-**Modo de referência da Entrega 2: Modo B (Docker seguro, `docker-compose.secure.yml`).** É o único que cumpre todos
-os requisitos do enunciado ao mesmo tempo: pelo menos 2 instâncias por serviço, uma base de dados por instância,
-message broker com AMQP, API externa REST e HTTPS em todos os saltos. Os Modos A (IntelliJ) e C (só serviços) ficam
-como na Entrega 1 e não são usados para avaliar a Entrega 2.
+**Modo de referência da Entrega 2: Modo B (Docker seguro, `docker-compose.secure.yml`).** É o que cumpre todos os
+requisitos do enunciado ao mesmo tempo: pelo menos 2 instâncias por serviço, uma base de dados por instância, message
+broker com AMQP, API externa REST, HTTPS em todos os saltos e nenhum ponto único de falha. O **Modo A (IntelliJ)**
+também foi adaptado à Entrega 2 (RabbitMQ e uma PostgreSQL por réplica do FO, em Docker; secção 8), para
+desenvolvimento e testes com 3 instâncias. O Modo C (só serviços) fica como na Entrega 1.
 
 ---
 
 ## 1. O que mudou face à Entrega 1
 
-| Componente                 | Entrega 1                                   | Entrega 2                                                                                   |
-|----------------------------|---------------------------------------------|---------------------------------------------------------------------------------------------|
-| Comunicação entre serviços | HTTPS (replicação e validações síncronas)   | **AMQP (RabbitMQ)**, assíncrona, com *transactional outbox*; HTTPS só como recurso          |
-| Message broker             | —                                           | **Cluster de 3 nós RabbitMQ 3.13**, *quorum queues*, só **AMQPS** (porta 5671)              |
-| Topologia do broker        | —                                           | Importada por `rabbitmq-init` a partir de `rabbitmq/definitions.json`, antes dos serviços   |
-| BD do Flight Operations    | H2 em memória                               | **PostgreSQL por réplica** (`fo-db-1`, `fo-db-2`), migrações Flyway                         |
-| BD do Airports & Routes    | H2                                          | **PostgreSQL por réplica** (`airports-db-1`, `airports-db-2`)                               |
-| BD do Keycloak             | 1 PostgreSQL (ponto único de falha)         | **3 nós PostgreSQL + repmgr** (1 primário, 2 standby, failover automático)                  |
-| Contentores no Modo B      | 13                                          | **23**                                                                                      |
-| Novo endpoint              | —                                           | `GET /api/v2/unicorns` (Flight Operations)                                                  |
+| Componente                 | Entrega 1                                   | Entrega 2                                                                                       |
+|----------------------------|---------------------------------------------|-------------------------------------------------------------------------------------------------|
+| Comunicação entre serviços | HTTPS (replicação e validações síncronas)   | **AMQP (RabbitMQ)**, assíncrona, com *transactional outbox*; HTTPS só como recurso              |
+| Message broker             | —                                           | **Cluster de 3 nós RabbitMQ 3.13**, *quorum queues*, só **AMQPS** (porta 5671)                  |
+| Topologia do broker        | —                                           | Importada por `rabbitmq-init` a partir de `rabbitmq/definitions.json`, antes dos serviços       |
+| BD do Flight Operations    | H2 em memória                               | **PostgreSQL por réplica** (`fo-db-1`, `fo-db-2`), migrações Flyway                             |
+| BD do Airports & Routes    | H2                                          | **PostgreSQL por réplica** (`airports-db-1`, `airports-db-2`)                                   |
+| BD do Keycloak             | 1 PostgreSQL (ponto único de falha)         | **3 nós PostgreSQL + repmgr** (1 primário, 2 standby, failover automático)                      |
+| Contentores no Modo B      | 13                                          | **23**                                                                                          |
+| Novo endpoint              | —                                           | `GET /api/v2/unicorns` (Flight Operations)                                                      |
+| Gateways (NGINX)           | Nova tentativa só se a réplica não responde | Também em `502`/`503`/`504`, incluindo POST (`proxy_next_upstream ... http_503 non_idempotent`) |
 
 Aircraft e Maintenance mantêm, nesta versão, a integração da Entrega 1 (REST e H2).
 
@@ -94,6 +96,7 @@ A porta AMQP sem TLS (5672) está desligada; os serviços usam `rabbitmq-1:5671,
 | BD do Keycloak    | 3 (repmgr)                          | O repmgr promove um standby; o Keycloak liga-se ao novo primário (`targetServerType=primary`)   |
 | RabbitMQ          | 3 (cluster, `pause_minority`)       | As *quorum queues* continuam com 2 de 3 nós; os clientes ligam-se a outro nó                    |
 | Cada serviço      | 2 réplicas, cada uma com a sua BD   | A gateway usa a outra réplica; as mensagens para a réplica parada ficam na sua fila             |
+| BD de uma réplica | 1 por réplica                       | A réplica responde `503`; a gateway repete o pedido na outra réplica (o cliente não vê o erro)  |
 
 **Limitação que resta:** todos os contentores correm num único host Docker. Em produção usar-se-ia um orquestrador
 com vários nós (Docker Swarm ou Kubernetes).
@@ -122,38 +125,45 @@ Esperado: um nó `primary` e dois `standby`, todos `running`. A saída mostra a 
 
 Cada comando escreve-se como `docker compose -f docker-compose.secure.yml <comando>`, dentro de `infrastructure`.
 
-| # | Antes de testar                                                                                                                                                                | Resultado esperado                                                                                                   |
-|---|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------|
-| 1 | `stop rabbitmq-1`                                                                                                                                                              | Agendar continua a dar `201` e o voo aparece nas duas réplicas do FO                                                 |
-| 2 | `start rabbitmq-1`; `stop rabbitmq-1 rabbitmq-2 rabbitmq-3`                                                                                                                    | Agendar dá `201` (AP); a leitura dá `200` na réplica que escreveu e `404` na outra (evento no outbox)                |
-| 3 | `start rabbitmq-1 rabbitmq-2 rabbitmq-3` e esperar ~60 s                                                                                                                       | As duas réplicas devolvem o voo (o outbox publicou o evento; nenhum evento perdido)                                  |
-| 4 | `stop` do primário da BD do Keycloak (ver `cluster show`) e esperar ~45 s                                                                                                      | Outro nó passa a `primary`; um novo login continua a funcionar                                                       |
-| 5 | `start` desse nó e esperar ~30 s                                                                                                                                               | O nó antigo volta como `standby` do novo primário                                                                    |
-| 6 | `stop flight-operations-2 fo-db-2`; `rm -f fo-db-2`; `docker volume rm aisafe_fo-db-2-data`; `up -d fo-db-2 flight-operations-2`; esperar ~90 s; `restart gateway-1 gateway-2` | No log do `flight-operations-2`: `BOOTSTRAP: N flights received, N applied`; as leituras dão `200` nas duas réplicas |
-| 7 | `stop airports-routes-1 airports-routes-2 aircraft-1 aircraft-2`                                                                                                               | O FO continua a agendar voos com rotas e aviões já conhecidos (dados de referência locais)                           |
+| #  | Antes de testar                                                                                                                                                                | Resultado esperado                                                                                                   |
+|----|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------|
+| 1  | `stop rabbitmq-1`                                                                                                                                                              | Agendar continua a dar `201` e o voo aparece nas duas réplicas do FO                                                 |
+| 2  | `start rabbitmq-1`; `stop rabbitmq-1 rabbitmq-2 rabbitmq-3`                                                                                                                    | Agendar dá `201` (AP); a leitura dá `200` na réplica que escreveu e `404` na outra (evento no outbox)                |
+| 3  | `start rabbitmq-1 rabbitmq-2 rabbitmq-3` e esperar ~60 s                                                                                                                       | As duas réplicas devolvem o voo (o outbox publicou o evento; nenhum evento perdido)                                  |
+| 4  | `stop` do primário da BD do Keycloak (ver `cluster show`) e esperar ~45 s                                                                                                      | Outro nó passa a `primary`; um novo login continua a funcionar                                                       |
+| 5  | `start` desse nó e esperar ~30 s                                                                                                                                               | O nó antigo volta como `standby` do novo primário                                                                    |
+| 6  | `stop flight-operations-2 fo-db-2`; `rm -f fo-db-2`; `docker volume rm aisafe_fo-db-2-data`; `up -d fo-db-2 flight-operations-2`; esperar ~90 s; `restart gateway-1 gateway-2` | No log do `flight-operations-2`: `BOOTSTRAP: N flights received, N applied`; as leituras dão `200` nas duas réplicas |
+| 7  | `stop airports-routes-1 airports-routes-2 aircraft-1 aircraft-2`                                                                                                               | O FO continua a agendar voos com rotas e aviões já conhecidos (dados de referência locais)                           |
+| 8  | `stop gateway-1`                                                                                                                                                               | Login e pedidos pela gateway 2 (`:8444`) continuam a funcionar                                                       |
+| 9  | `start gateway-1`; `stop keycloak-1`                                                                                                                                           | Login pelas duas gateways continua a funcionar; os tokens novos são aceites pelas duas réplicas do FO                |
+| 10 | `start keycloak-1`; `stop fo-db-1`                                                                                                                                             | Leituras e escritas continuam a dar sucesso (a réplica 1 responde `503` e a gateway usa a réplica 2)                 |
+| 11 | `start fo-db-1` e esperar ~30 s                                                                                                                                                | A réplica 1 consome os eventos da sua fila e passa a ter os voos criados no teste 10                                 |
 
 As capturas destes testes estão no `README_E2.md` do Flight Operations (secção E2.14).
 
 Os mesmos cenários (e mais alguns: partição com compensação, réplica do Airports em baixo, recuperação total) estão
-automatizados na pasta **07** da coleção do Postman `SIDIS – E2 Testes` (`tests(postman)/`): corre-se o comando que
-está entre `[ ]` no nome de cada pedido e depois envia-se o pedido. As pastas 00–06 correm no Runner (125 testes).
-Environment `SIDIS` com `rabbitMgmt`, `rabbitUser` e `rabbitPassword` (o valor do `.env`).
+na pasta **07** (18 pedidos, 07.01–07.18) da coleção do Postman `SIDIS – Entrega 2 Modo B (Docker)`
+(`tests(postman)/SIDIS-E2-Modo-B.postman_collection.json`): corre-se o comando que está entre `[ ]` no nome de cada
+pedido e depois envia-se o pedido (**Send**, um a um). As pastas 00–06 correm no Runner (125 testes). Environment
+`SIDIS` com `rabbitMgmt`, `rabbitUser` e `rabbitPassword` (o valor do `.env`).
 
 ---
 
 ## 6. Resolução de problemas (novos)
 
-| Sintoma                                                                 | Causa                                                           | O que fazer                                                                                                                                           |
-|-------------------------------------------------------------------------|-----------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `required variable X is missing a value` ao fazer `up` ou `down`        | O `.env` não tem uma variável nova                              | Acrescentá-la (secção 2.1) e repetir                                                                                                                  |
-| `unknown anchor '...' referenced`                                       | Âncora YAML mal escrita no compose                              | Confirmar o nome da âncora (`&nome` / `*nome`)                                                                                                        |
-| `could not get current user name` no `repmgr`                           | A imagem Bitnami corre com um utilizador sem nome               | Chamar o `repmgr` através do `entrypoint.sh` (secção 4)                                                                                               |
-| `port is already allocated` (15672)                                     | Ficou um contentor antigo do RabbitMQ                           | `docker compose -f docker-compose.secure.yml down --remove-orphans`                                                                                   |
-| O FO não arranca: `connection to ... refused` na BD                     | A BD da réplica ainda não está `healthy` ou falta `DB_URL`      | Esperar pelo `healthy`; confirmar `DB_URL` no compose                                                                                                 |
-| Depois de recriar um serviço, `403`/`404` ou só uma réplica responde    | O NGINX guardou os IPs antigos                                  | `docker compose -f docker-compose.secure.yml restart gateway-1 gateway-2`                                                                             |
-| Mensagens na fila `fo.dead-letter`                                      | Mensagens mal formadas ou que falharam 5 vezes                  | Ver a mensagem na consola (*Queues → fo.dead-letter → Get messages*) e o log do serviço                                                               |
-| Testes do Postman que publicam no RabbitMQ dão `401`                    | `rabbitPassword` do environment diferente do `.env`             | Atualizar a variável `rabbitPassword` no environment `SIDIS`                                                                                          |
-| Erros `merge_schema` / `mnesia` no log de um nó do RabbitMQ ao arrancar | O nó arrancou antes dos outros e ainda não se juntou ao cluster | Transitório: confirmar com `exec rabbitmq-1 rabbitmqctl cluster_status` (3 *Running Nodes*) e `rabbitmq-diagnostics check_if_node_is_quorum_critical` |
+| Sintoma                                                                        | Causa                                                                                                                                                                      | O que fazer                                                                                                                                           |
+|--------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `required variable X is missing a value` ao fazer `up` ou `down`               | O `.env` não tem uma variável nova                                                                                                                                         | Acrescentá-la (secção 2.1) e repetir                                                                                                                  |
+| `unknown anchor '...' referenced`                                              | Âncora YAML mal escrita no compose                                                                                                                                         | Confirmar o nome da âncora (`&nome` / `*nome`)                                                                                                        |
+| `could not get current user name` no `repmgr`                                  | A imagem Bitnami corre com um utilizador sem nome                                                                                                                          | Chamar o `repmgr` através do `entrypoint.sh` (secção 4)                                                                                               |
+| `port is already allocated` (15672)                                            | Ficou um contentor antigo do RabbitMQ                                                                                                                                      | `docker compose -f docker-compose.secure.yml down --remove-orphans`                                                                                   |
+| O FO não arranca: `connection to ... refused` na BD                            | A BD da réplica ainda não está `healthy` ou falta `DB_URL`                                                                                                                 | Esperar pelo `healthy`; confirmar `DB_URL` no compose                                                                                                 |
+| Depois de recriar um serviço, `403`/`404` ou só uma réplica responde           | O NGINX guardou os IPs antigos                                                                                                                                             | `docker compose -f docker-compose.secure.yml restart gateway-1 gateway-2`                                                                             |
+| Mensagens na fila `fo.dead-letter`                                             | Mensagens mal formadas ou que falharam 5 vezes                                                                                                                             | Ver a mensagem na consola (*Queues → fo.dead-letter → Get messages*) e o log do serviço                                                               |
+| Testes do Postman que publicam no RabbitMQ dão `401`                           | `rabbitPassword` do environment diferente do `.env`                                                                                                                        | Atualizar a variável `rabbitPassword` no environment `SIDIS`                                                                                          |
+| Erros `merge_schema` / `mnesia` no log de um nó do RabbitMQ ao arrancar        | O nó arrancou antes dos outros e ainda não se juntou ao cluster                                                                                                            | Transitório: confirmar com `exec rabbitmq-1 rabbitmqctl cluster_status` (3 *Running Nodes*) e `rabbitmq-diagnostics check_if_node_is_quorum_critical` |
+| `keycloak-db-N ... dependency failed to start` no `up`; o Keycloak não arranca | Esse nó era o primário antes de um failover: ao voltar, o repmgr copia de novo os dados do primário atual (`pg_rewind` e, se falhar, clonagem) e o `up` desiste de esperar | Esperar ~30 s, confirmar com `cluster show` (1 `primary`, 2 `standby`) e repetir `docker compose -f docker-compose.secure.yml up -d`                  |
+| Respostas `503` com `X-Served-By: 127.0.0.1:808x`, ou `401` com tokens válidos | O NGINX (e/ou o Keycloak) do **Modo A** continua a correr e responde também na porta 8443                                                                                  | Parar o Modo A antes do Modo B: `Get-Process nginx` e `Stop-Process -Force`; confirmar com `netstat -ano` (no Modo B nada usa a porta 8180)           |
 
 ---
 
@@ -165,3 +175,38 @@ Environment `SIDIS` com `rabbitMgmt`, `rabbitUser` e `rabbitPassword` (o valor d
 - Aircraft e Maintenance usam ainda a integração da Entrega 1; o contrato de eventos do Aircraft (`aircraft.events`)
   já está definido e o Flight Operations já o consome.
 - A consola do RabbitMQ usa HTTP, mas só está publicada em `127.0.0.1`.
+- No arranque a frio, o Keycloak espera pelo `keycloak-db-0` (`depends_on`). Com o sistema a correr não há
+  dependência: o Keycloak liga-se a qualquer um dos 3 nós (`targetServerType=primary`).
+
+---
+
+## 8. Modo A (IntelliJ) na Entrega 2
+
+Os serviços correm no IntelliJ (3 instâncias de cada); o RabbitMQ e as 3 PostgreSQL do FO correm em Docker. Usa as
+mesmas portas que o Modo B: **parar sempre um modo antes de arrancar o outro**.
+
+1. Parar o Modo B: `docker compose -f docker-compose.secure.yml stop`.
+2. RabbitMQ e BDs do FO (primeira vez; nas seguintes, `docker compose -f docker-compose.services.yml start rabbitmq` e
+   `docker start fo-db-a1 fo-db-a2 fo-db-a3`):
+   ```powershell
+   docker compose -f docker-compose.services.yml up -d rabbitmq
+   docker run -d --name fo-db-a1 -p 5441:5432 -e POSTGRES_DB=flightops -e POSTGRES_USER=flightops -e POSTGRES_PASSWORD=flightops postgres:16-alpine
+   docker run -d --name fo-db-a2 -p 5442:5432 -e POSTGRES_DB=flightops -e POSTGRES_USER=flightops -e POSTGRES_PASSWORD=flightops postgres:16-alpine
+   docker run -d --name fo-db-a3 -p 5443:5432 -e POSTGRES_DB=flightops -e POSTGRES_USER=flightops -e POSTGRES_PASSWORD=flightops postgres:16-alpine
+   ```
+   Consola do RabbitMQ: `http://localhost:15672` (`aisafe` / `aisafe-mq`, credenciais de desenvolvimento).
+3. Keycloak e gateway: `.\start-infra.ps1` (esperar por `http://localhost:8180`).
+4. Variáveis nas Run Configurations (separadas por `;`):
+
+   | Run Configuration                          | Variáveis acrescentadas                                              |
+      |--------------------------------------------|----------------------------------------------------------------------|
+   | `FlightOperationsApplication - Instance N` | `DB_URL=jdbc:postgresql://localhost:544N/flightops` (N = 1, 2, 3)    |
+   | `Airports - Instância 1, 2, 3`             | `SPRING_RABBITMQ_USERNAME=aisafe;SPRING_RABBITMQ_PASSWORD=aisafe-mq` |
+
+5. Arrancar por esta ordem: Aircraft 1–3, Airports 1–3, Flight Operations 1–3.
+6. Testes: coleção `SIDIS – Entrega 2 Modo A (IntelliJ)` (`tests(postman)/SIDIS-E2-Modo-A.postman_collection.json`):
+   pastas 00–07 no Runner (188 testes), 08–10 manuais.
+
+Para voltar ao Modo B: parar os serviços no IntelliJ, fechar a janela do Keycloak, parar o NGINX do Modo A
+(`Get-Process nginx | Stop-Process -Force`), `docker stop fo-db-a1 fo-db-a2 fo-db-a3` e
+`docker compose -f docker-compose.services.yml stop rabbitmq`.
