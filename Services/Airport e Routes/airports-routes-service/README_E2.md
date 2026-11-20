@@ -147,11 +147,14 @@ Nenhuma alteração aos endpoints REST. Mudou apenas **como** a replicação ent
 
 ## E2.10 Testes
 
-- **Unitários e de integração:** `./mvnw test` na pasta do serviço — **52 testes a passar** (4 ignorados), captura
-  `docs/screenshots/ar-02-testes-intellij.png`. Cobrem, entre outros, o consumidor AMQP (`ReplicationEventConsumerTest`:
-  eventos próprios ignorados, rejeição sem reenfileirar), o publicador do outbox (`AmqpReplicationPublisherTest`: DONE só
-  com confirmação do broker, backoff, FAILED às 10 tentativas), o projetor CQRS (`AirportProjectorTest`) e a replicação
-  da imagem (`AirportImageReplicationTest`).
+- **Unitários e de integração:** `./mvnw test` na pasta do serviço — **73 testes, todos a passar** (captura
+  `docs/screenshots/ar-02-testes-intellij.png`). Além dos da Entrega 1, cobrem:
+  - consumidor AMQP (`ReplicationEventConsumerTest`): eventos próprios ignorados, rejeição sem reenfileirar (DLQ);
+  - publicador do outbox (`AmqpReplicationPublisherTest`): DONE só com confirmação do broker, backoff, FAILED às 10 tentativas;
+  - outbox (`ReplicationOutboxTest`): uma tarefa por evento em AMQP vs uma por par em HTTP, metadados e utilizador;
+  - consistência (`RouteReplicationConsistencyTest`): *last-writer-wins*, desempate por `originNodeId`, idempotência,
+    convergência independente da ordem de chegada, eventos replicados nunca republicados;
+  - CQRS (`AirportProjectorTest`, `ReadModelRebuilderTest`) e replicação da imagem (`AirportImageReplicationTest`).
 - **Postman (Entrega 2)**, pasta `tests(postman)/` na raiz do repositório:
   - `SIDIS – Entrega 2 (Modo B)` — **80 testes a passar** (`ar-07-postman-e2-modo-b.png`): escreve por uma gateway e lê
     pela outra até convergir; as leituras do Airports levam `X-P2P-Hops: 1` (sem reencaminhamento), por isso um 200 prova
