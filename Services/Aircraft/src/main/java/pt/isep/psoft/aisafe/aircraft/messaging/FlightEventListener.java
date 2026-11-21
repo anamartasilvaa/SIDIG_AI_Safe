@@ -40,8 +40,9 @@ public class FlightEventListener {
             final String status = flight.path("status").asText(payload.path("status").asText(""));
             transactionTemplate.executeWithoutResult(tx -> {
                 if (!idempotency.firstTime("aircraft.flight", eventId)) return;
-                if ("FlightScheduled".equals(type) || "FlightReassigned".equals(type)
-                        || "FlightStatusChanged".equals(type) && !"COMPLETED".equalsIgnoreCase(status)) {
+                // A new assignment only when a flight is scheduled on, or moved to, this aircraft;
+                // status changes (DELAYED, IN_FLIGHT, CANCELED...) are not new assignments.
+                if ("FlightScheduled".equals(type) || "FlightReassigned".equals(type)) {
                     aircrafts.applyFlightAssignment(registration);
                 }
                 if ("COMPLETED".equalsIgnoreCase(status)) {

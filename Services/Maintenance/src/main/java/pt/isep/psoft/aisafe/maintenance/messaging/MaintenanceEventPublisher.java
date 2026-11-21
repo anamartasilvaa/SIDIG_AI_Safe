@@ -3,10 +3,11 @@ package pt.isep.psoft.aisafe.maintenance.messaging;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.amqp.core.MessageDeliveryMode;
-import org.springframework.amqp.core.MessageProperties;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import pt.isep.psoft.aisafe.maintenance.domain.MaintenanceRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -50,14 +51,24 @@ public class MaintenanceEventPublisher {
         payload.put("modelName", record.getModelName());
         payload.put("status", type.endsWith("Started") ? "UNDER_MAINTENANCE" : "ACTIVE");
 
-        MessageProperties properties = new MessageProperties();
-        properties.setContentType("application/json");
-        properties.setDeliveryMode(MessageDeliveryMode.PERSISTENT);
-        properties.setMessageId(eventId);
-        properties.setType(type);
+        String body = envelope.toString();
+        Runnable send = () -> send(type, routingKey, eventId, body);
+        // Sent only after the transaction commits: a rolled-back maintenance is never announced.
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    send.run();
+                }
+            });
+        } else {
+            send.run();
+        }
+    }
+
+    private void send(String type, String routingKey, String eventId, String body) {
         try {
-            rabbit.convertAndSend(exchange, routingKey,
-                mapper.valueToTree(envelope).toString(), message -> {
+            rabbit.convertAndSend(exchange, routingKey, body, message -> {
                     message.getMessageProperties().setContentType("application/json");
                     message.getMessageProperties().setDeliveryMode(MessageDeliveryMode.PERSISTENT);
                     message.getMessageProperties().setMessageId(eventId);
@@ -65,8 +76,8 @@ public class MaintenanceEventPublisher {
                     return message;
                 });
         } catch (RuntimeException ex) {
-            log.warn("Maintenance event {} could not be published; broker delivery is deferred",
-                    eventId);
+            // No outbox in this service: with the broker unreachable the event is lost (known limitation).
+            log.warn("Maintenance event {} ({}) was not published: {}", eventId, routingKey, ex.getMessage());
         }
     }
 }

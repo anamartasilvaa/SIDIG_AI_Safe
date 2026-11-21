@@ -159,7 +159,7 @@ Parar: `.\start-infra.ps1 -Stop` (Keycloak: Ctrl+C na janela dele), `docker comp
 
 | Coleção                                                                                                                     | Modo  | Conteúdo                                                                                                                                                                                                                |
 |-----------------------------------------------------------------------------------------------------------------------------|-------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `SIDIS – Entrega 2 Modo B (Docker).postman_collection.json` / `SIDIS – Entrega 2 Modo A (IntelliJ).postman_collection.json` | B / A | Coleções completas da Entrega 2 (todos os serviços). Modo B: 100 testes automáticos (pastas 00–06) e 18 manuais de falhas (pasta 07). Modo A: 170 testes automáticos (00–07) e 3 pastas manuais (08–10). Todos a passar |
+| `SIDIS – Entrega 2 Modo B (Docker).postman_collection.json` / `SIDIS – Entrega 2 Modo A (IntelliJ).postman_collection.json` | B / A | Coleções completas da Entrega 2 (todos os serviços). Modo B: 111 testes automáticos (pastas 00–06) e 18 manuais de falhas (pasta 07). Modo A: 181 testes automáticos (00–07) e 3 pastas manuais (08–10). Todos a passar |
 | `SIDIS – Modo A (IntelliJ)` / `SIDIS – Modo B (Docker)`                                                                     | A / B | Coleções da Entrega 1                                                                                                                                                                                                   |
 Como correr:
 1. Importar a coleção e o environment `SIDIS.postman_environment.json`; selecionar o environment **SIDIS**.
@@ -172,11 +172,11 @@ Como correr:
 
 Resultado do Modo B (pastas 00–06, Collection Runner):
 
-![Modo B: 100 testes, 0 falhas](screenshots/e2-postman-modo-b.png)
+![Modo B: 111 testes, 0 falhas](screenshots/e2-postman-modo-b.png)
 
 Resultado do Modo A (pastas 00–07, 3 instâncias de cada serviço):
 
-![Modo A: 170 testes, 0 falhas](screenshots/e2-postman-modo-a.png)
+![Modo A: 181 testes, 0 falhas](screenshots/e2-postman-modo-a.png)
 
 Os testes de convergência escrevem numa instância e leem noutra até os dados aparecerem. Nas leituras do Airports
 é enviado `X-P2P-Hops: 1`, que desliga o reencaminhamento entre instâncias: um 200 prova que o evento chegou pelo RabbitMQ.
