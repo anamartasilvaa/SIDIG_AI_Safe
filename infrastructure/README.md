@@ -145,15 +145,10 @@ Containers: `keycloak-db`, `keycloak-1`, `keycloak-2`, `aircraft-1`/`-2`, `maint
 
 Simular falhas: `docker compose -f docker-compose.secure.yml stop flight-operations-2` (e `start` para recuperar).
 
-> **Atenção ao reconstruir ou recriar serviços.** O NGINX resolve os nomes dos serviços (`aircraft-1`, `maintenance-2` …)
-> **só quando arranca** e guarda os IPs. Se um serviço for recriado (por exemplo com `up --build`), o Docker pode dar o seu
-> IP antigo a outro container, e o gateway passa a enviar pedidos para o serviço errado (sintoma: `403` ou `404` em
-> `/api/aircraft` ou `/api/maintenance`, ou só uma réplica a responder). Depois de reconstruir ou recriar qualquer serviço,
-> **reiniciar os gateways**:
-> ```powershell
-> docker compose -f docker-compose.secure.yml restart gateway-1 gateway-2
-> ```
-> A forma mais segura de atualizar tudo é `docker compose -f docker-compose.secure.yml down` seguido de `up --build -d`.
+> **Resolução de nomes nos gateways.** Cada `upstream` do NGINX usa `resolve` com o DNS interno do Docker
+> (`resolver 127.0.0.11 valid=5s`, NGINX ≥ 1.27.3). Se um serviço for parado, recriado ou reconstruído e voltar com
+> outro IP, o gateway encontra-o sozinho em poucos segundos, sem ser preciso reiniciá-lo; um container parado sai do
+> `upstream` e os pedidos seguem para a outra réplica.
 
 Medidas de segurança deste modo:
 - HTTPS cliente→gateway, gateway→serviço (certificado verificado) e serviço→serviço (certificado com SAN dos containers).
@@ -213,13 +208,13 @@ docker compose -f infrastructure/docker-compose.services.yml down
 
 Pasta `tests(postman)/` da raiz do repositório:
 
-| Ficheiro                                                    | Para                                                           |
-|-------------------------------------------------------------|----------------------------------------------------------------|
-| `SIDIS.postman_environment.json`                            | Environment `SIDIS` (URLs, utilizadores de teste, API key)     |
-| `SIDIS – Modo A (IntelliJ).postman_collection.json`         | Entrega 1, Modo A (acesso direto às réplicas)                  |
-| `SIDIS – Modo B (Docker).postman_collection.json`           | Entrega 1, Modo B (só via gateway, 2 réplicas, testes de SPOF) |
+| Ficheiro | Para |
+|---|---|
+| `SIDIS.postman_environment.json` | Environment `SIDIS` (URLs, utilizadores de teste, API key) |
+| `SIDIS – Modo A (IntelliJ).postman_collection.json` | Entrega 1, Modo A (acesso direto às réplicas) |
+| `SIDIS – Modo B (Docker).postman_collection.json` | Entrega 1, Modo B (só via gateway, 2 réplicas, testes de SPOF) |
 | `SIDIS Entrega 2 Modo A (IntelliJ).postman_collection.json` | Entrega 2, Modo A (CQRS, AMQP, base por instância; 181 testes) |
-| `SIDIS Entrega 2 Modo B (Docker).postman_collection.json`   | Entrega 2, Modo B (111 testes; ver `docs/SIDIS/README.md`)     |
+| `SIDIS Entrega 2 Modo B (Docker).postman_collection.json` | Entrega 2, Modo B (111 testes; ver `docs/SIDIS/README.md`) |
 
 1. Importar o environment e a coleção do modo em uso; escolher o environment `SIDIS`.
 2. Em *Settings*, desligar **SSL certificate verification** (certificado autoassinado).
@@ -264,7 +259,7 @@ Cada `stop`/`start` escreve-se como `docker compose -f docker-compose.secure.yml
 | 09.12  | (Keycloak parado)                                                                       | `502`/`503`/`504`: um novo login falha; o Keycloak é dependência crítica da autenticação                                                                                                                                                                                     |
 | 09.13  | `start` de tudo e esperar healthy                                                       | recuperação total: login, agendar e ler                                                                                                                                                                                                                                      |
 
-Se algum serviço for *recriado* (e não só parado e arrancado), reiniciar também os gateways (ver a nota no Modo B).
+Os gateways voltam a resolver os nomes dos serviços sozinhos (ver a nota no Modo B), por isso não é preciso reiniciá-los depois de parar ou recriar um serviço.
 SPOF residual: a base de dados do Keycloak (`keycloak-db`) é uma instância única.
 
 ## Auditoria (registo de acessos e alterações)
@@ -334,7 +329,6 @@ Collection Runner da coleção do Modo A (pastas `00` a `07`): 365 testes, 0 fal
 
 | Sintoma                                                                                                         | Causa provável                                                                                              | O que fazer                                                                                                                  |
 |-----------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------|
-| `403`/`404` em `/api/aircraft` ou `/api/maintenance` no Modo B; só uma réplica responde                         | O NGINX guardou IPs antigos depois de os serviços serem recriados                                           | `docker compose -f docker-compose.secure.yml restart gateway-1 gateway-2`                                                    |
 | Airports: `PlaceholderResolutionException: JWT_SECRET` ao arrancar                                              | A variável `JWT_SECRET` não está definida                                                                   | Definir `JWT_SECRET` (mínimo 32 bytes, igual nas 3 instâncias) ou usar o valor por omissão do `application.properties`       |
 | Airports: rota criada numa instância dá `404` noutra; `401` nos logs de replicação (`ReplicationTaskScheduler`) | As instâncias do Airports não partilham o mesmo `JWT_SECRET` ou o token entre réplicas está a ser rejeitado | Usar o mesmo `JWT_SECRET` nas 3 instâncias e correr a versão atual do `PeerTokenService` (token entre réplicas sempre HS256) |
 | `503` no gateway para o Airports no Modo A                                                                      | O `keystore.p12` do Airports não é o certificado do grupo; o NGINX recusa-o (`proxy_ssl_verify on`)         | Usar o mesmo `keystore.p12` dos restantes serviços                                                                           |

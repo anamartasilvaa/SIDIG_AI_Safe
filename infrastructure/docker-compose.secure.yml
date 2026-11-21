@@ -89,7 +89,7 @@ x-keycloak-db-env: &keycloak-db-env
   REPMGR_USE_PGREWIND: "yes"
 
 x-gateway: &gateway
-  image: nginx:1.27-alpine
+  image: nginx:1.27.5-alpine   # >= 1.27.3: "resolve" nos upstreams
   restart: unless-stopped
   networks: [edge, backend]
   security_opt: ["no-new-privileges:true"]
