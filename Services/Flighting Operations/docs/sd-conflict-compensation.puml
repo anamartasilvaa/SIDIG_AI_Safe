@@ -41,9 +41,5 @@ F1 -> MQ : FlightStatusChanged(Y, CANCELED)
 F2 -> MQ : FlightStatusChanged(Y, CANCELED)
 MQ -> F1 : duplicates converge (same state; LWW by revision, then lastModifiedAt)
 MQ -> F2
-note over F1, F2
-  Result: Y is CANCELED everywhere with a visible reason; AUDIT "COMPENSATION";
-  route utilization and aircraft mood are recomputed by the projectors.
-  Works even if the replica that created Y never comes back.
-end note
+
 @enduml

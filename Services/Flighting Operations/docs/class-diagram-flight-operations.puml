@@ -82,20 +82,6 @@ package "Query side - schema query (denormalised, no rules)" #F4FFF4 {
     destination: String
     flightCount: long
   }
-  class AircraftMoodView {
-    registrationNumber: String
-    mood: AircraftMood
-    reason: String
-    delayedOrCanceledLast7Days: int
-    flightsNext24h: int
-    updatedAt: Instant
-  }
-  enum AircraftMood {
-    HAPPY
-    BUSY
-    GRUMPY
-    SLEEPING
-  }
 }
 
 package "Integration events (AMQP, JSON)" #FFF8E8 {
@@ -135,12 +121,9 @@ IntegrationEvent <|-- FlightReassigned
 IntegrationEvent <|-- AircraftEvents
 IntegrationEvent <|-- RouteEvents
 FlightScheduled ..> OutboxEvent : stored as
-AircraftMoodView --> AircraftMood
 
 FlightScheduled ..> FlightView : projected into
 FlightScheduled ..> RouteUtilizationView : projected into
-FlightStatusChanged ..> AircraftMoodView : projected into
 AircraftEvents ..> AircraftRef : projected into
-AircraftEvents ..> AircraftMoodView : projected into
 RouteEvents ..> RouteRef : projected into
 @enduml

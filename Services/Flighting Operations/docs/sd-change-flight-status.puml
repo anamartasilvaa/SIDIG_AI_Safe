@@ -49,8 +49,4 @@ else not stored here yet (replication lagging or disabled)
   end
 end
 
-note over User, FO3
-  Invalid transition (e.g. IN_FLIGHT -> CANCELED): SchedulingRuleViolation,
-  raised locally or propagated from the replica that applied it -> 409 Conflict.
-end note
 @enduml

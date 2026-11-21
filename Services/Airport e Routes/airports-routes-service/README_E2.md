@@ -235,23 +235,11 @@ não perde dados: a outra continua a servir e a que falhou recupera os eventos d
 
 Ver `docs/E2/sd-failure-recovery.puml` e `docs/E2/sd-amqp-event-propagation.puml`.
 
-## E2.7 `GET /api/v2/unicorns` (*mood status* dos aviões)
-
-Este endpoint obrigatório devolve, em JSON, o *mood status* de cada avião (`HAPPY`, `BUSY`, `GRUMPY`, `SLEEPING`), calculado
-a partir da atividade de voos. Pertence ao domínio das aeronaves e está implementado no serviço **Flight Operations**
-(ver o `README_E2.md` desse serviço, secção E2.7).
-
-**Ligação ao CQRS:** é uma **consulta pura** (só lado de leitura). Não existe nenhum comando para alterar o *mood*: é uma
-vista (`aircraft_mood_view`) atualizada por um projetor sempre que chega um evento de voos, e o endpoint só lê essa vista.
-
-**Mock para os testes de integração:** as coleções Postman da Entrega 2 (`tests(postman)/`, pasta 05) incluem o pedido
-`GET {{mockUrl}}/api/v2/unicorns`, servido por um *Mock Server* do Postman com o mesmo formato de resposta do endpoint real.
-
-## E2.8 API – alterações face à Entrega 1
+## E2.7 API – alterações face à Entrega 1
 
 Os endpoints REST (URLs, perfis, códigos) não mudaram. Mudou **como** a replicação entre instâncias é feita (eventos em vez de HTTP direto) e as leituras deixaram de consultar a outra instância, por isso o cabeçalho `X-Partial-Result` já não é devolvido.
 
-## E2.9 Configuração (novas variáveis)
+## E2.8 Configuração (novas variáveis)
 
 | Propriedade / variável | Valor por omissão | Função |
 |---|---|---|
@@ -269,35 +257,35 @@ Os endpoints REST (URLs, perfis, códigos) não mudaram. Mudou **como** a replic
 | `SPRING_DATASOURCE_URL` | `jdbc:postgresql://airports-db-N:5432/airports` | Base de dados da instância |
 | `RABBITMQ_USER` / `RABBITMQ_PASSWORD` / `AIRPORTS_DB_PASSWORD` | no `.env` | Credenciais (não vão para o Git) |
 
-## E2.10 Testes
+## E2.9 Testes
 
 - **Unitários e de integração:** `./mvnw test` na pasta do serviço — **100 testes, todos a passar** (captura
   `docs/screenshots/ar-02-testes-intellij.png`). Além dos da Entrega 1, cobrem:
-  - consumidor AMQP (`ReplicationEventConsumerTest`): eventos próprios ignorados, rejeição sem reenfileirar (DLQ),
-    duplicados ignorados e registo em `processed_event`;
-  - Inbox (`IdempotencyGuardTest`): evento aplicado no máximo uma vez, nada registado se falhar, limpeza dos antigos;
-  - publicador do outbox (`AmqpReplicationPublisherTest`): DONE só com confirmação do broker, backoff, FAILED às 10 tentativas;
-  - outbox (`ReplicationOutboxTest`): uma tarefa por evento em AMQP vs uma por par em HTTP, metadados e utilizador;
-  - consistência (`RouteReplicationConsistencyTest`): *last-writer-wins*, desempate por `originNodeId`, idempotência,
-    convergência independente da ordem de chegada, eventos replicados nunca republicados;
-  - CQRS (`AirportProjectorTest`, `ReadModelRebuilderTest`) e replicação da imagem (`AirportImageReplicationTest`);
-  - snapshot no arranque (`SnapshotBootstrapperTest`, `SnapshotApplyTest`): só corre com a base vazia, aeroportos antes
-    das rotas, tenta outra vez até a outra instância responder, não gera eventos, substitui os dados iniciais e nunca
-    estraga um evento mais recente.
+    - consumidor AMQP (`ReplicationEventConsumerTest`): eventos próprios ignorados, rejeição sem reenfileirar (DLQ),
+      duplicados ignorados e registo em `processed_event`;
+    - Inbox (`IdempotencyGuardTest`): evento aplicado no máximo uma vez, nada registado se falhar, limpeza dos antigos;
+    - publicador do outbox (`AmqpReplicationPublisherTest`): DONE só com confirmação do broker, backoff, FAILED às 10 tentativas;
+    - outbox (`ReplicationOutboxTest`): uma tarefa por evento em AMQP vs uma por par em HTTP, metadados e utilizador;
+    - consistência (`RouteReplicationConsistencyTest`): *last-writer-wins*, desempate por `originNodeId`, idempotência,
+      convergência independente da ordem de chegada, eventos replicados nunca republicados;
+    - CQRS (`AirportProjectorTest`, `ReadModelRebuilderTest`) e replicação da imagem (`AirportImageReplicationTest`);
+    - snapshot no arranque (`SnapshotBootstrapperTest`, `SnapshotApplyTest`): só corre com a base vazia, aeroportos antes
+      das rotas, tenta outra vez até a outra instância responder, não gera eventos, substitui os dados iniciais e nunca
+      estraga um evento mais recente.
 - **Postman (Entrega 2)**, pasta `tests(postman)/` na raiz do repositório (coleções do sistema completo):
-  - `SIDIS – Entrega 2 Modo B (Docker)` — **125 testes a passar** (`ar-07-postman-e2-modo-b.png`): escreve por uma gateway
-    e lê pela outra até convergir; as leituras do Airports levam `X-P2P-Hops: 1`, por isso um 200 prova que o evento chegou
-    pelo RabbitMQ. Inclui Flight Operations, eventos entre serviços, eventos de Aircraft, DLQ, `/api/v2/unicorns` e o mock.
-  - `SIDIS – Entrega 2 Modo A (IntelliJ)` — **188 testes a passar** (`ar-08-postman-e2-modo-a.png`): o mesmo sobre 3
-    instâncias de cada serviço com acesso direto, incluindo `ROUTE_UPDATED`, `AIRPORT_DETAILS_UPDATED` e *last-writer-wins*.
-  - Pastas MANUAL: parar uma instância, escrever noutra e ver a fila dela guardar o evento até voltar.
-  - Os testes que publicam diretamente no RabbitMQ precisam, no environment, de `rabbitUser`, `rabbitPassword`
-    (valores do `.env` no Modo B; `aisafe` / `aisafe-mq` no Modo A) e `rabbitMgmt` (`http://localhost:15672`).
+    - `SIDIS – Entrega 2 Modo B (Docker)` — **125 testes a passar** (`ar-07-postman-e2-modo-b.png`): escreve por uma gateway
+      e lê pela outra até convergir; as leituras do Airports levam `X-P2P-Hops: 1`, por isso um 200 prova que o evento chegou
+      pelo RabbitMQ. Inclui Flight Operations, eventos entre serviços, eventos de Aircraft e DLQ.
+    - `SIDIS – Entrega 2 Modo A (IntelliJ)` — **188 testes a passar** (`ar-08-postman-e2-modo-a.png`): o mesmo sobre 3
+      instâncias de cada serviço com acesso direto, incluindo `ROUTE_UPDATED`, `AIRPORT_DETAILS_UPDATED` e *last-writer-wins*.
+    - Pastas MANUAL: parar uma instância, escrever noutra e ver a fila dela guardar o evento até voltar.
+    - Os testes que publicam diretamente no RabbitMQ precisam, no environment, de `rabbitUser`, `rabbitPassword`
+      (valores do `.env` no Modo B; `aisafe` / `aisafe-mq` no Modo A) e `rabbitMgmt` (`http://localhost:15672`).
 - **Postman (Entrega 1, Modo B):** 348 testes (`ar-01-postman-348-modo-b.png`).
 - **Evidências:** `docs/screenshots/` — filas *quorum* com TTL, limite, DLX e DLQ no RabbitMQ (`ar-04-rabbitmq-filas.png`),
-  modelo de leitura reconstruído (`ar-06-modelo-leitura.png`), mock dos unicorns (`ar-03*`).
+  modelo de leitura reconstruído (`ar-06-modelo-leitura.png`).
 
-## E2.11 Limitações conhecidas
+## E2.10 Limitações conhecidas
 
 - Tarefas de outbox em estado `FAILED` não são reprocessadas automaticamente.
 - O *circuit breaker* não tem estado *half-open* completo: passados os 10 s o contador de falhas recomeça a zero.
@@ -307,7 +295,7 @@ Os endpoints REST (URLs, perfis, códigos) não mudaram. Mudou **como** a replic
 - Eventos que chegam com a BD da instância em baixo vão para a DLQ e têm de ser reenviados à mão (ver E2.6).
 - Numa instância que arranca com a BD vazia, o histórico de cada rota copiada fica só com o estado atual (`CREATED` e, se estiver inativa, `DEACTIVATED`), e não com todas as alterações anteriores.
 
-## E2.12 Estrutura do projeto
+## E2.11 Estrutura do projeto
 
 ```
 src/main/java/.../airports_routes_service/
@@ -322,7 +310,7 @@ src/main/resources/db/migration/   migrações Flyway (V1: escrita, outbox, inbo
   security/       validação de JWT (Keycloak RS256) e token interno entre instâncias
 ```
 
-## E2.13 Diagramas
+## E2.12 Diagramas
 
 Pasta [`docs/`](docs/) (PlantUML), organizada por entrega: [`docs/E2/`](docs/E2/) (esta entrega) e [`docs/E1/`](docs/E1/) (Entrega 1).
 
@@ -340,7 +328,7 @@ Pasta [`docs/`](docs/) (PlantUML), organizada por entrega: [`docs/E2/`](docs/E2/
 | `E1/sd-create-airport-outbox.puml`, `E1/sd-create-route-outbox.puml`, `E1/sd-csv-import-outbox.puml` | Comandos com outbox (Entrega 1: entrega por HTTP; na Entrega 2 ver `E2/sd-amqp-event-propagation.puml`) |
 | `E1/sd-circuit-breaker.puml`, `E1/sd-p2p-forwarding-read.puml` | Leituras entre instâncias (Entrega 1; desligadas por omissão na Entrega 2) |
 
-## E2.14 Capturas (Modo B)
+## E2.13 Capturas (Modo B)
 
 **Cluster RabbitMQ com filas *quorum* do Airports** (uma fila por instância, com TTL, limite, DLX e a sua DLQ):
 
@@ -349,10 +337,6 @@ Pasta [`docs/`](docs/) (PlantUML), organizada por entrega: [`docs/E2/`](docs/E2/
 **Modelo de leitura reconstruído no arranque** (`ReadModelRebuilder`):
 
 ![Modelo de leitura reconstruído](docs/screenshots/ar-06-modelo-leitura.png)
-
-**`GET /api/v2/unicorns` no mock** (testes de integração com o *Mock Server* do Postman):
-
-![Mock do unicorns](docs/screenshots/ar-03-mock-unicorns-testes.png)
 
 **Testes Postman da Entrega 2, Modo B** (125 testes):
 

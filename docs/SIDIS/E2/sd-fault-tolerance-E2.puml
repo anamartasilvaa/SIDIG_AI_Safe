@@ -1,5 +1,5 @@
 @startuml sd-fault-tolerance-p2
-title AISafe - Fault tolerance added in the second delivery (broker, Keycloak DB, empty replica)
+title AISafe - Fault tolerance added in the second delivery (broker, Keycloak, databases, gateways, empty replica)
 skinparam shadowing false
 skinparam sequenceArrowThickness 2
 autonumber
@@ -13,6 +13,7 @@ participant "rabbitmq-2 / -3" as R23
 participant "Keycloak" as K
 database "keycloak-db\nprimary" as KP
 database "keycloak-db\nstandby" as KS
+database "fo-db-2" as D2
 
 == 1. One broker node fails ==
 R1 -[#red]-> R1 : node down
@@ -47,11 +48,25 @@ C -> G : POST /realms/.../token
 G -> K : proxy
 K -> KS : new connection (targetServerType=primary)
 K --> G : 200 access_token
-note over KP : when it returns, the old primary rejoins as a standby
+note over KP : when it returns, the old primary rejoins as a standby\n(pg_rewind or a fresh clone from the new primary: never two primaries)
 
 == 4. A FO replica starts with an empty database ==
 F2 -> F2 : SnapshotBootstrapper: command store empty
 F2 -> F1 : GET /internal/scheduled-flights (X-API-Key)
 F1 --> F2 : all flights (FlightState, with revision)
 F2 -> F2 : apply each flight (last-writer-wins), in parallel with its queue backlog
+
+== 5. The database of one FO replica fails (replica still running) ==
+D2 -[#red]-> D2 : down
+C -> G : GET / POST
+G -> F2 : proxy
+F2 --> G : 503 + Retry-After (cannot open a transaction; nothing written)
+G -> F1 : proxy_next_upstream http_503 non_idempotent
+F1 --> G : 200 / 201
+G --> C : success: the client does not see the failure
+note over D2 : when it returns, flight-operations-2 consumes\nthe events kept in its queue (no loss)
+
+== 6. One gateway or one Keycloak node fails ==
+C -> G : the client uses the other gateway (:8443 <-> :8444)
+G -> K : /realms/... goes to the other Keycloak node;\nservices keep validating tokens (JWKS of the running node)
 @enduml

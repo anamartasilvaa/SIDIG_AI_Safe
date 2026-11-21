@@ -13,7 +13,7 @@ System_Boundary(aisafe, "AISafe Flight Management System") {
 
     ContainerQueue(mq, "Message broker (x3)", "RabbitMQ 3.13 cluster, AMQPS :5671", "Quorum queues (majority of 2 of 3 nodes), pause_minority, dead-letter exchange. Topology imported before the services start (rabbitmq-init).")
 
-    Container(fo, "Flight Operations Service (x2)", "Java 17, Spring Boot 4, CQRS", "Command side: aggregate + transactional outbox in one transaction. Query side: read models (flights, route utilization, aircraft mood /api/v2/unicorns). Idempotent consumers, deterministic conflict resolution.")
+    Container(fo, "Flight Operations Service (x2)", "Java 17, Spring Boot 4, CQRS", "Command side: aggregate + transactional outbox in one transaction. Query side: read models (flights, route utilization). Idempotent consumers, deterministic conflict resolution.")
     ContainerDb(fodb, "Flight Ops DB (one per replica)", "PostgreSQL 16, Flyway", "fo_command (aggregate, references, outbox, processed events) and fo_query (read models)")
 
     Container(ar, "Airports & Routes Service (x2)", "Java 17, Spring Boot 4, CQRS", "Airports, routes and history. Write model + flat read model; transactional outbox to airports.events.")
@@ -28,7 +28,7 @@ System_Boundary(aisafe, "AISafe Flight Management System") {
 Rel(user, gw, "Login and requests (Bearer JWT); if one gateway fails, uses the other", "HTTPS")
 Rel(gw, kc, "/realms/... (login, JWKS), failover between nodes", "HTTP")
 Rel(kc, kcdb, "Reads/Writes (current primary)", "JDBC")
-Rel(gw, fo, "/api/scheduled-flights/..., /api/v2/unicorns", "HTTPS, round-robin")
+Rel(gw, fo, "/api/scheduled-flights/...", "HTTPS, round-robin")
 Rel(gw, ar, "/api/airports/..., /api/routes/...", "HTTPS, round-robin")
 Rel(gw, ac, "/api/aircraft/...", "HTTPS, round-robin")
 Rel(gw, mt, "/api/maintenance/...", "HTTPS, round-robin")

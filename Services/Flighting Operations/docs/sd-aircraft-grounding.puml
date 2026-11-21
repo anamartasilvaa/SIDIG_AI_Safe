@@ -21,7 +21,7 @@ participant "flights.events" as FEX
 
 User -> AC : PATCH /api/aircraft-models/instances/{reg}/status\n(UNDER_MAINTENANCE)
 AC -> EX : AircraftStatusChanged(reg, status, revision)
-EX -> QA : aircraft.# (every FO replica: AircraftEventListener updates aircraft_ref and the mood)
+EX -> QA : aircraft.# (every FO replica: AircraftEventListener updates aircraft_ref)
 EX -> QG : aircraft.status-changed (ONE copy for the whole FO service)
 QG -> GL : deliver (only one of FO-1 / FO-2 gets it)
 activate GL
@@ -29,7 +29,7 @@ GL -> GL : AircraftEventTranslator (ACL)\nmalformed -> reject -> fo.dead-letter
 GL -> DB : BEGIN; processed_event(consumer = "fo.grounding", eventId)
 GL -> GH : onAircraftStatus(change)
 GH -> Ref : apply(change)
-Ref -> DB : SELECT aircraft_ref ... FOR UPDATE;\nupdate only if newer (revision, then time); recompute mood
+Ref -> DB : SELECT aircraft_ref ... FOR UPDATE;\nupdate only if newer (revision, then time)
 GH -> Ref : isGrounded(reg)?
 alt aircraft ACTIVE (or an old event: a newer ACTIVE status is already known)
   GH --> GL : nothing to do
@@ -50,19 +50,9 @@ GL -> DB : COMMIT
 GL -> QG : basicAck
 deactivate GL
 DB -> FEX : OutboxRelay publishes FlightReassigned / FlightStatusChanged
-FEX -> QA : (fo.flights.*) every replica updates its copy, views and moods
+FEX -> QA : (fo.flights.*) every replica updates its copy and views
 
 == Other triggers (same GroundingService, idempotent) ==
-note over GL, GS
-  - REST: POST /internal/scheduled-flights/aircraft/{reg}/grounding (kept while the Aircraft Service uses it);
-  - GroundingRequested (flights.events, routing key fo.grounding.requested) -> fo.grounding.
-  Flights already moved are skipped, so a repeated trigger changes nothing.
-end note
 
 == Failures ==
-note over QG, GL
-  Replica crashes mid-way: transaction rolled back, no ack -> the message is redelivered (possibly to the other replica).
-  Both FO replicas down: the message waits in fo.grounding (quorum, durable) until one comes back.
-  Aircraft Service down after publishing: irrelevant, the event is already in the broker.
-end note
 @enduml

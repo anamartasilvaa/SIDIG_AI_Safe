@@ -31,7 +31,23 @@ GW -> F2 : GET ... (reads keep working from the local views)
 == C. FO-2 fails ==
 GW -> F2 : request
 F2 -> F2 : X down
-GW -> F1 : proxy_next_upstream: same request to FO-1
+GW -> F1 : proxy_next_upstream (error, timeout): same request to FO-1
+
+== C2. FO-2 is running but ITS DATABASE fails ==
+GW -> F2 : request (GET or POST)
+F2 -> D2 : get connection
+D2 -[#red]-> F2 : X unreachable (pool timeout 2 s)
+F2 --> GW : 503 + Retry-After (GlobalExceptionHandler)\nnothing was written: the transaction never started
+GW -> F1 : proxy_next_upstream http_503 non_idempotent:\nsame request to FO-1
+F1 -> D1 : commit (+ outbox)
+F1 --> GW : 200 / 201
+GW --> GW : max_fails=1: FO-2 skipped for 10 s
+D2 -> D2 : database back
+R2 -> F2 : remaining events of fo.flights.fo-2
+F2 -> D2 : idempotent apply
+F2 -> F1 : ReplicaSyncReconciler (every 20 s):\nGET /internal/scheduled-flights (X-API-Key)
+F1 --> F2 : all flights (FlightState, with revision)
+F2 -> D2 : apply missing / older flights (last-writer-wins):\nflights whose events were dead-lettered are restored (Postman 07.18)
 
 == D. FO-2 restarts with its database intact ==
 R2 -> F2 : backlog of fo.flights.fo-2 / fo.aircraft.fo-2 / fo.routes.fo-2
@@ -51,5 +67,9 @@ F1 -> D1 : validates with local AircraftRef / RouteRef (last known state)
 F1 --> GW : 201 / 409 (503 only if the route or aircraft was never seen;\nstale references are the accepted AP trade-off)
 
 == G. One gateway fails ==
-GW -> GW : client uses the other gateway (:8443 <-> :8444)
+GW -> GW : client uses the other gateway (:8443 <-> :8444) (Postman 07.15)
+
+== H. One Keycloak node fails ==
+GW -> GW : /realms/... goes to the other Keycloak (same realm, shared HA database)
+F1 -> F1 : tokens still validated: JWKS through the "keycloak" alias,\nwhich resolves only to the running node (Postman 07.16)
 @enduml

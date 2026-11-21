@@ -9,8 +9,10 @@ box "Any FO replica" #F4FFF4
 participant "Security\n(JWT + RBAC)" as Sec
 participant "ScheduledFlightController" as Ctrl
 participant "FlightQueryService" as Svc
+participant "ReferenceDataService\n+ ReferenceWriter" as Ref
 database "Replica DB\n(schema query)" as DB
 end box
+participant "Aircraft Service\n(via ReferenceLookup)" as AC
 
 User -> GW : GET /api/scheduled-flights/{id}
 GW -> Sec : round-robin
@@ -37,19 +39,20 @@ User -> GW : GET /api/scheduled-flights/route-utilization   (US229)
 GW -> Ctrl : BACKOFFICE / ADMIN
 Ctrl -> Svc : routeUtilization()
 Svc -> DB : SELECT * FROM route_utilization_view ORDER BY flight_count DESC
-note right : recomputed by the FlightProjector from flight_view\n(CANCELED excluded) whenever a flight changes;\nno aggregation over replicas, no duplicates
 Ctrl --> GW : 200 / 204
 
 User -> GW : GET /api/scheduled-flights/availability?registrationNumber=&dateTime=   (US205)
 GW -> Ctrl : ATCC / ADMIN
 Ctrl -> Svc : availability(reg, when)
-Svc -> DB : SELECT status FROM aircraft_ref\n+ flight_view of the aircraft within +/- 2 h
-note right : aircraft not known locally -> UNKNOWN
+Svc -> DB : SELECT status FROM aircraft_ref
+alt aircraft not known by THIS replica yet (it only received the flights by event)
+  Svc -> Ref : ensureAircraft(reg)
+  Ref -> AC : GET /api/aircraft/{reg} (once)
+  AC --> Ref : status, range, seats
+  Ref -> DB : INSERT aircraft_ref (own short transaction;\nlost race with a concurrent insert = already there)
+  note right : Aircraft Service down -> aircraft stays UNKNOWN,\navailable = false (no error)
+end
+Svc -> DB : flight_view of the aircraft within +/- 2 h
 Ctrl --> GW : 200 {available, reason}
 
-note over User, DB
-  Reads never call another service or another replica: they keep working with RabbitMQ,
-  Aircraft or Airports & Routes down. The price is eventual consistency: a flight created on
-  the other replica appears here after the event is consumed (normally < 1 s).
-end note
 @enduml

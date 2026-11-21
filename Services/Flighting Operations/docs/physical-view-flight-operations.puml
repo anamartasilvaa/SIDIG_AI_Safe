@@ -10,7 +10,7 @@ node "Docker host" {
   node "backend network (internal, no Internet)" {
     node "keycloak-1" as K1
     node "keycloak-2" as K2
-    database "keycloak-db-0\nPostgreSQL (repmgr)\nprimary" as KDB1
+    database "keycloak-db-0\nPostgreSQL (repmgr)\nprimary at first start" as KDB1
     database "keycloak-db-1\nPostgreSQL (repmgr)\nstandby" as KDB2
     database "keycloak-db-2\nPostgreSQL (repmgr)\nstandby" as KDB3
 
@@ -54,18 +54,4 @@ AC --> RB3 : AMQPS
 AR --> RB3
 MT --> RB3
 
-note bottom of FDB1
-  Database-per-Service: one database instance per replica.
-  The FO replica and its database fail together;
-  the other pair (FO-2 + fo-db-2) holds a full copy.
-end note
-note right of RB3
-  3 nodes + quorum queues:
-  survives the loss of any 1 node.
-end note
-note top of G1
-  Remaining limitation: a single Docker host (one laptop).
-  Production: the same compose as a Swarm / Kubernetes
-  stack spread over several hosts.
-end note
 @enduml

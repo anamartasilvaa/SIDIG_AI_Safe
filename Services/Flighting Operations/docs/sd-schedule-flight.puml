@@ -34,20 +34,16 @@ Ctrl -> Svc : schedule(command, correlationId = X-Request-Id)
 activate Svc
 
 Svc -> Agg : ScheduledFlight.schedule(route, aircraft, when, now, "fo-1")
-note right : blank fields / date in the past -> 400\n(no I/O yet)
 
 Svc -> Ref : ensureRoute(routeId), ensureAircraft(reg)
-note right : normally found in route_ref / aircraft_ref (kept up to date\nby events). Only if missing: one REST call through\nReferenceLookup, stored locally (outside the transaction)
 
 == One local ACID transaction (no remote calls) ==
 Svc -> DB : BEGIN
 Svc -> DB : SELECT aircraft_ref ... FOR UPDATE
-note right : row lock per aircraft: concurrent requests AND\nthe FlightEventListener applying flights of the\nsame aircraft are serialised on this replica
 DB --> Svc : AircraftRef (status, range, seats)
 Svc -> DB : SELECT route_ref WHERE routeId = ?
 DB --> Svc : RouteRef (active, minimumRange, minimumCapacity)
 Svc -> DB : SELECT flights of the aircraft (status occupies aircraft)
-note right : the command store already holds the flights\nof ALL replicas (applied from events),\nso no peer calls are needed
 DB --> Svc : List<FlightSlot>
 Svc -> Policy : checkAssignment(route, aircraft)\nfindConflict(slots, when)
 Policy --> Svc : ok / SchedulingRuleViolation
@@ -64,7 +60,7 @@ else rule violated (inactive route, aircraft not ACTIVE,\nrange, capacity, 2 h c
 else valid
   Svc -> DB : INSERT scheduled_flight (revision = 1, originInstance = fo-1)
   Svc -> DB : INSERT outbox_event (FlightScheduled, routingKey = flight.scheduled,\npayload = full flight state, eventId = UUID)
-  Svc -> DB : FlightProjector: UPSERT flight_view, route utilization, mood\n(query schema, same transaction -> read-your-writes)
+  Svc -> DB : FlightProjector: UPSERT flight_view, route utilization\n(query schema, same transaction -> read-your-writes)
   Svc -> DB : COMMIT
   note right : the flight and its event are durable together:\nno "saved but not published" and\nno "published but not saved"
   Svc --> Ctrl : FlightId
@@ -76,9 +72,4 @@ deactivate Svc
 deactivate Ctrl
 end
 
-note over User, DB
-  The response does NOT wait for the broker or for the other replicas.
-  Publication is done afterwards by the OutboxRelay (see sd-event-propagation).
-  With RabbitMQ, Aircraft or Airports & Routes completely down, scheduling still works (AP).
-end note
 @enduml

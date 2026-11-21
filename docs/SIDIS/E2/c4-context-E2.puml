@@ -5,8 +5,8 @@ LAYOUT_TOP_DOWN()
 title AISafe Flight Management System - C4 Level 1 (System Context), second delivery
 
 Person(admin, "Admin", "Manages users and has access to all operations.")
-Person(backoffice, "Backoffice Operator", "Manages airports, routes and aircraft; reads utilization reports and aircraft moods.")
-Person(atcc, "ATCC", "Schedules flights, assigns aircraft to routes, follows flight status and aircraft moods.")
+Person(backoffice, "Backoffice Operator", "Manages airports, routes and aircraft; reads utilization reports.")
+Person(atcc, "ATCC", "Schedules flights, assigns aircraft to routes, follows flight status.")
 Person(maint, "Maintenance Technician / Supervisor", "Registers and validates aircraft maintenance.")
 
 System(aisafe, "AISafe Flight Management System", "Distributed system: 2 API gateways + 4 services (Aircraft, Maintenance, Airports & Routes, Flight Operations), 2 replicas each, one database per replica. External API: HTTPS REST. Between services: asynchronous messages (AMQP, RabbitMQ cluster).")

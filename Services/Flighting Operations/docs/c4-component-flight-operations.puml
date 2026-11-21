@@ -10,6 +10,7 @@ Container_Ext(gateway, "API Gateways (x2)", "NGINX, HTTPS :8443 / :8444", "Round
 Container_Ext(keycloak, "Keycloak cluster (x2)", "aisafe realm", "Issues RS256 JWT; JWKS public key")
 Container_Ext(broker, "RabbitMQ cluster (3 nodes)", "AMQP 0-9-1 over TLS, quorum queues", "Exchanges flights.events, aircraft.events, routes.events")
 Container_Ext(peer, "Other FO replica", "Spring Boot", "Same components, own database")
+Container_Ext(owners, "Aircraft / Airports & Routes", "Spring Boot (x2 each)", "Owners of the aircraft and route data")
 ContainerDb(db, "FO database (one per replica)", "PostgreSQL", "Schema command: flights, references, outbox, processed events. Schema query: denormalised views.")
 
 Container_Boundary(fo, "Flight Operations Service (one replica)") {
@@ -34,11 +35,13 @@ Container_Boundary(fo, "Flight Operations Service (one replica)") {
 
     Boundary(qry, "Query side (read model)") {
         Component(qryCtrl, "ScheduledFlightController (read endpoints)", "@RestController /api/scheduled-flights", "GET /{id}, /aircraft/{reg} (US213), /availability (US205), /route-utilization (US229).")
-        Component(unicorn, "UnicornController", "@RestController /api/v2/unicorns", "Mood status of each aircraft (read-only).")
-        Component(qrySvc, "FlightQueryService", "@Service, read-only", "Reads only the denormalised views; no business rules, no remote calls.")
-        Component(proj, "Projectors", "FlightProjector, MoodProjector", "Update the views (only newer revisions are applied).")
+        Component(qrySvc, "FlightQueryService", "@Service, read-only", "Reads only the denormalised views; no business rules. Availability of an aircraft never seen by this replica: one lookup through ReferenceDataService.")
+        Component(proj, "Projectors", "FlightProjector", "Update the views (only newer revisions are applied).")
     }
 
+    Component(refData, "ReferenceDataService + ReferenceWriter", "@Service / @Component", "Local copies route_ref, aircraft_ref. Missing reference: one REST lookup, inserted in its own transaction (safe under concurrency).")
+    Component(errors, "GlobalExceptionHandler", "@RestControllerAdvice", "Own database unreachable -> 503 + Retry-After, so the gateway retries on the other replica.")
+    Component(sync, "ReplicaSyncReconciler", "@Scheduled (20 s)", "Anti-entropy: compares the flights with the peer replica and applies missing or older ones (repairs events lost to the dead-letter queue).")
     Component(boot, "SnapshotBootstrapper", "ApplicationReadyEvent, background thread", "Only for an EMPTY database: copies all flights from the peer replica (retries every 5 s) while the queues are consumed; last-writer-wins makes the order irrelevant.")
     Component(audit, "AuditLog", "logger AUDIT", "Who created / changed each flight.")
 }
@@ -48,7 +51,6 @@ Rel(gateway, sec, "Forwards", "HTTPS")
 Rel(sec, keycloak, "Fetches public key", "JWKS")
 Rel(sec, cmdCtrl, "POST / PATCH")
 Rel(sec, qryCtrl, "GET")
-Rel(sec, unicorn, "GET /api/v2/unicorns")
 
 Rel(cmdCtrl, cmdSvc, "Commands")
 Rel(cmdCtrl, audit, "CREATE / UPDATE_STATUS")
@@ -71,9 +73,15 @@ Rel(flightL, conflict, "Possible conflict")
 Rel(proj, db, "Updates views + replicas", "JDBC")
 
 Rel(qryCtrl, qrySvc, "Queries")
-Rel(unicorn, qrySvc, "Queries")
 Rel(qrySvc, db, "Reads views", "JDBC")
 
 Rel(boot, peer, "GET /internal/scheduled-flights", "HTTPS + X-API-Key")
+Rel(sync, peer, "GET /internal/scheduled-flights every 20 s", "HTTPS + X-API-Key")
+Rel(sync, proj, "Applies missing / older flights")
+Rel(cmdSvc, refData, "ensureRoute / ensureAircraft")
+Rel(qrySvc, refData, "ensureAircraft (availability)")
+Rel(refData, owners, "Fallback lookup (once)", "HTTPS")
+Rel(refData, db, "route_ref / aircraft_ref (own transaction)", "JDBC")
+Rel(errors, gateway, "503 -> retry on the other replica")
 Rel(peer, broker, "Publishes flight.*", "AMQPS")
 @enduml
