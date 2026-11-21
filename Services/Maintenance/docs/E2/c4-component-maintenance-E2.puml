@@ -1,0 +1,70 @@
+@startuml c4-component-maintenance-E2
+!include <C4/C4_Component>
+LAYOUT_TOP_DOWN()
+skinparam wrapWidth 220
+
+title Maintenance - Componentes (C4 nível 3, Entrega 2: REST + RabbitMQ)
+
+Person(client, "Utilizador AISafe", "Técnico, Supervisor de manutenção, ATCC, Backoffice, Admin")
+Container_Ext(gateway, "API Gateways (x2)", "NGINX, HTTPS :8443 / :8444", "Round-robin entre instâncias; bloqueia /internal/")
+Container_Ext(keycloak, "Keycloak (x2)", "realm aisafe", "Emite os JWT (RS256) e publica a chave pública")
+Container_Ext(broker, "RabbitMQ (3 nós)", "AMQPS, filas quorum", "maintenance.events (fanout), aircraft.events (topic)")
+Container_Ext(peer, "Outra instância do Maintenance", "Spring Boot", "Mesmos componentes, BD própria")
+Container_Ext(aircraft, "Aircraft", "Spring Boot (x2)", "Consome os eventos de manutenção; responde a GET /internal/aircraft/...")
+ContainerDb(db, "maintenance-db-N (uma por instância)", "PostgreSQL 16 (Modo B) / H2 em memória (Modo A)", "Registos, templates, peças, aircraft_reference e processed_event. Esquema criado pelo Hibernate.")
+
+Container_Boundary(mt, "Maintenance (uma instância)") {
+
+    Component(sec, "JwtAuthenticationFilter + SecurityConfig", "Spring Security", "Valida o JWT e o perfil. Sem token: 401. Sem permissão: 403.")
+    Component(apiKey, "ApiKeyFilter", "OncePerRequestFilter", "Só para /internal/: exige X-API-Key. Regista ALLOWED / DENIED.")
+    Component(errors, "GlobalExceptionHandler", "@RestControllerAdvice", "400 dados inválidos, 409 alteração concorrente, 502 recusa de outro serviço.")
+
+    Boundary(api, "API REST") {
+        Component(ctrl, "MaintenanceController", "@RestController /api/maintenance", "Templates, registos, conclusão, histórico, pesquisa, alertas, estatísticas.")
+        Component(internal, "InternalMaintenanceController", "@RestController /internal/maintenance", "Leituras locais e receção de cópias de registos e templates.")
+    }
+
+    Component(svc, "MaintenanceService", "@Service, @Transactional", "Regras de negócio. Lê e escreve no mesmo modelo JPA. Sincroniza com as outras instâncias no arranque.")
+    Component(repo, "Repositórios JPA", "Spring Data JPA", "MaintenanceRecord, MaintenanceTemplate, MaintenancePart.")
+
+    Boundary(msg, "Mensagens (AMQP)") {
+        Component(pub, "MaintenanceEventPublisher", "RabbitTemplate", "Publica MaintenanceStarted / MaintenanceCompleted logo após gravar. Sem outbox.")
+        Component(cons, "AircraftEventListener", "@RabbitListener", "maintenance.aircraft.<inst>: atualiza a cópia local do avião.")
+        Component(inbox, "IdempotencyGuard", "tabela processed_event", "Cada eventId só é aplicado uma vez.")
+        Component(ref, "AircraftReference", "tabela aircraft_reference", "Cópia local: matrícula, modelo, estado.")
+    }
+
+    Boundary(rest, "Chamadas a outros (REST)") {
+        Component(rep, "MaintenanceReplicator", "fila em memória + retry 5 s", "Envia registos e templates às outras instâncias. Espera pela 1.ª confirmação.")
+        Component(peerClient, "MaintenancePeerClient", "@Component", "Histórico ou pesquisa vazios: pergunta às outras instâncias. Arranque: copia tudo.")
+        Component(ac, "AircraftClient", "@Component", "Modelo do avião (se não houver cópia local) e lista de aviões para os alertas.")
+        Component(http, "RemoteCaller + CircuitBreaker", "@Component", "Timeouts 1 s / 2 s, 2 tentativas com backoff, circuit breaker por destino (30 s).")
+    }
+}
+
+Rel(client, gateway, "Pedidos com JWT", "HTTPS")
+Rel(gateway, sec, "Encaminha", "HTTPS")
+Rel(sec, keycloak, "Chave pública", "JWKS")
+Rel(sec, ctrl, "Se autorizado")
+Rel(peer, apiKey, "Pedidos internos", "HTTPS + X-API-Key")
+Rel(apiKey, internal, "Se a chave é válida")
+Rel(ctrl, svc, "Usa")
+Rel(internal, svc, "Leituras locais e applyReplica")
+Rel(svc, repo, "Usa")
+Rel(repo, db, "Lê / escreve", "JDBC")
+Rel(svc, pub, "Depois de gravar")
+Rel(pub, broker, "MaintenanceStarted / Completed", "AMQPS")
+Rel(broker, aircraft, "maintenance.events -> aircraft.maintenance.<inst>")
+Rel(broker, cons, "AircraftChanged (aircraft.#)")
+Rel(cons, inbox, "Já processado?")
+Rel(cons, ref, "Cria ou atualiza")
+Rel(svc, ref, "Modelo do avião")
+Rel(svc, rep, "Depois de gravar")
+Rel(svc, peerClient, "Leitura vazia / arranque")
+Rel(svc, ac, "Sem cópia local / alertas")
+Rel(rep, http, "Usa")
+Rel(peerClient, http, "Usa")
+Rel(ac, http, "Usa")
+Rel(http, peer, "GET/PUT /internal/maintenance/...", "HTTPS + X-API-Key")
+Rel(http, aircraft, "GET /internal/aircraft/...", "HTTPS + X-API-Key")
+@enduml

@@ -1,0 +1,59 @@
+@startuml sd-maintenance-replication-and-failures
+skinparam style strictuml
+autonumber
+title SD - Maintenance: cópias, arranque, leituras em falta e falhas
+
+box "Instância 1" #F4F7FF
+participant "MaintenanceService" as Svc
+participant "MaintenanceReplicator\n(fila em memória)" as Rep
+participant "MaintenancePeerClient" as Peer
+database "BD instância 1" as DB1
+end box
+box "Instância 2" #F4FFF4
+participant "InternalMaintenanceController" as Int2
+database "BD instância 2" as DB2
+end box
+participant "RabbitMQ\naircraft.events" as MQ
+participant "AircraftEventListener\n(instância 1)" as L
+
+== 1. Outra instância em baixo durante uma escrita ==
+Svc -> Rep : replicateAcknowledged(registo)
+Rep -> Int2 : PUT .../replica
+Int2 --> Rep : timeout / circuito aberto
+Rep --> Svc : sem confirmação -> aviso no log
+note right of Rep : a escrita local é aceite;\na cópia fica na fila
+loop de 5 em 5 segundos
+  Rep -> Int2 : reenvia o que está pendente
+  alt instância voltou
+    Int2 -> DB2 : aplica só se revision maior
+    Int2 --> Rep : 204 -> sai da fila
+  else ainda em baixo
+    Int2 --> Rep : erro -> tenta depois
+  end
+end
+
+== 2. Arranque de uma instância (ApplicationReadyEvent) ==
+Svc -> Peer : collectAll() e collectTemplates()
+Peer -> Int2 : GET /internal/maintenance/records
+Int2 --> Peer : registos locais
+Peer -> Int2 : GET /internal/maintenance/templates
+Int2 --> Peer : templates locais
+Peer --> Svc : tudo + instâncias sem resposta
+Svc -> DB1 : applyReplica / applyTemplateReplica\n(só revisões mais recentes)
+
+== 3. Histórico ou pesquisa sem resultados locais ==
+Svc -> DB1 : registos do avião -> vazio
+Svc -> Peer : forwardHistory(reg) / forwardSearch(...)
+Peer -> Int2 : GET /internal/maintenance/records/{reg}
+Int2 --> Peer : registos
+Peer --> Svc : registos + lista de instâncias sem resposta
+note right of Svc : instância sem resposta -> cabeçalho\nX-Partial-Response-Unreachable-Peers
+
+== 4. Evento de um avião ==
+MQ -> L : AircraftChanged (maintenance.aircraft.1)
+L -> DB1 : processed_event novo? -> cria/atualiza aircraft_reference
+note right of L : repetido -> ignorado;\nerro -> maintenance.dead-letter
+
+== 5. Broker em baixo ==
+Svc -> Svc : publicar MaintenanceStarted falha -> só aviso no log;\no registo fica gravado e é copiado à outra instância
+@enduml

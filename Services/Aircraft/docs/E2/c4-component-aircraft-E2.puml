@@ -1,0 +1,84 @@
+@startuml c4-component-aircraft-E2
+!include <C4/C4_Component>
+LAYOUT_TOP_DOWN()
+skinparam wrapWidth 220
+
+title Aircraft - Componentes (C4 nível 3, Entrega 2: REST + RabbitMQ)
+
+Person(client, "Utilizador AISafe", "ATCC, Backoffice, Admin")
+Container_Ext(gateway, "API Gateways (x2)", "NGINX, HTTPS :8443 / :8444", "Round-robin entre instâncias; bloqueia /internal/")
+Container_Ext(keycloak, "Keycloak (x2)", "realm aisafe", "Emite os JWT (RS256) e publica a chave pública")
+Container_Ext(broker, "RabbitMQ (3 nós)", "AMQPS, filas quorum", "aircraft.events (topic), maintenance.events (fanout), flights.events (topic)")
+Container_Ext(peer, "Outra instância do Aircraft", "Spring Boot", "Mesmos componentes, BD própria")
+Container_Ext(fo, "Flight Operations", "Spring Boot (x2)", "Recebe o pedido de grounding e consome aircraft.events")
+Container_Ext(ar, "Airports & Routes", "Spring Boot (x2)", "Lista de rotas para as rotas compatíveis")
+Container_Ext(mt, "Maintenance", "Spring Boot (x2)", "Publica MaintenanceStarted / MaintenanceCompleted")
+ContainerDb(db, "aircraft-db-N (uma por instância)", "PostgreSQL 16 (Modo B) / H2 em memória (Modo A)", "Aviões, modelos e processed_event. Esquema criado pelo Hibernate.")
+
+Container_Boundary(ac, "Aircraft (uma instância)") {
+
+    Component(sec, "JwtAuthenticationFilter + SecurityConfig", "Spring Security", "Valida o JWT e o perfil. Sem token: 401. Sem permissão: 403.")
+    Component(apiKey, "ApiKeyFilter", "OncePerRequestFilter", "Só para /internal/: exige X-API-Key. Regista ALLOWED / DENIED.")
+
+    Boundary(api, "API REST") {
+        Component(ctrl, "AircraftController", "@RestController /api/aircraft-models", "Modelos, aviões, estado, horas, top 5, rotas compatíveis.")
+        Component(contract, "AircraftContractController", "@RestController /api/aircraft", "Resumo do avião para o FO: estado, alcance, capacidade.")
+        Component(internal, "InternalAircraftController", "@RestController /internal/aircraft", "Leituras locais, estado de manutenção, contador de atribuições e receção de cópias.")
+    }
+
+    Component(svc, "AircraftService", "@Service, @Transactional", "Regras de negócio. Lê e escreve no mesmo modelo JPA (sem modelo de leitura separado).")
+    Component(repo, "AircraftRepository / AircraftModelRepository", "Spring Data JPA", "Aviões e modelos.")
+
+    Boundary(msg, "Mensagens (AMQP)") {
+        Component(pub, "AircraftEventPublisher", "RabbitTemplate", "Publica AircraftChanged (aircraft.changed) logo após gravar. Sem outbox.")
+        Component(lm, "MaintenanceEventListener", "@RabbitListener", "aircraft.maintenance.<inst>: muda o estado para UNDER_MAINTENANCE ou ACTIVE.")
+        Component(lf, "FlightEventListener", "@RabbitListener", "aircraft.flights.<inst>: soma atribuições e horas de voo.")
+        Component(inbox, "IdempotencyGuard", "tabela processed_event", "Cada eventId só é aplicado uma vez.")
+    }
+
+    Boundary(rest, "Chamadas a outros (REST)") {
+        Component(peerClient, "AircraftPeerClient", "@Component", "Leitura em falta: pergunta às outras instâncias e junta resultados.")
+        Component(rep, "AircraftReplicator", "fila em memória + retry 5 s", "Envia a cópia do avião às outras instâncias (PUT .../replica).")
+        Component(flights, "FlightsServiceClient", "@Component", "Avião em voo? e pedido de grounding ao FO.")
+        Component(routes, "AirportsRoutesClient", "@Component", "Busca rotas e filtra por alcance e capacidade.")
+        Component(http, "RemoteCaller + CircuitBreaker", "@Component", "Timeouts 1 s / 2 s, 2 tentativas com backoff, circuit breaker por destino.")
+    }
+
+    Component(boot, "AircraftBootstrapper", "CommandLineRunner", "Cria o modelo A320 e os aviões CS-TTA, CS-TTB, CS-TTM.")
+}
+
+Rel(client, gateway, "Pedidos com JWT", "HTTPS")
+Rel(gateway, sec, "Encaminha", "HTTPS")
+Rel(sec, keycloak, "Chave pública", "JWKS")
+Rel(sec, ctrl, "Se autorizado")
+Rel(sec, contract, "Se autorizado")
+Rel(peer, apiKey, "Pedidos internos", "HTTPS + X-API-Key")
+Rel(apiKey, internal, "Se a chave é válida")
+Rel(ctrl, svc, "Usa")
+Rel(contract, svc, "Usa")
+Rel(internal, svc, "Métodos locais e applyReplica")
+Rel(svc, repo, "Usa")
+Rel(repo, db, "Lê / escreve", "JDBC")
+Rel(svc, pub, "Depois de gravar")
+Rel(pub, broker, "AircraftChanged", "AMQPS")
+Rel(broker, lm, "MaintenanceStarted / Completed")
+Rel(broker, lf, "FlightScheduled / StatusChanged / Reassigned")
+Rel(lm, inbox, "Já processado?")
+Rel(lf, inbox, "Já processado?")
+Rel(lm, svc, "applyMaintenanceStatus")
+Rel(lf, svc, "applyFlightAssignment / Completion")
+Rel(svc, peerClient, "Leitura em falta")
+Rel(svc, rep, "Depois de gravar")
+Rel(svc, flights, "Estado em tempo real e grounding")
+Rel(svc, routes, "Rotas compatíveis")
+Rel(peerClient, http, "Usa")
+Rel(rep, http, "Usa")
+Rel(flights, http, "Usa")
+Rel(routes, http, "Usa")
+Rel(http, peer, "GET/PUT /internal/aircraft/...", "HTTPS + X-API-Key")
+Rel(http, fo, "POST /internal/.../grounding", "HTTPS + X-API-Key")
+Rel(http, ar, "GET /api/routes", "HTTPS + JWT")
+Rel(mt, broker, "Publica eventos de manutenção")
+Rel(broker, fo, "aircraft.# -> fo.aircraft.<inst>")
+Rel(boot, svc, "Dados iniciais")
+@enduml
