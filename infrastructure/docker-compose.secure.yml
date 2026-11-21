@@ -241,6 +241,17 @@ services:
       FLIGHTS_URLS: https://flight-operations-1:8443,https://flight-operations-2:8443
       FLIGHTS_GROUNDING_PATH: "/internal/scheduled-flights/aircraft/{registration}/grounding"
       ROUTES_URLS: https://airports-routes-1:8443,https://airports-routes-2:8443
+      DB_URL: jdbc:postgresql://aircraft-db-1:5432/aircraft
+      DB_USER: aircraft
+      DB_PASSWORD: ${AIRCRAFT_DB_PASSWORD:?defina AIRCRAFT_DB_PASSWORD no .env}
+      DDL_AUTO: update
+      RABBITMQ_ADDRESSES: rabbitmq-1:5671,rabbitmq-2:5671,rabbitmq-3:5671
+      RABBITMQ_SSL: "true"
+      RABBITMQ_USER: ${RABBITMQ_USER:-aisafe}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?defina RABBITMQ_PASSWORD no .env}
+    depends_on:
+      aircraft-db-1: {condition: service_healthy}
+      rabbitmq-init: {condition: service_completed_successfully}
 
   aircraft-2:
     <<: *service
@@ -255,6 +266,17 @@ services:
       FLIGHTS_URLS: https://flight-operations-1:8443,https://flight-operations-2:8443
       FLIGHTS_GROUNDING_PATH: "/internal/scheduled-flights/aircraft/{registration}/grounding"
       ROUTES_URLS: https://airports-routes-1:8443,https://airports-routes-2:8443
+      DB_URL: jdbc:postgresql://aircraft-db-2:5432/aircraft
+      DB_USER: aircraft
+      DB_PASSWORD: ${AIRCRAFT_DB_PASSWORD:?defina AIRCRAFT_DB_PASSWORD no .env}
+      DDL_AUTO: update
+      RABBITMQ_ADDRESSES: rabbitmq-1:5671,rabbitmq-2:5671,rabbitmq-3:5671
+      RABBITMQ_SSL: "true"
+      RABBITMQ_USER: ${RABBITMQ_USER:-aisafe}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?defina RABBITMQ_PASSWORD no .env}
+    depends_on:
+      aircraft-db-2: {condition: service_healthy}
+      rabbitmq-init: {condition: service_completed_successfully}
 
   # ------------------------- Maintenance -------------------------
   maintenance-1:
@@ -268,7 +290,17 @@ services:
       API_KEY: ${API_KEY:?defina API_KEY no .env}
       ACCEPT_DEV_TOKENS: "false"
       AIRCRAFT_URLS: https://aircraft-1:8443,https://aircraft-2:8443
+      DB_URL: jdbc:postgresql://maintenance-db-1:5432/maintenance
+      DB_USER: maintenance
+      DB_PASSWORD: ${MAINTENANCE_DB_PASSWORD:?defina MAINTENANCE_DB_PASSWORD no .env}
+      DDL_AUTO: update
+      RABBITMQ_ADDRESSES: rabbitmq-1:5671,rabbitmq-2:5671,rabbitmq-3:5671
+      RABBITMQ_SSL: "true"
+      RABBITMQ_USER: ${RABBITMQ_USER:-aisafe}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?defina RABBITMQ_PASSWORD no .env}
     depends_on:
+      maintenance-db-1: {condition: service_healthy}
+      rabbitmq-init: {condition: service_completed_successfully}
       aircraft-1: {condition: service_healthy}
       aircraft-2: {condition: service_healthy}
 
@@ -283,9 +315,84 @@ services:
       API_KEY: ${API_KEY:?defina API_KEY no .env}
       ACCEPT_DEV_TOKENS: "false"
       AIRCRAFT_URLS: https://aircraft-1:8443,https://aircraft-2:8443
+      DB_URL: jdbc:postgresql://maintenance-db-2:5432/maintenance
+      DB_USER: maintenance
+      DB_PASSWORD: ${MAINTENANCE_DB_PASSWORD:?defina MAINTENANCE_DB_PASSWORD no .env}
+      DDL_AUTO: update
+      RABBITMQ_ADDRESSES: rabbitmq-1:5671,rabbitmq-2:5671,rabbitmq-3:5671
+      RABBITMQ_SSL: "true"
+      RABBITMQ_USER: ${RABBITMQ_USER:-aisafe}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?defina RABBITMQ_PASSWORD no .env}
     depends_on:
+      maintenance-db-2: {condition: service_healthy}
+      rabbitmq-init: {condition: service_completed_successfully}
       aircraft-1: {condition: service_healthy}
       aircraft-2: {condition: service_healthy}
+
+  # ------------------------- Aircraft & Maintenance databases -------------------------
+  aircraft-db-1:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    networks: [backend]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      POSTGRES_DB: aircraft
+      POSTGRES_USER: aircraft
+      POSTGRES_PASSWORD: ${AIRCRAFT_DB_PASSWORD:?defina AIRCRAFT_DB_PASSWORD no .env}
+    volumes: [aircraft-db-1-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aircraft -d aircraft"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  aircraft-db-2:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    networks: [backend]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      POSTGRES_DB: aircraft
+      POSTGRES_USER: aircraft
+      POSTGRES_PASSWORD: ${AIRCRAFT_DB_PASSWORD:?defina AIRCRAFT_DB_PASSWORD no .env}
+    volumes: [aircraft-db-2-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aircraft -d aircraft"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  maintenance-db-1:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    networks: [backend]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      POSTGRES_DB: maintenance
+      POSTGRES_USER: maintenance
+      POSTGRES_PASSWORD: ${MAINTENANCE_DB_PASSWORD:?defina MAINTENANCE_DB_PASSWORD no .env}
+    volumes: [maintenance-db-1-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U maintenance -d maintenance"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  maintenance-db-2:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    networks: [backend]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      POSTGRES_DB: maintenance
+      POSTGRES_USER: maintenance
+      POSTGRES_PASSWORD: ${MAINTENANCE_DB_PASSWORD:?defina MAINTENANCE_DB_PASSWORD no .env}
+    volumes: [maintenance-db-2-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U maintenance -d maintenance"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   # ------------------------- Airports & Routes -------------------------
   # Database-per-Service: one PostgreSQL per Airports & Routes instance (write + read model).
@@ -497,6 +604,10 @@ volumes:
   keycloak-db-0-data: {}
   keycloak-db-1-data: {}
   keycloak-db-2-data: {}
+  aircraft-db-1-data: {}
+  aircraft-db-2-data: {}
+  maintenance-db-1-data: {}
+  maintenance-db-2-data: {}
   fo-db-1-data: {}
   fo-db-2-data: {}
   airports-db-1-data: {}

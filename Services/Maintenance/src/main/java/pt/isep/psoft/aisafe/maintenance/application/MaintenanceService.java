@@ -2,7 +2,6 @@ package pt.isep.psoft.aisafe.maintenance.application;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,7 +24,6 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.time.Instant;
 import java.util.stream.Collectors;
 
 @Service
@@ -39,6 +37,8 @@ public class MaintenanceService {
     private final AircraftClient aircraftClient;
     private final MaintenancePeerClient peerClient;
     private final MaintenanceReplicator replicator;
+    private pt.isep.psoft.aisafe.maintenance.messaging.MaintenanceEventPublisher events;
+    private pt.isep.psoft.aisafe.maintenance.repositories.AircraftReferenceRepository aircraftReferences;
 
     public MaintenanceService(MaintenanceTemplateRepository templateRepository,
                               MaintenanceRecordRepository recordRepository,
@@ -52,6 +52,16 @@ public class MaintenanceService {
         this.aircraftClient = aircraftClient;
         this.peerClient = peerClient;
         this.replicator = replicator;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setEvents(pt.isep.psoft.aisafe.maintenance.messaging.MaintenanceEventPublisher events) {
+        this.events = events;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setAircraftReferences(pt.isep.psoft.aisafe.maintenance.repositories.AircraftReferenceRepository aircraftReferences) {
+        this.aircraftReferences = aircraftReferences;
     }
 
     @Transactional
@@ -78,7 +88,13 @@ public class MaintenanceService {
     public MaintenanceRecordViewDTO registerMaintenance(RegisterMaintenanceDTO dto) {
         String registrationNumber = dto.registrationNumber().trim().toUpperCase();
         String modelName = Optional.ofNullable(dto.modelName()).map(String::trim).filter(s -> !s.isBlank())
-                .orElseGet(() -> aircraftClient.getAircraftModelName(registrationNumber));
+                .orElseGet(() -> {
+                    if (aircraftReferences != null) {
+                        var reference = aircraftReferences.findByRegistrationNumber(registrationNumber);
+                        if (reference.isPresent()) return reference.get().getModelName();
+                    }
+                    return aircraftClient.getAircraftModelName(registrationNumber);
+                });
         audit.info("REGISTER_MAINTENANCE reg={} model={} templateGlobalId={}",
                 registrationNumber, modelName, dto.templateGlobalId());
 
@@ -90,8 +106,9 @@ public class MaintenanceService {
         MaintenanceRecord saved = recordRepository.save(record);
 
         try {
-            aircraftClient.updateMaintenanceStatus(registrationNumber, "UNDER_MAINTENANCE");
-        } catch (IllegalStateException e) {
+            if (events != null) events.maintenanceStarted(saved);
+            else aircraftClient.updateMaintenanceStatus(registrationNumber, "UNDER_MAINTENANCE");
+        } catch (RuntimeException e) {
             log.warn("Aircraft service update failed, but maintenance record was created: {}", e.getMessage());
         }
         MaintenanceRecordViewDTO view = toRecordView(saved);
@@ -220,8 +237,9 @@ public class MaintenanceService {
         record.complete(dto.completionNotes());
         MaintenanceRecord saved = recordRepository.save(record);
         try {
-            aircraftClient.updateMaintenanceStatus(record.getRegistrationNumber(), "ACTIVE");
-        } catch (IllegalStateException e) {
+            if (events != null) events.maintenanceCompleted(saved);
+            else aircraftClient.updateMaintenanceStatus(record.getRegistrationNumber(), "ACTIVE");
+        } catch (RuntimeException e) {
             log.warn("Could not reactivate aircraft {} after maintenance: {}", record.getRegistrationNumber(), e.getMessage());
         }
         audit.info("COMPLETE_MAINTENANCE id={} reg={}", record.getGlobalId(), record.getRegistrationNumber());

@@ -31,6 +31,7 @@ public class AircraftService {
     private final AirportsRoutesClient airportsClient;
     private final AircraftPeerClient peerClient;
     private final pt.isep.psoft.aisafe.aircraft.infrastructure.AircraftReplicator replicator;
+    private pt.isep.psoft.aisafe.aircraft.messaging.AircraftEventPublisher events;
 
     public AircraftService(AircraftModelRepository modelRepository,
                            AircraftRepository aircraftRepository,
@@ -46,6 +47,11 @@ public class AircraftService {
         this.replicator = replicator;
     }
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setEvents(pt.isep.psoft.aisafe.aircraft.messaging.AircraftEventPublisher events) {
+        this.events = events;
+    }
+
     @Transactional
     public void incrementAircraftAssignments(String regNum) {
         Aircraft aircraft = aircraftRepository.findByRegistrationNumber(new RegistrationNumber(regNum.trim().toUpperCase()))
@@ -54,6 +60,37 @@ public class AircraftService {
         aircraft.incrementAssignments();
         aircraftRepository.save(aircraft);
         replicator.replicate(mapToViewDTO(aircraft));
+    }
+
+    @Transactional
+    public void applyMaintenanceStatus(String registrationNumber, String status) {
+        Aircraft aircraft = aircraftRepository.findByRegistrationNumber(
+                new RegistrationNumber(registrationNumber.trim().toUpperCase())).orElse(null);
+        if (aircraft == null) return;
+        AircraftStatus target = "UNDER_MAINTENANCE".equalsIgnoreCase(status)
+                ? AircraftStatus.UNDER_MAINTENANCE : AircraftStatus.ACTIVE;
+        if (aircraft.getStatus() != target) {
+            aircraft.updateStatus(target);
+            aircraftRepository.save(aircraft);
+        }
+    }
+
+    @Transactional
+    public void applyFlightAssignment(String registrationNumber) {
+        aircraftRepository.findByRegistrationNumber(
+                new RegistrationNumber(registrationNumber.trim().toUpperCase())).ifPresent(aircraft -> {
+            aircraft.incrementAssignments();
+            aircraftRepository.save(aircraft);
+        });
+    }
+
+    @Transactional
+    public void applyFlightCompletion(String registrationNumber, double flightHours) {
+        aircraftRepository.findByRegistrationNumber(
+                new RegistrationNumber(registrationNumber.trim().toUpperCase())).ifPresent(aircraft -> {
+            aircraft.addFlightHours(flightHours);
+            aircraftRepository.save(aircraft);
+        });
     }
 
     private String saveImageLocally(MultipartFile file) {
@@ -90,6 +127,7 @@ public class AircraftService {
         );
         Aircraft saved = aircraftRepository.save(aircraft);
         replicator.replicate(mapToViewDTO(saved));   // push the new aircraft to the peer replicas
+        if (events != null) events.aircraftChanged(saved);
     }
 
     public AircraftViewDTO getAircraftByRegistrationNumber(String regNum, boolean isPeerRequest) {
@@ -170,6 +208,7 @@ public class AircraftService {
         aircraft.updateStatus(newStatus);
         aircraftRepository.save(aircraft);
         replicator.replicate(mapToViewDTO(aircraft));   // push the new status to the peer replicas
+        if (events != null) events.aircraftChanged(aircraft);
 
         List<String> swapLogs = new ArrayList<>();
         if (newStatus == AircraftStatus.UNDER_MAINTENANCE || newStatus == AircraftStatus.INACTIVE) {

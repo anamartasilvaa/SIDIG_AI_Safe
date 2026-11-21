@@ -54,7 +54,11 @@ if [[ -f "$OUT_DIR/aisafe.pem" && "$FORCE" != true ]]; then
     exit 0
 fi
 
-command -v keytool >/dev/null 2>&1 || {
+KEYTOOL="keytool"
+if [[ -n "${JAVA_HOME:-}" && -x "$JAVA_HOME/bin/keytool" ]]; then
+    KEYTOOL="$JAVA_HOME/bin/keytool"
+fi
+command -v "$KEYTOOL" >/dev/null 2>&1 || {
     echo "keytool nao encontrado (instale um JDK ou defina JAVA_HOME)." >&2
     exit 1
 }
@@ -120,7 +124,7 @@ find "$OUT_DIR" -mindepth 1 -maxdepth 1 -type f -delete
 
 san='SAN=dns:localhost,dns:gateway,dns:keycloak,dns:aircraft-1,dns:aircraft-2,dns:maintenance-1,dns:maintenance-2,dns:airports-routes-1,dns:airports-routes-2,dns:flight-operations-1,dns:flight-operations-2,dns:rabbitmq-1,dns:rabbitmq-2,dns:rabbitmq-3,ip:127.0.0.1'
 
-keytool -genkeypair \
+"$KEYTOOL" -genkeypair \
     -alias aisafe-key \
     -keyalg RSA \
     -keysize 2048 \
@@ -131,14 +135,14 @@ keytool -genkeypair \
     -dname 'CN=localhost, O=AISafe, C=PT' \
     -ext "$san"
 
-keytool -exportcert \
+"$KEYTOOL" -exportcert \
     -alias aisafe-key \
     -keystore "$OUT_DIR/keystore.p12" \
     -storepass "$password" \
     -rfc \
     -file "$OUT_DIR/aisafe.pem"
 
-keytool -importcert \
+"$KEYTOOL" -importcert \
     -alias aisafe \
     -file "$OUT_DIR/aisafe.pem" \
     -keystore "$OUT_DIR/truststore.p12" \
