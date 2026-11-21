@@ -48,7 +48,9 @@ Cliente ──HTTPS/REST──► Gateway (NGINX) ──► instâncias dos serv
              flights.events  (topic)  ──► fo.flights.<instância>        (outras instâncias do FO)
                                      └──► fo.grounding                  (pedidos de grounding; uma só instância trata cada um)
              aircraft.events (topic)  ──► fo.aircraft.<instância>       (Flight Operations: aviões → aircraft_ref)
-                                     └──► fo.grounding                  (avião deixa de estar ACTIVE)
+                                     ├──► fo.grounding                  (avião deixa de estar ACTIVE)
+                                     └──► maintenance.aircraft.<inst.>  (Maintenance: aviões)
+          maintenance.events (fanout) ──► aircraft.maintenance          (Aircraft: início/fim de manutenção; fila partilhada)
 ```
 
 
@@ -139,7 +141,7 @@ keytool -importcert -alias aisafe -file aisafe.crt -keystore truststore.p12 -sto
 Remove-Item data\airports_db_*.mv.db, data\airports_db_*.trace.db -ErrorAction SilentlyContinue
 ```
 
-**6. Arrancar os serviços** (por esta ordem): Aircraft 1-3 → Airports 1-3 → Flight Operations 1-3.
+**6. Arrancar os serviços** (por esta ordem): Aircraft 1-3 → Maintenance 1-3 → Airports 1-3 → Flight Operations 1-3.
 Na consola de cada instância do Airports aparece `Successfully applied 1 migration` (só na primeira vez) e
 `Modelo de leitura reconstruido: N aeroportos, M rotas`.
 

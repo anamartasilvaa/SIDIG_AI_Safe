@@ -214,9 +214,9 @@ Para testar sem Keycloak, `src/test/java/.../DevTokenGenerator.java` gera tokens
 
 Exemplo de execução (Modo B):
 
-![Agendamento de um voo através da gateway (201 Created)](docs/Screenshots/fo-01-agendar-voo.png)
+![Agendamento de um voo através da gateway (201 Created)](docs/screenshots/fo-01-agendar-voo.png)
 
-![Grounding: log do Flight Operations com a reatribuição do voo](docs/Screenshots/fo-02-grounding-log.png)
+![Grounding: log do Flight Operations com a reatribuição do voo](docs/screenshots/fo-02-grounding-log.png)
 
 As restantes capturas (arranque, RBAC, replicação, falhas e testes) estão em `infrastructure/README.md`.
 

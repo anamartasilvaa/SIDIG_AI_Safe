@@ -125,7 +125,7 @@ transfer*), pelo que cada evento basta para atualizar a cópia, sem chamadas de 
 | Aircraft          | `aircraft.events` (`aircraft.status-changed`) | `fo.grounding` (**partilhada**) | Avião deixa de estar `ACTIVE` → grounding, feito por **uma só** réplica   |
 | Flight Operations | `flights.events` (`fo.grounding.requested`)   | `fo.grounding` (**partilhada**) | Pedido explícito de grounding (`GroundingRequested`)                      |
 
-Contrato proposto ao serviço Aircraft (exchange `aircraft.events`, tipo `topic`; routing keys `aircraft.registered`,
+Contrato de eventos do serviço Aircraft (exchange `aircraft.events`, tipo `topic`; routing keys `aircraft.registered`,
 `aircraft.status-changed` e `aircraft.updated`):
 
 ```json
@@ -277,6 +277,7 @@ environment `SIDIS`, verificação SSL desligada). As coleções da Entrega 1 ma
 | 02    |            | Comandos e consultas do FO, convergência das duas réplicas, ETag = revisão, 8 reservas simultâneas do mesmo slot (fica um voo), evento fora de ordem ignorado, sequência rápida de comandos entre réplicas, disponibilidade                                                                                                                                 |
 | 03    |            | Eventos do Airports & Routes: rota nova e rota desativada chegam ao FO                                                                                                                                                                                                                                                                                      |
 | 04    |            | Eventos do Aircraft publicados pela API de gestão do RabbitMQ (grounding → voos movidos e avião `UNDER_MAINTENANCE`, duplicado, ordem por revisão, *dead-letter*)                                                                                                                                                                                           |
+| 06    |            | Aircraft e Maintenance: leitura do avião `CS-TTA` e das manutenções em curso; cadeia por eventos Maintenance → Aircraft → FO (06.03): a manutenção imobiliza o avião, o FO move os voos e, ao concluir, o avião volta a `ACTIVE`                                                                                                                                                                       |
 | 07    | Manual     | 18 testes: réplica do FO/Airports em baixo, broker todo em baixo (outbox), partição e compensação, um nó do broker em baixo, snapshot de uma réplica reconstruída, failover da BD do Keycloak, serviços vizinhos em baixo, recuperação total, gateway 1 em baixo, um Keycloak em baixo, BD de uma réplica do FO em baixo e recuperação — **todos passaram** |
 
 **Postman – Modo A: coleção `SIDIS – Entrega 2 Modo A (IntelliJ)`** (`tests(postman)/SIDIS – Entrega 2 Modo A (IntelliJ).postman_collection.json`).

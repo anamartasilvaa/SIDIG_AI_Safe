@@ -21,11 +21,14 @@ desenvolvimento e testes com 3 instâncias. O Modo C (só serviços) fica como n
 | Topologia do broker        | —                                           | Importada por `rabbitmq-init` a partir de `rabbitmq/definitions.json`, antes dos serviços       |
 | BD do Flight Operations    | H2 em memória                               | **PostgreSQL por réplica** (`fo-db-1`, `fo-db-2`), migrações Flyway                             |
 | BD do Airports & Routes    | H2                                          | **PostgreSQL por réplica** (`airports-db-1`, `airports-db-2`), migrações Flyway                 |
+| BD do Aircraft             | H2                                          | **PostgreSQL por réplica** (`aircraft-db-1`, `aircraft-db-2`)                                   |
+| BD do Maintenance          | H2                                          | **PostgreSQL por réplica** (`maintenance-db-1`, `maintenance-db-2`)                             |
 | BD do Keycloak             | 1 PostgreSQL (ponto único de falha)         | **3 nós PostgreSQL + repmgr** (1 primário, 2 standby, failover automático)                      |
-| Contentores no Modo B      | 13                                          | **23**                                                                                          |
+| Contentores no Modo B      | 13                                          | **27**                                                                                          |
 | Gateways (NGINX)           | Nova tentativa só se a réplica não responde | Também em `502`/`503`/`504`, incluindo POST (`proxy_next_upstream ... http_503 non_idempotent`) |
 
-Aircraft e Maintenance mantêm, nesta versão, a integração da Entrega 1 (REST e H2).
+Aircraft e Maintenance passam a comunicar por eventos no RabbitMQ (`aircraft.events` e `maintenance.events`) e, no
+Modo B, têm uma PostgreSQL por réplica (detalhes nos READMEs desses serviços).
 
 ---
 
@@ -39,7 +42,7 @@ docker compose -f docker-compose.secure.yml up -d --build
 docker compose -f docker-compose.secure.yml ps -a --format "table {{.Name}}\t{{.Status}}"
 ```
 
-Resultado esperado: **23 contentores**, todos `Up` (a maioria `healthy`) e o `rabbitmq-init` em `Exited (0)`.
+Resultado esperado: **27 contentores**, 26 `Up` (a maioria `healthy`) e o `rabbitmq-init` em `Exited (0)`.
 A primeira vez demora mais (os standbys da BD do Keycloak copiam o primário).
 
 Parar sem perder dados: `docker compose -f docker-compose.secure.yml down`. **Não usar `down -v`**: apaga os volumes
@@ -179,8 +182,6 @@ pedido e depois envia-se o pedido (**Send**, um a um). As pastas 00–06 correm 
 - Um único host Docker (ver secção 3).
 - A imagem `bitnamilegacy/postgresql-repmgr:17.6.0` está fixada e já não recebe atualizações; alternativa compatível
   e mantida: `soldevelo/postgresql-repmgr`.
-- Aircraft e Maintenance usam ainda a integração da Entrega 1; o contrato de eventos do Aircraft (`aircraft.events`)
-  já está definido e o Flight Operations já o consome.
 - A consola do RabbitMQ usa HTTP, mas só está publicada em `127.0.0.1`.
 - No arranque a frio, o Keycloak espera pelo `keycloak-db-0` (`depends_on`). Com o sistema a correr não há
   dependência: o Keycloak liga-se a qualquer um dos 3 nós (`targetServerType=primary`).
@@ -212,7 +213,7 @@ mesmas portas que o Modo B: **parar sempre um modo antes de arrancar o outro**.
 
 5. Só uma vez, ao passar para o Flyway: com o Airports parado, apagar as bases H2 antigas do Airports (na raiz do
    repositório): `Remove-Item data\airports_db_*.mv.db, data\airports_db_*.trace.db -ErrorAction SilentlyContinue`.
-6. Arrancar por esta ordem: Aircraft 1–3, Airports 1–3, Flight Operations 1–3.
+6. Arrancar por esta ordem: Aircraft 1–3, Maintenance 1–3, Airports 1–3, Flight Operations 1–3.
 7. Testes: coleção `SIDIS – Entrega 2 Modo A (IntelliJ)` (`tests(postman)/SIDIS – Entrega 2 Modo A (IntelliJ).postman_collection.json`):
    pastas 00–07 no Runner (181 testes), 08–10 manuais.
 
