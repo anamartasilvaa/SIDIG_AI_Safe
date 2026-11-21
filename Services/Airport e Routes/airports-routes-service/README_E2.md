@@ -312,7 +312,7 @@ src/main/resources/db/migration/   migrações Flyway (V1: escrita, outbox, inbo
 
 ## E2.12 Diagramas
 
-Pasta [`docs/`](docs/) (PlantUML), organizada por entrega: [`docs/E2/`](docs/E2/) (esta entrega) e [`docs/E1/`](docs/E1/) (Entrega 1).
+Pasta [`docs/`](docs/) (PlantUML; imagens PNG em [`docs/E2/png/`](docs/E2/png/)), organizada por entrega: [`docs/E2/`](docs/E2/) (esta entrega) e [`docs/E1/`](docs/E1/) (Entrega 1).
 
 | Ficheiro | Mostra |
 |---|---|
@@ -321,9 +321,9 @@ Pasta [`docs/`](docs/) (PlantUML), organizada por entrega: [`docs/E2/`](docs/E2/
 | `E2/physical-view-airports-routes-mode-a.puml` | Vista física (Modo A: IntelliJ, H2 por instância, RabbitMQ e PostgreSQL do FO em Docker) |
 | `E2/class-diagram-airports-routes.puml` | Modelo de domínio (lado da escrita), modelo de leitura CQRS e outbox |
 | `E2/messaging-topology-airports-routes.puml` | Topologia AMQP (exchange, filas *quorum*, DLQ) |
-| `E2/sd-amqp-event-propagation.puml` | Propagação de um evento entre instâncias |
-| `E2/sd-cqrs-query-read-model.puml` | Uma query a ler só o modelo de leitura |
-| `E2/sd-failure-recovery.puml` | Broker em baixo, instância parada, mensagem inválida, mensagem repetida, BD em baixo (503), BD vazia (snapshot) |
+| `E2/sd-amqp-event-propagation.puml` | Criar uma rota (segurança, erros 400/401/403/404/409, transação com outbox) e propagação do evento |
+| `E2/sd-cqrs-query-read-model.puml` | Consultas (rota, aeroporto, rotas alternativas, estatísticas/GeoJSON) só no modelo de leitura |
+| `E2/sd-failure-recovery.puml` | Broker em baixo, nós do RabbitMQ, instância parada, mensagem inválida (DLQ), mensagem repetida, BD em baixo (503), BD vazia (snapshot), gateway/Keycloak |
 | `E2/sd-conflict-resolution.puml` | Resolução de conflitos (*last-writer-wins*) |
 | `E1/sd-create-airport-outbox.puml`, `E1/sd-create-route-outbox.puml`, `E1/sd-csv-import-outbox.puml` | Comandos com outbox (Entrega 1: entrega por HTTP; na Entrega 2 ver `E2/sd-amqp-event-propagation.puml`) |
 | `E1/sd-circuit-breaker.puml`, `E1/sd-p2p-forwarding-read.puml` | Leituras entre instâncias (Entrega 1; desligadas por omissão na Entrega 2) |

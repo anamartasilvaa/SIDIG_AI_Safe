@@ -1,50 +1,57 @@
 @startuml physical-view-airports-routes-mode-a
 skinparam shadowing false
+skinparam linetype polyline
+skinparam nodesep 35
+skinparam ranksep 55
+skinparam defaultTextAlignment center
 title Airports & Routes - Vista física (Modo A: IntelliJ + infraestrutura em Docker)
 
+actor "Cliente / Postman" as C
+
 node "PC de desenvolvimento (Windows)" {
-  node "start-infra.ps1" {
+  rectangle "start-infra.ps1" {
     node "Gateway NGINX\nhttps://localhost:8443" as GW
     node "Keycloak\nhttp://localhost:8180" as KC
   }
-  node "IntelliJ (Run Configurations)" {
+  rectangle "IntelliJ (Run Configurations)" {
     node "Airports - Instância 1\n:8091 (perfil inst1)" as AR1
     node "Airports - Instância 2\n:8092 (perfil inst2)" as AR2
     node "Airports - Instância 3\n:8093 (perfil inst3)" as AR3
     node "FlightOperations 1/2/3\n:8081-8083" as FO
   }
-  database "H2 em ficheiro\ndata/airports_db_1" as H1
-  database "H2 em ficheiro\ndata/airports_db_2" as H2
-  database "H2 em ficheiro\ndata/airports_db_3" as H3
+  rectangle "Ficheiros H2 (pasta data/)" {
+    database "airports_db_1" as H1
+    database "airports_db_2" as H2
+    database "airports_db_3" as H3
+  }
   node "Docker Desktop" {
     node "RabbitMQ (1 nó)\nAMQP :5672, consola :15672" as MQ
     database "fo-db-a1/a2/a3\nPostgreSQL :5441-5443" as FODB
   }
 }
 
-actor "Cliente / Postman" as C
 C --> GW : HTTPS
-C --> AR1 : HTTPS (acesso direto\nnos testes)
+C ..> AR1 : HTTPS direto\n(nos testes)
+GW --> KC
 GW --> AR1
 GW --> AR2
 GW --> AR3
-GW --> KC
 AR1 --> H1 : JDBC
 AR2 --> H2 : JDBC
 AR3 --> H3 : JDBC
+H1 -[hidden]-> MQ
 AR1 --> MQ : AMQP
 AR2 --> MQ : AMQP
 AR3 --> MQ : AMQP
 FO --> MQ : AMQP
 FO --> FODB : JDBC
 
-note bottom of H2
-  Também aqui: uma BD por instância,
-  criada pelo mesmo Flyway do Modo B.
-  Filas: airports.events.8091 / 8092 / 8093.
-end note
-note right of MQ
-  Só 1 nó: é para desenvolvimento.
-  O cluster de 3 nós está no Modo B.
-end note
+legend right
+  <b>Diferenças face ao Modo B</b>
+  • Também aqui: uma BD por instância,
+    criada pelo mesmo Flyway do Modo B.
+  • Filas: airports.events.8091 / 8092 / 8093.
+  • RabbitMQ com 1 nó: é para desenvolvimento.
+    O cluster de 3 nós está no Modo B.
+endlegend
 @enduml

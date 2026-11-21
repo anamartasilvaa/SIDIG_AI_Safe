@@ -1,6 +1,12 @@
 @startuml physical-view-airports-routes
 skinparam shadowing false
+skinparam linetype polyline
+skinparam nodesep 35
+skinparam ranksep 55
+skinparam defaultTextAlignment center
 title Airports & Routes - Vista física (Modo B, docker-compose.secure.yml)
+
+actor "Cliente" as C
 
 node "Máquina Docker" {
   node "rede edge" {
@@ -8,32 +14,41 @@ node "Máquina Docker" {
     node "gateway-2\nnginx :8444" as G2
   }
   node "rede backend (interna, sem Internet)" {
-    node "keycloak-1" as K1
-    node "keycloak-2" as K2
-    database "keycloak-db-0/1/2\nPostgreSQL + repmgr\n1 primário + 2 standby" as KDB
-
-    node "rabbitmq-1\nconsola 127.0.0.1:15672" as RB1
-    node "rabbitmq-2\nconsola 127.0.0.1:15673" as RB2
-    node "rabbitmq-3\nconsola 127.0.0.1:15674" as RB3
-    node "rabbitmq-init\n(importa definitions.json\ne termina com 0)" as RBI
-
-    node "airports-routes-1\nSpring Boot :8443 (HTTPS)" as AR1
-    database "airports-db-1\nPostgreSQL 16" as DB1
-    node "airports-routes-2\nSpring Boot :8443 (HTTPS)" as AR2
-    database "airports-db-2\nPostgreSQL 16" as DB2
-
-    node "flight-operations-1 / -2\n(cada uma com a sua BD)" as FO
-    node "aircraft-1 / -2\nmaintenance-1 / -2\n(outros serviços do grupo)" as OTHER
+    rectangle "Autenticação" {
+      node "keycloak-1" as K1
+      node "keycloak-2" as K2
+      database "keycloak-db-0/1/2\nPostgreSQL + repmgr\n1 primário + 2 standby" as KDB
+    }
+    rectangle "Airports & Routes" {
+      node "airports-routes-1\nSpring Boot :8443 (HTTPS)" as AR1
+      node "airports-routes-2\nSpring Boot :8443 (HTTPS)" as AR2
+      database "airports-db-1\nPostgreSQL 16" as DB1
+      database "airports-db-2\nPostgreSQL 16" as DB2
+    }
+    rectangle "Cluster RabbitMQ (AMQPS :5671)" {
+      node "rabbitmq-1\nconsola 127.0.0.1:15672" as RB1
+      node "rabbitmq-2\nconsola 127.0.0.1:15673" as RB2
+      node "rabbitmq-3\nconsola 127.0.0.1:15674" as RB3
+      node "rabbitmq-init\n(importa definitions.json,\ntermina com 0)" as RBI
+    }
+    rectangle "Outros serviços do grupo" {
+      node "flight-operations-1 / -2\n(cada uma com a sua BD)" as FO
+      node "aircraft-1 / -2\nmaintenance-1 / -2" as OTHER
+    }
   }
 }
 
-actor "Cliente" as C
+' Entrada
 C --> G1 : HTTPS
-C --> G2 : HTTPS (2.ª entrada)
-G1 --> AR1 : HTTPS (round-robin)
+C --> G2 : HTTPS\n(2.ª entrada)
+
+' Gateways -> Airports (round-robin)
+G1 --> AR1 : round-robin
 G1 --> AR2
 G2 --> AR1
 G2 --> AR2
+
+' Gateways -> Keycloak
 G1 --> K1
 G1 --> K2
 G2 --> K1
@@ -41,32 +56,32 @@ G2 --> K2
 K1 --> KDB : JDBC
 K2 --> KDB : JDBC
 
+' Cada instância com a sua BD
 AR1 --> DB1 : JDBC
 AR2 --> DB2 : JDBC
-AR1 --> RB1 : AMQPS :5671\n(qualquer dos 3 nós)
-AR2 --> RB2 : AMQPS :5671\n(qualquer dos 3 nós)
-FO --> RB3 : AMQPS :5671
-AR1 ..> AR2 : GET /internal/snapshot\n(só no arranque com a BD vazia)
-RB1 -- RB2 : cluster
-RB2 -- RB3 : cluster
+AR1 .> AR2 : /internal/snapshot\n(só com a BD vazia)
+
+' RabbitMQ
+DB1 -[hidden]-> RB1
+DB2 -[hidden]-> RB2
+AR1 --> RB1 : AMQPS\n(qualquer dos 3 nós)
+AR2 --> RB2 : AMQPS\n(qualquer dos 3 nós)
+FO --> RB3 : AMQPS
+RB1 - RB2 : cluster
+RB2 - RB3 : cluster
 RB1 -- RB3 : cluster
 RBI ..> RB1 : API de gestão\n(só no arranque)
 
-note bottom of DB1
-  Uma BD por instância (nunca partilhada).
-  As instâncias ficam iguais através dos eventos.
-  BD em baixo -> a instância responde 503 em 2 s
-  e a gateway repete o pedido na outra.
-end note
-
-note right of RB2
-  3 nós: com 1 em baixo, as filas quorum continuam.
-  Broker todo em baixo? As escritas continuam;
-  os eventos esperam na outbox.
-end note
-
-note right of G2
-  2 gateways, 2 Keycloak, 2 instâncias:
-  nenhum ponto único de falha.
-end note
+legend right
+  <b>Diferenças face ao Modo A</b>
+  • 2 gateways e 2 Keycloak (no Modo A: 1 de cada):
+    nenhum ponto único de falha.
+  • PostgreSQL 16 por instância (no Modo A: H2 em ficheiro).
+    BD em baixo -> 503 em 2 s e a gateway tenta a outra.
+  • RabbitMQ com 3 nós (no Modo A: 1 nó). Com 1 nó em baixo
+    as filas quorum continuam; broker todo em baixo:
+    os eventos esperam na outbox.
+  • Igual nos dois modos: /internal/snapshot só no
+    arranque com a BD vazia.
+endlegend
 @enduml

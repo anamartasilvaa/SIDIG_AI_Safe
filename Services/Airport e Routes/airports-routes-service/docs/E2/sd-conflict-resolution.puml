@@ -1,24 +1,41 @@
 @startuml sd-conflict-resolution
-skinparam shadowing false
+skinparam style strictuml
+autonumber
 title SD - Conflito: as duas instâncias alteram o mesmo aeroporto (last-writer-wins)
 
+box "Instância 1" #F4F7FF
 participant "airports-routes-1" as A1
+database "BD 1" as D1
+end box
 participant "RabbitMQ\nairports.events" as MQ
+box "Instância 2" #F4FFF4
 participant "airports-routes-2" as A2
+database "BD 2" as D2
+end box
 
 == Duas alterações ao mesmo tempo ==
-A1 -> A1 : PATCH OPO/status\nlastModified = T1
-A2 -> A2 : PATCH OPO/status\nlastModified = T2 (T2 > T1)
-
+A1 -> D1 : PATCH OPO/status = CLOSED\nlastModified = T1
+A2 -> D2 : PATCH OPO/status = UNDER_MAINTENANCE\nlastModified = T2 (T2 > T1)
 A1 -> MQ : AIRPORT_STATUS_CHANGED (T1)
 A2 -> MQ : AIRPORT_STATUS_CHANGED (T2)
 
+== Cada instância recebe o evento da outra ==
 MQ -> A1 : evento da instância 2 (T2)
+A1 -> A1 : T2 mais recente que T1?
+A1 -> D1 : sim -> aplica UNDER_MAINTENANCE
 MQ -> A2 : evento da instância 1 (T1)
+A2 -> A2 : T1 mais recente que T2?
+A2 -> A2 : não -> ignora
 
-== Cada instância decide sozinha ==
-A1 -> A1 : T2 mais recente que T1?\nsim -> aplica
-A2 -> A2 : T1 mais recente que T2?\nnão -> ignora
+note over A1, A2
+  Resultado: as duas ficam com UNDER_MAINTENANCE.
+end note
+
+== Casos especiais ==
+MQ -> A2 : o mesmo evento outra vez
+A2 -> A2 : eventId já em processed_event -> ignora
+MQ -> A1 : evento com o mesmo lastModified
+A1 -> A1 : empate -> ganha o originNodeId maior
 
 note over A1, A2
   Regra: ganha a alteração mais recente.

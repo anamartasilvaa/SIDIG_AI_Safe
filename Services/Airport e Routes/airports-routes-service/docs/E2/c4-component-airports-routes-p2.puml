@@ -1,68 +1,88 @@
 @startuml c4-component-airports-routes-p2
 !include <C4/C4_Component>
 LAYOUT_TOP_DOWN()
+skinparam wrapWidth 220
 
 title Airports & Routes - Componentes (C4 nível 3, Entrega 2: CQRS + RabbitMQ)
 
 Person(client, "Utilizador AISafe", "ATCC, Backoffice, Admin")
-Container_Ext(gateway, "API Gateway", "NGINX, HTTPS :8443", "Round-robin entre instâncias")
-Container_Ext(broker, "RabbitMQ", "exchange airports.events (fanout)", "Uma fila + DLQ por instância")
-Container_Ext(fo, "Flight Operations", "Spring Boot", "Guarda uma cópia local das rotas")
-Container_Ext(peer, "Outra instância do Airports", "Spring Boot", "Só usada no arranque com a BD vazia")
-
-ContainerDb(db, "airports-db-N", "PostgreSQL 16 (Modo B) / H2 em ficheiro (Modo A)", "Uma BD por instância: modelo de escrita, modelo de leitura, outbox e inbox")
+Container_Ext(gateway, "API Gateways (x2)", "NGINX, HTTPS :8443 / :8444", "Round-robin entre instâncias; bloqueia /internal/")
+Container_Ext(keycloak, "Keycloak (x2)", "realm aisafe", "Emite os JWT (RS256) e publica a chave pública")
+Container_Ext(broker, "RabbitMQ (3 nós)", "AMQPS, filas quorum", "Exchange airports.events (fanout)")
+Container_Ext(fo, "Flight Operations", "Spring Boot (x2)", "Guarda uma cópia local das rotas")
+Container_Ext(peer, "Outra instância do Airports", "Spring Boot", "Mesmos componentes, BD própria")
+ContainerDb(db, "airports-db-N (uma por instância)", "PostgreSQL 16 (Modo B) / H2 (Modo A)", "Modelo de escrita, modelo de leitura, outbox e inbox. Esquema criado pelo Flyway.")
 
 Container_Boundary(ar, "Airports & Routes (uma instância)") {
-    Component(sec, "SecurityConfig / JwtAuthenticationFilter", "Spring Security", "Valida o JWT do Keycloak e as permissões de cada perfil (401 / 403).")
-    Component(ctrl, "AirportController / RouteController", "@RestController", "POST/PATCH vão para os comandos; GET vai para as consultas.")
-    Component(admin, "AdminReplicationController", "@RestController (ADMIN)", "Mostra o estado da outbox (PENDING / DONE / FAILED).")
-    Component(errors, "GlobalExceptionHandler", "@RestControllerAdvice", "BD em baixo -> 503, para a gateway repetir na outra instância.")
 
-    Component(cmdSvc, "AirportService / RouteService", "@Service (ESCRITA)", "Regras de negócio. Também aplicam os eventos recebidos (last-writer-wins).")
-    Component(proj, "AirportProjector / RouteProjector", "@Component", "Atualizam o modelo de leitura na mesma transação.")
-    Component(qrySvc, "AirportQueryService / RouteQueryService", "@Service (LEITURA)", "Só leem o modelo de leitura local. Nunca chamam outra instância.")
-    Component(bfs, "FastestRouteStrategy", "@Component", "Rotas alternativas (pesquisa em largura) no modelo de leitura.")
+    Component(sec, "JwtAuthenticationFilter + SecurityConfig", "Spring Security", "Valida o JWT e o perfil. Sem token: 401. Sem permissão: 403.")
+    Component(errors, "GlobalExceptionHandler", "@RestControllerAdvice", "400 / 404 / 409 sem stack trace. BD em baixo: 503 -> a gateway tenta a outra instância.")
 
-    Component(writeRepo, "AirportRepository / RouteRepository", "Spring Data JPA", "Modelo de ESCRITA (agregados).")
-    Component(readRepo, "AirportReadRepository / RouteReadRepository", "Spring Data JPA", "Modelo de LEITURA (tabelas simples).")
-    Component(rebuild, "ReadModelRebuilder", "CommandLineRunner", "No arranque, refaz o modelo de leitura a partir do de escrita.")
-    Component(snap, "SnapshotBootstrapper", "@Component", "BD vazia no arranque -> copia aeroportos e rotas da outra instância.")
-    Component(internal, "InternalSnapshotController", "@RestController (ROLE_PEER)", "GET /internal/snapshot (a gateway bloqueia /internal/).")
-    Component(flyway, "Flyway", "db/migration (V1, V2)", "Cria o esquema da BD. O Hibernate não o altera.")
+    Boundary(cmd, "Lado dos comandos (escrita)") {
+        Component(ctrlW, "AirportController / RouteController (POST, PATCH)", "@RestController", "Criar e alterar aeroportos e rotas; importar CSV.")
+        Component(cmdSvc, "AirportService / RouteService", "@Service, @Transactional", "Regras de negócio. Grava agregado + leitura + outbox numa só transação. Também aplica os eventos recebidos (last-writer-wins).")
+        Component(writeRepo, "AirportRepository / RouteRepository / RouteHistoryRepository", "Spring Data JPA", "Modelo de escrita.")
+        Component(admin, "AdminReplicationController", "@RestController (ADMIN)", "Estado da outbox: PENDING / DONE / FAILED.")
+    }
 
-    Component(outbox, "ReplicationOutbox", "@Service", "Grava o evento na mesma transação do comando.")
-    Component(pub, "AmqpReplicationPublisher", "@Scheduled (2 s)", "Publica os eventos PENDING. DONE só com confirmação do broker.")
-    Component(cons, "ReplicationEventConsumer", "@RabbitListener", "Lê a fila desta instância. Ignora os seus próprios eventos. 3 tentativas -> DLQ.")
-    Component(inbox, "IdempotencyGuard", "@Component (inbox)", "Cada evento só é aplicado uma vez (processed_event).")
+    Boundary(msg, "Mensagens (AMQP)") {
+        Component(outbox, "ReplicationOutbox", "@Service", "Grava o evento (ReplicationTask, eventId UUID) na transação do comando.")
+        Component(pub, "AmqpReplicationPublisher", "@Scheduled (2 s)", "Publica as tarefas PENDING. DONE só com a confirmação do broker.")
+        Component(cons, "ReplicationEventConsumer", "@RabbitListener", "Lê a fila desta instância. Ignora os próprios eventos. 3 tentativas -> DLQ.")
+        Component(inbox, "IdempotencyGuard", "tabela processed_event", "Cada eventId só é aplicado uma vez.")
+    }
+
+    Boundary(qry, "Lado das consultas (leitura)") {
+        Component(ctrlR, "AirportController / RouteController (GET)", "@RestController", "Pesquisas, histórico, estatísticas, GeoJSON, rotas alternativas.")
+        Component(qrySvc, "AirportQueryService / RouteQueryService", "@Service", "Só leem o modelo de leitura local. Nunca chamam outra instância.")
+        Component(bfs, "FastestRouteStrategy", "@Component", "Rotas alternativas (pesquisa em largura).")
+        Component(proj, "AirportProjector / RouteProjector", "@Component", "Atualizam o modelo de leitura na transação do comando.")
+        Component(readRepo, "AirportReadRepository / RouteReadRepository", "Spring Data JPA", "airport_read_model / route_read_model.")
+    }
+
+    Boundary(boot, "Arranque") {
+        Component(flyway, "Flyway", "db/migration (V1, V2)", "Cria o esquema. O Hibernate não o altera.")
+        Component(rebuild, "ReadModelRebuilder", "CommandLineRunner", "Refaz o modelo de leitura a partir do de escrita.")
+        Component(snap, "SnapshotBootstrapper", "ApplicationReadyEvent", "BD vazia -> copia aeroportos e rotas da outra instância (tenta até ela responder).")
+        Component(internal, "InternalSnapshotController", "@RestController (ROLE_PEER)", "GET /internal/snapshot.")
+    }
 }
 
-Rel(client, gateway, "Pedido com JWT", "HTTPS")
+Rel(client, gateway, "REST + JWT", "HTTPS")
 Rel(gateway, sec, "Encaminha", "HTTPS")
-Rel(sec, ctrl, "Pedido autorizado")
+Rel(sec, keycloak, "Chave pública", "JWKS")
+Rel(sec, ctrlW, "POST / PATCH")
+Rel(sec, ctrlR, "GET")
 Rel(gateway, admin, "Só ADMIN", "HTTPS")
 
-Rel(ctrl, cmdSvc, "Comandos")
-Rel(ctrl, qrySvc, "Consultas")
+Rel(ctrlW, cmdSvc, "Comandos")
 Rel(cmdSvc, writeRepo, "Grava")
 Rel(cmdSvc, proj, "project()")
-Rel(proj, readRepo, "Grava vista")
 Rel(cmdSvc, outbox, "Evento")
-Rel(outbox, db, "replication_task (PENDING)", "JDBC")
-Rel(pub, broker, "Publica", "AMQP + confirms")
-Rel(broker, cons, "Entrega na fila desta instância", "AMQP")
-Rel(broker, fo, "Mesmos eventos, fila do FO", "AMQP")
-Rel(cons, inbox, "runOnce(eventId)")
+Rel(writeRepo, db, "JDBC")
+Rel(outbox, db, "replication_task", "JDBC")
+Rel(admin, db, "Lê a outbox", "JDBC")
+
+Rel(pub, db, "Lê PENDING", "JDBC")
+Rel(pub, broker, "Publica AIRPORT_* / ROUTE_*", "AMQPS + confirms")
+Rel(broker, cons, "airports.events.<instância>", "AMQPS")
+Rel(broker, fo, "fo.routes.<instância>", "AMQPS")
+Rel(cons, inbox, "Já processado?")
 Rel(inbox, cmdSvc, "Aplica (isReplication=true)")
 Rel(inbox, db, "processed_event", "JDBC")
+Rel(peer, broker, "Publica os seus eventos", "AMQPS")
+
+Rel(ctrlR, qrySvc, "Consultas")
 Rel(qrySvc, readRepo, "Lê")
+Rel(qrySvc, bfs, "Alternativas")
 Rel(bfs, readRepo, "Rotas ativas")
-Rel(admin, db, "Lê a outbox", "JDBC")
-Rel(rebuild, writeRepo, "Lê tudo no arranque")
-Rel(rebuild, proj, "Volta a projetar")
+Rel(proj, readRepo, "Grava vistas")
+Rel(readRepo, db, "JDBC")
+
+Rel(flyway, db, "Migrações", "JDBC")
+Rel(rebuild, proj, "Volta a projetar tudo")
 Rel(snap, peer, "GET /internal/snapshot (uma vez)", "HTTPS + JWT ROLE_PEER")
 Rel(snap, cmdSvc, "applySnapshot()")
 Rel(internal, cmdSvc, "exportSnapshot()")
-Rel(flyway, db, "Migrações SQL", "JDBC")
-Rel(writeRepo, db, "JDBC")
-Rel(readRepo, db, "JDBC")
+Rel(errors, gateway, "503 -> tenta a outra instância")
 @enduml

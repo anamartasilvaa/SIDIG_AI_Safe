@@ -1,60 +1,75 @@
 @startuml sd-amqp-event-propagation
 skinparam style strictuml
 autonumber
-title SD - Criar rota: comando CQRS + propagação do evento pelo RabbitMQ
+title SD - Criar uma rota: comando (CQRS + outbox) e propagação pelo RabbitMQ
 
-actor "Backoffice" as User
-participant "RouteController\n(instância 1)" as Ctrl
+actor "ATCC / Backoffice" as User
+participant "API Gateway\n(:8443 ou :8444)" as GW
+box "Instância 1" #F4F7FF
+participant "Segurança\n(JWT + perfil)" as Sec
+participant "RouteController" as Ctrl
 participant "RouteService" as Svc
-participant "RouteRepository\n(escrita)" as RR
-participant "RouteProjector" as Proj
-participant "RouteReadRepository\n(leitura)" as RM
-participant "ReplicationOutbox" as Outbox
-participant "AmqpReplicationPublisher" as Pub
-participant "airports.events\n(fanout)" as Ex
-participant "ReplicationEventConsumer\n(instância 2)" as Cons2
+database "BD instância 1" as DB
+participant "AmqpReplicationPublisher\n(de 2 em 2 s)" as Pub
+end box
+participant "RabbitMQ\nairports.events (fanout)" as Ex
+box "Instância 2" #F4FFF4
+participant "ReplicationEventConsumer" as Cons2
 participant "IdempotencyGuard\n(inbox)" as Inbox
-participant "RouteService\n(instância 2)" as Svc2
+participant "RouteService" as Svc2
+database "BD instância 2" as DB2
+end box
+participant "Flight Operations\n(fila fo.routes.N)" as FO
 
-User -> Ctrl : POST /api/routes
-activate Ctrl
-Ctrl -> Svc : createRoute(dto, isReplication=false)
-activate Svc
-note right of Svc : UMA transação:\nescrita + leitura + outbox
-Svc -> RR : save(route)
-Svc -> Proj : project(route)
-Proj -> RM : save(RouteReadModel)
-Svc -> Outbox : enqueue(evento)
-Outbox -> Outbox : grava ReplicationTask (PENDING)
-Svc --> Ctrl : RouteViewDTO
-Ctrl --> User : 201 Created
-deactivate Svc
-deactivate Ctrl
-note right of User : O cliente não espera pelo broker.
+User -> GW : POST /api/routes\n{routeId, origem, destino, ...} + JWT
+GW -> Sec : round-robin
+alt token em falta ou inválido
+  Sec --> User : 401
+else perfil sem permissão
+  Sec --> User : 403
+else autorizado
+  Sec -> Ctrl : pedido
+  Ctrl -> Ctrl : validação dos campos (@Valid)
+  note right : campos inválidos -> 400
+  Ctrl -> Svc : createRoute(dto, isReplication=false)
+  Svc -> DB : aeroportos de origem e destino existem?
+  alt aeroporto não existe
+    Svc --> User : 404
+  else rota já existe
+    Svc --> User : 409
+  else válido
+    group UMA transação
+      Svc -> DB : grava Route + RouteHistory (CREATED)
+      Svc -> DB : atualiza route_read_model (projetor)
+      Svc -> DB : grava ReplicationTask (PENDING, eventId UUID)
+    end
+    Svc -> Svc : registo AUDIT (CREATE)
+    Svc --> User : 201 Created
+    note right of User : O cliente não espera pelo broker.
+  end
+end
 
-== Em segundo plano (de 2 em 2 s) ==
-Pub -> Pub : lê as tarefas PENDING
-Pub -> Ex : publica ROUTE_CREATED\n(messageId = eventId, UUID)
+== Em segundo plano ==
+Pub -> DB : lê as tarefas PENDING
+Pub -> Ex : publica ROUTE_CREATED\n(messageId = eventId)
 Ex --> Pub : confirmação do broker
-Pub -> Pub : tarefa = DONE
-note right of Pub : Sem confirmação -> tenta mais tarde.\n10 falhas -> FAILED.
+Pub -> DB : tarefa = DONE
+note right of Pub : Sem confirmação -> tenta mais tarde\n(5, 10, 20, 40, 60 s). 10 falhas -> FAILED.
 
 == O broker entrega uma cópia a cada fila ==
-Ex -> Cons2 : fila airports.events.airports-routes-2
-activate Cons2
+Ex -> Cons2 : fila airports.events.<instância 2>
 Cons2 -> Cons2 : evento meu? -> ignora
 Cons2 -> Inbox : runOnce(eventId)
-activate Inbox
-Inbox -> Inbox : já processado? -> ignora
-Inbox -> Svc2 : createRoute(dto, isReplication=true)
-activate Svc2
-Svc2 -> Svc2 : grava escrita + leitura\n(last-writer-wins)
-Svc2 --> Inbox : ok
-deactivate Svc2
-Inbox -> Inbox : grava processed_event\n(na mesma transação)
-Inbox --> Cons2 : ack
-deactivate Inbox
-deactivate Cons2
+alt eventId já em processed_event
+  Inbox --> Cons2 : repetido -> ignora (ack)
+else novo
+  group UMA transação
+    Inbox -> Svc2 : createRoute(dto, isReplication=true)
+    Svc2 -> DB2 : grava escrita + leitura (last-writer-wins)
+    Inbox -> DB2 : grava processed_event
+  end
+  Inbox --> Cons2 : ack
+end
 note right of Cons2 : Erro -> 3 tentativas -> DLQ.
-note over Ex : O Flight Operations recebe o mesmo evento\nna sua própria fila.
+Ex -> FO : a mesma cópia do evento\n(atualiza a cópia local da rota)
 @enduml

@@ -1,12 +1,17 @@
 @startuml sd-cqrs-query-read-model
 skinparam style strictuml
 autonumber
-title SD - Consulta CQRS: só o modelo de leitura local
+title SD - Consultas CQRS: servidas só pelo modelo de leitura local
 
-actor "ATCC" as User
-participant "RouteController" as Ctrl
-participant "RouteQueryService" as Query
-participant "RouteReadRepository\n(route_read_model)" as RM
+actor "ATCC / Backoffice / Admin" as User
+participant "API Gateway" as GW
+box "Qualquer instância" #F4FFF4
+participant "Segurança\n(JWT + perfil)" as Sec
+participant "RouteController /\nAirportController" as Ctrl
+participant "RouteQueryService /\nAirportQueryService" as Query
+participant "FastestRouteStrategy" as BFS
+database "Modelo de leitura\n(airport_read_model,\nroute_read_model)" as RM
+end box
 
 == Arranque ==
 note over Query, RM
@@ -14,30 +19,50 @@ note over Query, RM
   a partir do de escrita. Pode ser apagado e refeito.
 end note
 
-== Consulta ==
-User -> Ctrl : GET /api/routes/{id}
-activate Ctrl
+== Consultar uma rota ==
+User -> GW : GET /api/routes/{id}
+GW -> Sec : round-robin
+Sec -> Ctrl : perfil ATCC / BACKOFFICE / ADMIN
 Ctrl -> Query : getRoute(id, hops)
-activate Query
 Query -> RM : findById(id)
 alt existe nesta instância
-    RM --> Query : RouteReadModel
-    Query --> Ctrl : RouteViewDTO
+  RM --> Query : RouteReadModel
+  Query --> Ctrl : RouteViewDTO
+  Ctrl --> User : 200
 else não existe
-    Query --> Ctrl : 404 Not Found
-    note right of Query
-      Não pergunta à outra instância.
-      Rota acabada de criar na outra?
-      Aparece aqui em 1-2 s (consistência eventual).
-    end note
+  Query --> Ctrl : NotFoundException
+  Ctrl --> User : 404
+  note right of Query
+    Não pergunta à outra instância.
+    Rota acabada de criar na outra?
+    Aparece aqui em 1-2 s (consistência eventual).
+  end note
 end
+
+== Consultar um aeroporto ==
+User -> GW : GET /api/airports/{iata}
+GW -> Ctrl : (depois do JWT e do perfil)
+Ctrl -> Query : getAirportByIataCode(iata)
+Query -> RM : airport_read_model (viewJson)
 Ctrl --> User : 200 / 404
-deactivate Query
-deactivate Ctrl
+
+== Rotas alternativas (pesquisa em largura) ==
+User -> GW : GET /api/routes/alternatives?origin=&destination=
+GW -> Ctrl : (depois do JWT e do perfil)
+Ctrl -> Query : findAlternativeRoutes(origem, destino)
+Query -> BFS : pesquisa em largura
+BFS -> RM : rotas ativas por origem
+Ctrl --> User : 200
+
+== Estatísticas e GeoJSON ==
+User -> GW : GET /api/routes/statistics/... ou /export/geojson
+GW -> Ctrl : (depois do JWT e do perfil)
+Ctrl -> Query : getBusiestAirports() / exportRoutesAsGeoJson()
+Query -> RM : route_read_model (já tem as coordenadas)
+Ctrl --> User : 200
 
 note right of Query
-  As leituras nunca tocam no modelo de escrita.
-  Estatísticas, pesquisa, GeoJSON e rotas
-  alternativas leem só o route_read_model.
+  As consultas nunca tocam no modelo de escrita
+  nem chamam outra instância (max-hops = 0).
 end note
 @enduml
