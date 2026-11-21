@@ -1,0 +1,125 @@
+@startuml class-diagram-maintenance-E2
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing false
+hide empty members
+title Maintenance - Modelo de domínio, cópia local do avião, idempotência e eventos
+
+package "Agregado MaintenanceRecord" #F4F7FF {
+    class MaintenanceRecord <<Entity>> <<Root>> {
+        - pk: Long
+        - globalId: String «UUID»
+        - revision: long
+        - lastModified: Instant
+        - version: Long «@Version»
+        - registrationNumber: String
+        - modelName: String
+        - templateName: String
+        - description: String
+        - startDate: LocalDateTime
+        - expectedDuration: Integer
+        - cost: Double «>= 0»
+        - completionNotes: String
+        - completionDate: LocalDateTime
+        - status: MaintenanceRecordStatus
+        - componentCategory: ComponentCategory
+        --
+        + complete(notas)  -> revision + 1
+        + mergeReplica(...): boolean
+        + {static} fromReplica(...)
+    }
+    enum MaintenanceRecordStatus <<Enumeration>> {
+        SCHEDULED
+        IN_PROGRESS
+        COMPLETED
+    }
+    enum ComponentCategory <<Enumeration>> {
+        ENGINE, AIRFRAME, AVIONICS,
+        INTERIOR, EXTERIOR
+    }
+}
+
+package "Agregado MaintenanceTemplate" #F4F7FF {
+    class MaintenanceTemplate <<Entity>> <<Root>> {
+        - globalId: String «UUID»
+        - revision: long
+        - lastModified: Instant
+        - templateName: String «único»
+        - templateType: String
+        - flightHoursInterval: Double
+        - calendarDaysInterval: Integer
+        - appliesToModelNames: List<String>
+        --
+        + mergeReplica(...): boolean
+        + {static} fromReplica(...)
+    }
+    class Checklist <<Entity>> {
+        - title: String
+        - version: String
+    }
+    class ChecklistItem <<Embeddable>> {
+        - taskDescription: String
+        - isMandatory: Boolean
+    }
+}
+
+package "Peças" #F4F7FF {
+    class MaintenancePart <<Entity>> {
+        - partNumber: PartNumber
+        - name: String
+        - stockQuantity: Integer
+        - minimumThreshold: Integer
+        - componentCategory: ComponentCategory
+    }
+    class PartNumber <<Value Object>>
+}
+
+package "Cópia local e idempotência" #F4FFF4 {
+    class AircraftReference <<Entity>> {
+        - registrationNumber: String «PK»
+        - modelName: String
+        - status: String
+        --
+        + update(modelo, estado)
+    }
+    class ProcessedEvent <<Entity>> {
+        - consumer: String
+        - eventId: String
+        - processedAt: Instant
+        único: consumer + event_id
+    }
+}
+
+package "Eventos de integração" #FFF8E6 {
+    class "MaintenanceStarted /\nMaintenanceCompleted" as ME <<publicado>> {
+        exchange maintenance.events, fanout
+        routing key maintenance.started / .completed
+        aggregateId = globalId do registo
+        payload: registrationNumber, modelName,
+        status: UNDER_MAINTENANCE / ACTIVE
+    }
+    class AircraftChanged <<consumido>> {
+        exchange aircraft.events, topic
+        routing key aircraft.#
+        payload: registrationNumber, modelName, status
+    }
+}
+
+MaintenanceTemplate "1" *-- "1" Checklist
+Checklist "1" *-- "*" ChecklistItem
+MaintenanceRecord --> MaintenanceRecordStatus
+MaintenanceRecord --> ComponentCategory
+MaintenanceRecord ..> MaintenanceTemplate : templateName
+MaintenancePart *-- PartNumber
+MaintenancePart --> ComponentCategory
+
+MaintenanceRecord ..> ME : ao registar e ao concluir
+AircraftChanged ..> AircraftReference : cria ou atualiza
+AircraftChanged ..> ProcessedEvent : regista eventId
+MaintenanceRecord ..> AircraftReference : modelo do avião
+
+note bottom of MaintenanceRecord
+  Cópia entre instâncias pelo globalId:
+  só aplica se a revision recebida for maior.
+end note
+@enduml

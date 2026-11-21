@@ -1,0 +1,73 @@
+@startuml sd-aircraft-events-and-failures
+skinparam style strictuml
+autonumber
+title SD - Aircraft: eventos recebidos, leituras em falta e falhas
+
+participant "RabbitMQ" as MQ
+box "Instância 1" #F4F7FF
+participant "MaintenanceEventListener /\nFlightEventListener" as L
+participant "IdempotencyGuard\n(processed_event)" as G
+participant "AircraftService" as Svc
+database "BD instância 1" as DB
+participant "AircraftPeerClient" as Peer
+participant "RemoteCaller +\nCircuitBreaker" as RC
+end box
+box "Instância 2" #F4FFF4
+participant "InternalAircraftController" as Int2
+end box
+
+== 1. Evento de manutenção ou de voo ==
+MQ -> L : mensagem (aircraft.maintenance.1 ou aircraft.flights.1)
+L -> L : lê eventId, type, matrícula
+L -> G : firstTime(consumer, eventId)?
+alt já processado
+  G --> L : false -> ignora
+else primeira vez
+  G -> DB : grava processed_event
+  alt MaintenanceStarted
+    L -> Svc : applyMaintenanceStatus(reg, UNDER_MAINTENANCE)
+  else MaintenanceCompleted
+    L -> Svc : applyMaintenanceStatus(reg, ACTIVE)
+  else FlightScheduled / Reassigned / StatusChanged
+    L -> Svc : applyFlightAssignment(reg)
+  else voo COMPLETED com horas
+    L -> Svc : applyFlightCompletion(reg, horas)
+  end
+  Svc -> DB : grava (mesma transação do processed_event)
+end
+L --> MQ : ack depois do commit
+note right of L
+  Qualquer erro (JSON inválido, BD em baixo...) ->
+  rejeitada sem nova tentativa -> aircraft.dead-letter.
+  Instância cai antes do ack -> nova entrega (máx. 5).
+end note
+
+== 2. Avião não existe nesta instância ==
+Svc -> DB : procura local -> vazio
+Svc -> Peer : forwardGetAircraftByRegNum(reg)
+Peer -> RC : GET às outras instâncias (em paralelo)
+RC -> Int2 : GET /internal/aircraft/instances/{reg}\nX-API-Key
+alt encontrado
+  Int2 --> RC : 200 avião
+  RC --> Svc : primeira resposta encontrada
+else nenhuma o tem
+  Int2 --> RC : 404
+  RC --> Svc : vazio -> 404 ao cliente
+end
+note right of RC
+  Pesquisa (GET /instances): junta locais + remotos,
+  sem duplicados. Instância sem resposta ->
+  cabeçalho X-Partial-Response-Unreachable-Peers.
+end note
+
+== 3. Outra instância ou serviço em baixo ==
+RC -> RC : timeout (1 s ligação, 2 s leitura)
+RC -> RC : 2 tentativas, backoff 200 ms -> 400 ms
+RC -> RC : 3 falhas seguidas -> circuito ABERTO 10 s
+RC -> RC : depois de 10 s: 1 pedido de teste (HALF_OPEN)
+
+== 4. Broker em baixo ==
+Svc -> MQ : publicar AircraftChanged
+MQ --> Svc : erro
+Svc -> Svc : só regista aviso; o pedido REST termina com sucesso
+@enduml

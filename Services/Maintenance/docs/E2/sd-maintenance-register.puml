@@ -1,0 +1,67 @@
+@startuml sd-maintenance-register
+skinparam style strictuml
+autonumber
+title SD - Registar uma manutenção: gravação local, cópia à outra instância e evento para o Aircraft
+
+actor "Técnico / Supervisor" as User
+participant "API Gateway\n(:8443 ou :8444)" as GW
+box "Maintenance - instância 1" #F4F7FF
+participant "Segurança\n(JWT + perfil)" as Sec
+participant "MaintenanceController" as Ctrl
+participant "MaintenanceService" as Svc
+database "BD instância 1" as DB
+participant "MaintenanceEventPublisher" as Pub
+participant "MaintenanceReplicator" as Rep
+end box
+box "Maintenance - instância 2" #F4FFF4
+participant "InternalMaintenanceController" as Int2
+database "BD instância 2" as DB2
+end box
+participant "RabbitMQ\nmaintenance.events (fanout)" as Ex
+box "Aircraft (cada instância)" #FFF8E6
+participant "MaintenanceEventListener" as AL
+database "BD do Aircraft" as ADB
+end box
+
+User -> GW : POST /api/maintenance/records\n{matrícula, templateGlobalId, startDate, ...} + JWT
+GW -> Sec : round-robin
+alt token em falta ou inválido
+  Sec --> User : 401
+else perfil sem permissão
+  Sec --> User : 403
+else autorizado
+  Sec -> Ctrl : pedido
+  Ctrl -> Svc : registerMaintenance(dto)
+  alt modelo não enviado
+    Svc -> DB : aircraft_reference (cópia local)
+    note right : sem cópia -> GET /internal/aircraft/...\nao Aircraft (com failover)
+  end
+  Svc -> DB : template pelo templateGlobalId
+  note right : não existe aqui -> pede os templates\nàs outras instâncias e guarda-o
+  alt template não encontrado / dados inválidos
+    Svc --> User : 400
+  else válido
+    Svc -> DB : grava o registo (SCHEDULED, revision 0)
+    Svc -> Pub : maintenanceStarted(registo)
+    Pub -> Ex : MaintenanceStarted\nstatus = UNDER_MAINTENANCE
+    Svc -> Rep : replicateAcknowledged(registo)
+    Rep -> Int2 : PUT /internal/maintenance/records/{globalId}/replica\nX-API-Key
+    Int2 -> DB2 : cria, ou aplica só se revision maior
+    Int2 --> Rep : 204
+    Rep --> Svc : confirmado (ou fica na fila em memória)
+    Svc --> Ctrl : registo
+    Ctrl --> User : 201 Created
+  end
+end
+
+== Assíncrono ==
+Ex -> AL : cópia para aircraft.maintenance.<inst>
+AL -> AL : eventId já processado? -> ignora
+AL -> ADB : estado = UNDER_MAINTENANCE\n(+ processed_event, mesma transação)
+
+note over Svc, Ex
+  Concluir (PATCH /records/{id}/complete, Supervisor/Admin):
+  status COMPLETED, revision + 1, publica MaintenanceCompleted
+  -> o Aircraft volta a pôr o avião ACTIVE.
+end note
+@enduml

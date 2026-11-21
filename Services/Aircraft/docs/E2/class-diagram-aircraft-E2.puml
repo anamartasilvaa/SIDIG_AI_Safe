@@ -1,0 +1,109 @@
+@startuml class-diagram-aircraft-E2
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing false
+hide empty members
+title Aircraft - Modelo de domínio, idempotência e eventos de integração
+
+package "Agregado Aircraft" #F4F7FF {
+    class Aircraft <<Entity>> <<Root>> {
+        - pk: Long
+        - globalId: String «UUID»
+        - revision: long
+        - lastModified: Instant
+        - version: Long «@Version»
+        - registrationNumber: RegistrationNumber
+        - status: AircraftStatus
+        - manufacturingDate: LocalDate
+        - actualSeatingCapacity: Integer
+        - totalFlightHours: Double
+        - totalAssignments: Integer
+        - features: String
+        --
+        + updateStatus(novo)
+        + addFlightHours(horas)
+        + incrementAssignments()
+        + touch()
+    }
+    class RegistrationNumber <<Value Object>> {
+        - number: String
+        formato XX-XXXXX, ex.: CS-TPA
+    }
+    enum AircraftStatus <<Enumeration>> {
+        ACTIVE
+        INACTIVE
+        UNDER_MAINTENANCE
+    }
+}
+
+package "Agregado AircraftModel" #F4F7FF {
+    class AircraftModel <<Entity>> <<Root>> {
+        - modelName: ModelName
+        - manufacturer: Manufacturer
+        - defaultSeatingCapacity: Integer
+        - fuelCapacity: Double
+        - maximumRange: Double
+        - cruisingSpeed: Double
+        - fuelConsumptionPerHour: Double
+        - modelPhotoUrl, seatingConfiguration,
+          operatingHoursRange, engineType: String
+        --
+        + updateSpecifications(...)
+        + updateImage(url)
+    }
+    class ModelName <<Value Object>>
+    enum Manufacturer <<Enumeration>>
+    class AirplaneCertification <<Entity>> {
+        - certificationNumber: String
+        - issueDate: LocalDate
+        - expiryDate: LocalDate
+    }
+}
+
+package "Idempotência (inbox)" #F4FFF4 {
+    class ProcessedEvent <<Entity>> {
+        - consumer: String
+        - eventId: String
+        - processedAt: Instant
+        único: consumer + event_id
+    }
+}
+
+package "Eventos de integração" #FFF8E6 {
+    class AircraftChanged <<publicado>> {
+        exchange aircraft.events, topic
+        routing key aircraft.changed
+        payload: registrationNumber,
+        modelName, status
+    }
+    class "MaintenanceStarted /\nMaintenanceCompleted" as ME <<consumido>> {
+        exchange maintenance.events, fanout
+        payload: registrationNumber, status
+    }
+    class "FlightScheduled / FlightStatusChanged /\nFlightReassigned" as FE <<consumido>> {
+        exchange flights.events, topic
+        routing key flight.#
+        payload: registrationNumber, status
+    }
+}
+
+Aircraft "*" --> "1" AircraftModel : é do modelo >
+Aircraft *-- RegistrationNumber
+Aircraft --> AircraftStatus
+AircraftModel *-- ModelName
+AircraftModel --> Manufacturer
+AirplaneCertification "*" --> "1" AircraftModel
+
+Aircraft ..> AircraftChanged : ao registar e ao mudar o estado
+ME ..> Aircraft : muda o estado
+FE ..> Aircraft : atribuições e horas
+ME ..> ProcessedEvent : regista eventId
+FE ..> ProcessedEvent : regista eventId
+
+note bottom of Aircraft
+  Envelope comum dos eventos:
+  eventId, type, version, occurredAt,
+  aggregateId (= matrícula), revision, payload.
+  revision sobe em cada mudança de estado ou de horas.
+end note
+@enduml

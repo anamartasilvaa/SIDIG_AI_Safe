@@ -1,0 +1,66 @@
+@startuml sd-aircraft-status-change
+skinparam style strictuml
+autonumber
+title SD - Mudar o estado de um avião: gravação local, evento, cópia e grounding
+
+actor "ATCC / Admin" as User
+participant "API Gateway\n(:8443 ou :8444)" as GW
+box "Instância 1" #F4F7FF
+participant "Segurança\n(JWT + perfil)" as Sec
+participant "AircraftController" as Ctrl
+participant "AircraftService" as Svc
+database "BD instância 1" as DB
+participant "AircraftEventPublisher" as Pub
+participant "AircraftReplicator\n(fila em memória)" as Rep
+participant "FlightsServiceClient" as FC
+end box
+participant "RabbitMQ\naircraft.events (topic)" as Ex
+box "Instância 2" #F4FFF4
+participant "InternalAircraftController" as Int2
+database "BD instância 2" as DB2
+end box
+participant "Flight Operations" as FO
+participant "Maintenance\n(fila maintenance.aircraft.N)" as MT
+
+User -> GW : PATCH /api/aircraft-models/instances/{reg}/status\n{status} + JWT
+GW -> Sec : round-robin
+alt token em falta ou inválido
+  Sec --> User : 401
+else perfil sem permissão (só ATCC / ADMIN)
+  Sec --> User : 403
+else autorizado
+  Sec -> Ctrl : pedido
+  Ctrl -> Svc : updateAircraftStatusWithReport(reg, dto)
+  Svc -> DB : procura o avião
+  alt não existe
+    Svc --> User : 404
+  else existe
+    Svc -> DB : updateStatus() -> revision + 1, grava
+    Svc -> Rep : replicate(cópia do avião)
+    Rep -> Rep : guarda a revisão mais recente por instância
+    Svc -> Pub : aircraftChanged(avião)
+    Pub -> Ex : AircraftChanged (aircraft.changed)\nmessageId = eventId
+    note right of Pub : sem outbox: se o broker\nfalhar, só fica um aviso no log
+    opt novo estado = UNDER_MAINTENANCE ou INACTIVE
+      Svc -> Svc : candidatos ACTIVE do mesmo modelo
+      Svc -> FC : handleAircraftGrounding(reg, candidatos)
+      FC -> FO : POST /internal/scheduled-flights/aircraft/{reg}/grounding\nX-API-Key
+      FO --> FC : 200 (voos reatribuídos ou DELAYED)
+    end
+    Svc --> Ctrl : avião + swapReport
+    Ctrl --> User : 200
+  end
+end
+
+== Em paralelo (assíncrono) ==
+Rep -> Int2 : PUT /internal/aircraft/instances/{reg}/replica\nX-API-Key
+Int2 -> DB2 : aplica só se revision for maior
+Int2 --> Rep : 204 -> sai da fila
+Ex -> MT : cópia do evento -> atualiza aircraft_reference
+Ex -> FO : cópia do evento (fo.aircraft.N) -> atualiza aircraft_ref
+
+note over Rep, Int2
+  Outra instância em baixo? A cópia fica na fila em memória
+  e é reenviada de 5 em 5 segundos.
+end note
+@enduml
