@@ -1,52 +1,67 @@
 @startuml sd-failure-recovery
-skinparam shadowing false
+skinparam style strictuml
 title SD - Recuperação de falhas no Airports & Routes
 
-participant "Cliente" as C
-participant "Gateway\n(NGINX)" as GW
+actor "Cliente" as C
+participant "Gateway 1 / 2\n(NGINX)" as GW
+box "Instância 1" #F4F7FF
 participant "airports-routes-1" as A1
-database "airports-db-1\n(com a outbox)" as DB1
-participant "AmqpReplicationPublisher\n(de 2 em 2 s)" as P
-queue "RabbitMQ\nairports.events" as MQ
+database "BD 1\n(com a outbox)" as DB1
+end box
+box "RabbitMQ (3 nós)" #FFF8E8
+queue "airports.events" as MQ
 queue "fila da\ninstância 2" as Q2
 queue "DLQ da\ninstância 2" as DLQ
+end box
+box "Instância 2" #F4FFF4
 participant "airports-routes-2" as A2
+database "BD 2" as DB2
+end box
 
-== 1. Broker em baixo: as escritas continuam ==
-C -> A1 : POST /api/airports
+== 1. Broker todo em baixo: as escritas continuam ==
+C -> GW : POST /api/airports
+GW -> A1 : encaminha
 A1 -> DB1 : aeroporto + leitura + outbox (PENDING)\n(uma transação)
 A1 --> C : 201 Created
-P -> MQ : publica
-MQ -[#red]-> P : sem resposta
-P -> DB1 : tenta mais tarde (5 s, 10 s, ... até 60 s)
+A1 -[#red]> MQ : publica -> sem resposta
+A1 -> DB1 : tenta mais tarde (5, 10, 20, 40, 60 s)
 ... broker volta ...
-P -> MQ : publica
-MQ --> P : confirmação
-P -> DB1 : DONE
-note right of P : 10 falhas -> FAILED\n(GET /api/admin/replication-tasks)
+A1 -> MQ : publica
+MQ --> A1 : confirmação
+A1 -> DB1 : DONE
+note right of A1 : 10 falhas -> FAILED\n(GET /api/admin/replication-tasks)
 
-== 2. Instância 2 em baixo: a fila guarda os eventos ==
+== 2. Um ou dois nós do RabbitMQ em baixo ==
+note over MQ
+  1 nó em baixo: as filas quorum continuam (2 de 3).
+  2 nós em baixo: o nó que sobra pausa (pause_minority)
+  -> fica como no cenário 1 (os eventos esperam na outbox).
+end note
+
+== 3. Instância 2 em baixo: a fila guarda os eventos ==
+C -> GW : pedido
+GW -> A1 : a instância 2 não responde -> usa a 1
 MQ -> Q2 : cópia do evento
-note right of Q2 : Fica à espera até 1 h.
+note right of Q2 : Fica à espera até 1 h.\nMais de 1 h -> vai para a DLQ.
 ... instância 2 volta ...
 Q2 -> A2 : entrega
-A2 -> A2 : aplica + processed_event
+A2 -> DB2 : aplica + processed_event
 A2 --> Q2 : ack
 
-== 3. Mensagem que falha sempre: vai para a DLQ ==
+== 4. Mensagem que falha sempre: vai para a DLQ ==
 Q2 -> A2 : entrega
-A2 -[#red]> A2 : erro (3 tentativas)
+A2 -[#red]> A2 : erro (3 tentativas: 1 s, 2 s, ...)
 A2 --> Q2 : rejeita
 Q2 -> DLQ : mensagem isolada
 note right of DLQ : Não bloqueia a fila.\nVê-se na consola do RabbitMQ.
 
-== 4. Mensagem repetida: aplicada só uma vez ==
+== 5. Mensagem repetida: aplicada só uma vez ==
 Q2 -> A2 : mesmo eventId outra vez
-A2 -> A2 : já está em processed_event -> ignora
+A2 -> DB2 : já está em processed_event -> ignora
 A2 --> Q2 : ack
 
-== 5. BD de uma instância em baixo: o cliente não nota ==
-C -> GW : GET /api/airports
+== 6. BD de uma instância em baixo: o cliente não nota ==
+C -> GW : GET /api/airports/OPO
 GW -> A1 : encaminha
 A1 -[#red]> DB1 : sem ligação (desiste em 2 s)
 A1 --> GW : 503
@@ -54,10 +69,17 @@ GW -> A2 : repete na outra instância
 A2 --> GW : 200
 GW --> C : 200
 
-== 6. Instância arranca com a BD vazia: copia da outra ==
+== 7. Instância arranca com a BD vazia: copia da outra ==
 A1 -> A1 : BD vazia no arranque?
 A1 -> A2 : GET /internal/snapshot (JWT ROLE_PEER)
 A2 --> A1 : todos os aeroportos e rotas
 A1 -> DB1 : aplica (last-writer-wins, sem gerar eventos)
 note right of A1 : Instância 2 em baixo?\nTenta outra vez até ela voltar.\nEntretanto consome a sua fila.
+
+== 8. Uma gateway ou um Keycloak em baixo ==
+note over C, GW
+  Gateway em baixo -> o cliente usa a outra (:8443 / :8444).
+  Keycloak em baixo -> o outro emite os tokens;
+  as instâncias continuam a validá-los.
+end note
 @enduml
