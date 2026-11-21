@@ -2031,179 +2031,10 @@
       ]
     },
     {
-      "name": "07 GET /api/v2/unicorns (mood read model)",
+      "name": "07 Aircraft events to Flight Operations (AMQP)",
       "item": [
         {
-          "name": "07.01 GET /api/v2/unicorns on FO instance 1 {ATCC} → 200",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
-                  "const j = pm.response.json();",
-                  "pm.test('Body is an array of moods', () => { pm.expect(j).to.be.an('array'); j.forEach(u => { pm.expect(u.registrationNumber).to.be.a('string'); pm.expect(['HAPPY', 'BUSY', 'GRUMPY', 'SLEEPING']).to.include(u.mood); }); });",
-                  "pm.test('CS-TTA is in the mood read model', () => pm.expect(j.some(u => u.registrationNumber === 'CS-TTA')).to.be.true);"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{fo1}}/api/v2/unicorns",
-              "host": [
-                "{{fo1}}"
-              ],
-              "path": [
-                "api",
-                "v2",
-                "unicorns"
-              ]
-            }
-          },
-          "response": []
-        },
-        {
-          "name": "07.02 Filter by mood on FO instance 2 (?mood=HAPPY) {BACKOFFICE} → 200",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
-                  "pm.test('Only HAPPY aircraft', () => pm.response.json().forEach(u => pm.expect(u.mood).to.eql('HAPPY')));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{fo2}}/api/v2/unicorns?mood=HAPPY",
-              "host": [
-                "{{fo2}}"
-              ],
-              "path": [
-                "api",
-                "v2",
-                "unicorns"
-              ],
-              "query": [
-                {
-                  "key": "mood",
-                  "value": "HAPPY"
-                }
-              ]
-            }
-          },
-          "response": []
-        },
-        {
-          "name": "07.03 MAINTENANCE_TECHNICIAN has no access {TECH} → 403",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('Status code is 403', () => pm.response.to.have.status(403));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{fo3}}/api/v2/unicorns",
-              "host": [
-                "{{fo3}}"
-              ],
-              "path": [
-                "api",
-                "v2",
-                "unicorns"
-              ]
-            }
-          },
-          "response": []
-        },
-        {
-          "name": "07.04 No token {NONE} → 401",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('Status code is 401', () => pm.response.to.have.status(401));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{fo1}}/api/v2/unicorns",
-              "host": [
-                "{{fo1}}"
-              ],
-              "path": [
-                "api",
-                "v2",
-                "unicorns"
-              ]
-            }
-          },
-          "response": []
-        },
-        {
-          "name": "07.05 Unicorns is read-only: POST is not allowed {ATCC} → 403|405",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('Writing the mood is refused (403 or 405)', () => pm.expect(pm.response.code).to.be.oneOf([403, 405]));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [],
-            "body": {
-              "mode": "raw",
-              "raw": "{}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "url": {
-              "raw": "{{fo2}}/api/v2/unicorns",
-              "host": [
-                "{{fo2}}"
-              ],
-              "path": [
-                "api",
-                "v2",
-                "unicorns"
-              ]
-            }
-          },
-          "response": []
-        },
-        {
-          "name": "07.06 Mood follows the flights of a new aircraft: HAPPY → BUSY → GRUMPY {NONE}",
+          "name": "07.01 Register a test aircraft and schedule 3 flights on it {NONE}",
           "event": [
             {
               "listen": "test",
@@ -2215,21 +2046,12 @@
                   "const FO = ['fo1', 'fo2', 'fo3'].map(k => pm.environment.get(k));",
                   "let _n = 0; const C = (m, p, b, role) => L.call(m, p, b, role, FO[(_n++) % FO.length]);",
                   "const MG = pm.collectionVariables.get('mqMgmt'), AUTH = 'Basic ' + btoa(pm.collectionVariables.get('mqUser') + ':' + pm.collectionVariables.get('mqPassword'));",
-                  "const reg = 'CS-U' + (1000 + Math.floor(Math.random() * 9000)); pm.environment.set('moodReg', reg);",
+                  "const reg = 'CS-U' + (1000 + Math.floor(Math.random() * 9000)); pm.environment.set('testReg', reg);",
                   "const at = h => new Date(Date.now() + h * 3600000).toISOString().slice(0, 19);",
-                  "const mood = async (want, field, value) => { let u; for (let k = 0; k < 20; k++) { const r = await C('GET', '/api/v2/unicorns', null, 'ATCC'); u = (r.code === 200 ? r.json() : []).find(x => x.registrationNumber === reg); if (u && u.mood === want && u[field] === value) return u; await L.sleep(500); } return u || {}; };",
-                  "const reg1 = await L.call('POST', '/api/aircraft-models/instances', {registrationNumber: reg, modelName: 'A320', manufacturingDate: '2020-01-01', seatingCapacity: 180, features: 'mood'}, 'ATCC', pm.environment.get('ac1'));",
+                  "const reg1 = await L.call('POST', '/api/aircraft-models/instances', {registrationNumber: reg, modelName: 'A320', manufacturingDate: '2020-01-01', seatingCapacity: 180, features: 'test'}, 'ATCC', pm.environment.get('ac1'));",
                   "pm.test('[Aircraft] ' + reg + ' registered (201)', () => pm.expect(reg1.code).to.eql(201));",
                   "const ids = [];",
-                  "for (const h of [3, 6, 9]) { let r; for (let k = 0; k < 10; k++) { r = await C('POST', '/api/scheduled-flights', {routeId: 'RT-OPOLIS', registrationNumber: reg, scheduledDateTime: at(h)}, 'ATCC'); if (r.code === 201) break; await L.sleep(1000); } pm.test('Flight in ' + h + ' h scheduled on ' + reg + ' (201)', () => pm.expect(r.code).to.eql(201)); if (r.code === 201) ids.push(r.json().id); if (h === 3) { const u = await mood('HAPPY', 'flightsNext24h', 1); pm.test('With 1 flight in the next 24 h the mood is HAPPY', () => pm.expect(u.mood).to.eql('HAPPY')); } }",
-                  "const b = await mood('BUSY', 'flightsNext24h', 3);",
-                  "pm.test('With 3 flights in the next 24 h the mood is BUSY', () => { pm.expect(b.mood).to.eql('BUSY'); pm.expect(b.flightsNext24h).to.eql(3); });",
-                  "const d = await C('PATCH', '/api/scheduled-flights/' + ids[0] + '/status', {status: 'DELAYED'}, 'ATCC');",
-                  "const c = await C('PATCH', '/api/scheduled-flights/' + ids[1] + '/status', {status: 'CANCELED'}, 'ATCC');",
-                  "pm.test('One flight DELAYED and one CANCELED (200, 200)', () => { pm.expect(d.code).to.eql(200); pm.expect(c.code).to.eql(200); });",
-                  "const g = await mood('GRUMPY', 'delayedOrCanceledLast7Days', 2);",
-                  "pm.test('With 2 delayed/canceled flights the mood is GRUMPY (higher priority than BUSY)', () => { pm.expect(g.mood).to.eql('GRUMPY'); pm.expect(g.delayedOrCanceledLast7Days).to.eql(2); });",
-                  "pm.test('The read model was updated without any command on the mood (CQRS)', () => pm.expect(g.updatedAt).to.be.a('string'));"
+                  "for (const h of [3, 6, 9]) { let r; for (let k = 0; k < 10; k++) { r = await C('POST', '/api/scheduled-flights', {routeId: 'RT-OPOLIS', registrationNumber: reg, scheduledDateTime: at(h)}, 'ATCC'); if (r.code === 201) break; await L.sleep(1000); } pm.test('Flight in ' + h + ' h scheduled on ' + reg + ' (201)', () => pm.expect(r.code).to.eql(201)); if (r.code === 201) ids.push(r.json().id); }"
                 ]
               }
             }
@@ -2251,7 +2073,7 @@
           "response": []
         },
         {
-          "name": "07.07 [Aircraft events] AircraftStatusChanged (UNDER_MAINTENANCE) via fo.grounding: flights moved, mood SLEEPING {NONE}",
+          "name": "07.02 [Aircraft events] AircraftStatusChanged (UNDER_MAINTENANCE) via fo.grounding: flights moved, aircraft UNDER_MAINTENANCE {NONE}",
           "event": [
             {
               "listen": "test",
@@ -2267,10 +2089,10 @@
                   "const mgmt = (m, p, b) => L.send({url: MG + p, method: m, header: {'Authorization': AUTH, 'Content-Type': 'application/json'}, body: b ? {mode: 'raw', raw: JSON.stringify(b)} : undefined});",
                   "const publish = (rk, eventId, payload) => mgmt('POST', '/api/exchanges/%2F/aircraft.events/publish', {properties: {content_type: 'application/json', message_id: eventId}, routing_key: rk, payload: typeof payload === 'string' ? payload : JSON.stringify(payload), payload_encoding: 'string'});",
                   "const ev = (eid, reg, status, rev) => ({eventId: eid, type: 'AircraftStatusChanged', occurredAt: new Date().toISOString(), aggregateId: reg, revision: rev, payload: {registrationNumber: reg, status: status}});",
-                  "const moodOf = async reg => { const r = await C('GET', '/api/v2/unicorns', null, 'ATCC'); return (r.code === 200 ? r.json() : []).find(x => x.registrationNumber === reg) || {}; };",
-                  "const stableMood = async (reg, pred) => { let ok = 0, u = {}; for (let k = 0; k < 30 && ok < 4; k++) { u = await moodOf(reg); ok = pred(u) ? ok + 1 : 0; if (ok < 4) await L.sleep(500); } return {u, ok: ok >= 4}; };",
-                  "const reg = pm.environment.get('moodReg');",
-                  "pm.test('Run 07.06 first (it creates the test aircraft ' + reg + ')', () => pm.expect(reg).to.be.a('string'));",
+                  "const statusOf = async reg => { const r = await C('GET', '/api/scheduled-flights/availability?registrationNumber=' + reg + '&dateTime=' + new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 19), null, 'ATCC'); return r.code === 200 ? r.json() : {}; };",
+                  "const stableStatus = async (reg, pred) => { let ok = 0, u = {}; for (let k = 0; k < 30 && ok < 4; k++) { u = await statusOf(reg); ok = pred(u) ? ok + 1 : 0; if (ok < 4) await L.sleep(500); } return {u, ok: ok >= 4}; };",
+                  "const reg = pm.environment.get('testReg');",
+                  "pm.test('Run 07.01 first (it creates the test aircraft ' + reg + ')', () => pm.expect(reg).to.be.a('string'));",
                   "const before = await C('GET', '/api/scheduled-flights/aircraft/' + reg, null, 'ATCC');",
                   "const mine = asList(before.code === 200 ? before.json() : []).filter(f => ['SCHEDULED', 'DELAYED'].includes(f.status)).map(f => f.id);",
                   "pm.environment.set('groundIds', JSON.stringify(mine));",
@@ -2281,8 +2103,8 @@
                   "for (let k = 0; k < 30; k++) { moved = []; for (const id of mine) { const r = await C('GET', '/api/scheduled-flights/' + id, null, 'ATCC'); const j = r.json(); if (r.code === 200 && (j.registrationNumber !== reg || j.statusReason === 'NO_REPLACEMENT_AIRCRAFT')) moved.push(j); } if (moved.length === mine.length) break; await L.sleep(500); }",
                   "pm.test('Every future flight of ' + reg + ' (' + mine.length + ') was reassigned or delayed with NO_REPLACEMENT_AIRCRAFT', () => { pm.expect(mine.length).to.be.above(0); pm.expect(moved.length).to.eql(mine.length); });",
                   "pm.environment.set('groundRevisions', JSON.stringify(moved.map(j => j.revision)));",
-                  "const s = await stableMood(reg, u => u.mood === 'SLEEPING');",
-                  "pm.test(reg + ' is SLEEPING on all 3 instances (aircraft_ref updated by the event)', () => pm.expect(s.ok).to.be.true);"
+                  "const s = await stableStatus(reg, u => u.aircraftStatus === 'UNDER_MAINTENANCE');",
+                  "pm.test(reg + ' is UNDER_MAINTENANCE on all 3 instances (aircraft_ref updated by the event)', () => pm.expect(s.ok).to.be.true);"
                 ]
               }
             }
@@ -2305,7 +2127,7 @@
           "response": []
         },
         {
-          "name": "07.08 [Aircraft events] Duplicate event (same eventId) changes nothing: idempotent consumers {NONE}",
+          "name": "07.03 [Aircraft events] Duplicate event (same eventId) changes nothing: idempotent consumers {NONE}",
           "event": [
             {
               "listen": "test",
@@ -2320,9 +2142,9 @@
                   "const mgmt = (m, p, b) => L.send({url: MG + p, method: m, header: {'Authorization': AUTH, 'Content-Type': 'application/json'}, body: b ? {mode: 'raw', raw: JSON.stringify(b)} : undefined});",
                   "const publish = (rk, eventId, payload) => mgmt('POST', '/api/exchanges/%2F/aircraft.events/publish', {properties: {content_type: 'application/json', message_id: eventId}, routing_key: rk, payload: typeof payload === 'string' ? payload : JSON.stringify(payload), payload_encoding: 'string'});",
                   "const ev = (eid, reg, status, rev) => ({eventId: eid, type: 'AircraftStatusChanged', occurredAt: new Date().toISOString(), aggregateId: reg, revision: rev, payload: {registrationNumber: reg, status: status}});",
-                  "const moodOf = async reg => { const r = await C('GET', '/api/v2/unicorns', null, 'ATCC'); return (r.code === 200 ? r.json() : []).find(x => x.registrationNumber === reg) || {}; };",
-                  "const stableMood = async (reg, pred) => { let ok = 0, u = {}; for (let k = 0; k < 30 && ok < 4; k++) { u = await moodOf(reg); ok = pred(u) ? ok + 1 : 0; if (ok < 4) await L.sleep(500); } return {u, ok: ok >= 4}; };",
-                  "const reg = pm.environment.get('moodReg'), eid = pm.environment.get('groundEventId');",
+                  "const statusOf = async reg => { const r = await C('GET', '/api/scheduled-flights/availability?registrationNumber=' + reg + '&dateTime=' + new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 19), null, 'ATCC'); return r.code === 200 ? r.json() : {}; };",
+                  "const stableStatus = async (reg, pred) => { let ok = 0, u = {}; for (let k = 0; k < 30 && ok < 4; k++) { u = await statusOf(reg); ok = pred(u) ? ok + 1 : 0; if (ok < 4) await L.sleep(500); } return {u, ok: ok >= 4}; };",
+                  "const reg = pm.environment.get('testReg'), eid = pm.environment.get('groundEventId');",
                   "const ids = JSON.parse(pm.environment.get('groundIds') || '[]'), revs = JSON.parse(pm.environment.get('groundRevisions') || '[]');",
                   "const p = await publish('aircraft.status-changed', eid, ev(eid, reg, 'UNDER_MAINTENANCE', 100));",
                   "pm.test('Same event (same eventId) published again', () => pm.expect(p.json().routed).to.eql(true));",
@@ -2352,7 +2174,7 @@
           "response": []
         },
         {
-          "name": "07.09 [Aircraft events] Older event ignored, newer event applied (revision order) {NONE}",
+          "name": "07.04 [Aircraft events] Older event ignored, newer event applied (revision order) {NONE}",
           "event": [
             {
               "listen": "test",
@@ -2367,18 +2189,18 @@
                   "const mgmt = (m, p, b) => L.send({url: MG + p, method: m, header: {'Authorization': AUTH, 'Content-Type': 'application/json'}, body: b ? {mode: 'raw', raw: JSON.stringify(b)} : undefined});",
                   "const publish = (rk, eventId, payload) => mgmt('POST', '/api/exchanges/%2F/aircraft.events/publish', {properties: {content_type: 'application/json', message_id: eventId}, routing_key: rk, payload: typeof payload === 'string' ? payload : JSON.stringify(payload), payload_encoding: 'string'});",
                   "const ev = (eid, reg, status, rev) => ({eventId: eid, type: 'AircraftStatusChanged', occurredAt: new Date().toISOString(), aggregateId: reg, revision: rev, payload: {registrationNumber: reg, status: status}});",
-                  "const moodOf = async reg => { const r = await C('GET', '/api/v2/unicorns', null, 'ATCC'); return (r.code === 200 ? r.json() : []).find(x => x.registrationNumber === reg) || {}; };",
-                  "const stableMood = async (reg, pred) => { let ok = 0, u = {}; for (let k = 0; k < 30 && ok < 4; k++) { u = await moodOf(reg); ok = pred(u) ? ok + 1 : 0; if (ok < 4) await L.sleep(500); } return {u, ok: ok >= 4}; };",
-                  "const reg = pm.environment.get('moodReg');",
+                  "const statusOf = async reg => { const r = await C('GET', '/api/scheduled-flights/availability?registrationNumber=' + reg + '&dateTime=' + new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 19), null, 'ATCC'); return r.code === 200 ? r.json() : {}; };",
+                  "const stableStatus = async (reg, pred) => { let ok = 0, u = {}; for (let k = 0; k < 30 && ok < 4; k++) { u = await statusOf(reg); ok = pred(u) ? ok + 1 : 0; if (ok < 4) await L.sleep(500); } return {u, ok: ok >= 4}; };",
+                  "const reg = pm.environment.get('testReg');",
                   "const old = 'p2-old-' + Date.now();",
                   "await publish('aircraft.status-changed', old, ev(old, reg, 'ACTIVE', 50));",
                   "await L.sleep(4000);",
-                  "const a = await stableMood(reg, u => u.mood === 'SLEEPING');",
-                  "pm.test('An OLDER event (revision 50 < 100) is ignored: ' + reg + ' stays SLEEPING', () => pm.expect(a.ok).to.be.true);",
+                  "const a = await stableStatus(reg, u => u.aircraftStatus === 'UNDER_MAINTENANCE');",
+                  "pm.test('An OLDER event (revision 50 < 100) is ignored: ' + reg + ' stays UNDER_MAINTENANCE', () => pm.expect(a.ok).to.be.true);",
                   "const nw = 'p2-new-' + Date.now();",
                   "await publish('aircraft.status-changed', nw, ev(nw, reg, 'ACTIVE', 101));",
-                  "const b = await stableMood(reg, u => u.mood && u.mood !== 'SLEEPING');",
-                  "pm.test('A NEWER event (revision 101) is applied: ' + reg + ' is no longer SLEEPING (' + b.u.mood + ')', () => pm.expect(b.ok).to.be.true);"
+                  "const b = await stableStatus(reg, u => u.aircraftStatus === 'ACTIVE');",
+                  "pm.test('A NEWER event (revision 101) is applied: ' + reg + ' is ACTIVE again (' + b.u.aircraftStatus + ')', () => pm.expect(b.ok).to.be.true);"
                 ]
               }
             }
@@ -2401,7 +2223,7 @@
           "response": []
         },
         {
-          "name": "07.10 [Aircraft events] Malformed event goes to the dead-letter queue (fo.dead-letter) {NONE}",
+          "name": "07.05 [Aircraft events] Malformed event goes to the dead-letter queue (fo.dead-letter) {NONE}",
           "event": [
             {
               "listen": "test",
@@ -2416,8 +2238,8 @@
                   "const mgmt = (m, p, b) => L.send({url: MG + p, method: m, header: {'Authorization': AUTH, 'Content-Type': 'application/json'}, body: b ? {mode: 'raw', raw: JSON.stringify(b)} : undefined});",
                   "const publish = (rk, eventId, payload) => mgmt('POST', '/api/exchanges/%2F/aircraft.events/publish', {properties: {content_type: 'application/json', message_id: eventId}, routing_key: rk, payload: typeof payload === 'string' ? payload : JSON.stringify(payload), payload_encoding: 'string'});",
                   "const ev = (eid, reg, status, rev) => ({eventId: eid, type: 'AircraftStatusChanged', occurredAt: new Date().toISOString(), aggregateId: reg, revision: rev, payload: {registrationNumber: reg, status: status}});",
-                  "const moodOf = async reg => { const r = await C('GET', '/api/v2/unicorns', null, 'ATCC'); return (r.code === 200 ? r.json() : []).find(x => x.registrationNumber === reg) || {}; };",
-                  "const stableMood = async (reg, pred) => { let ok = 0, u = {}; for (let k = 0; k < 30 && ok < 4; k++) { u = await moodOf(reg); ok = pred(u) ? ok + 1 : 0; if (ok < 4) await L.sleep(500); } return {u, ok: ok >= 4}; };",
+                  "const statusOf = async reg => { const r = await C('GET', '/api/scheduled-flights/availability?registrationNumber=' + reg + '&dateTime=' + new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 19), null, 'ATCC'); return r.code === 200 ? r.json() : {}; };",
+                  "const stableStatus = async (reg, pred) => { let ok = 0, u = {}; for (let k = 0; k < 30 && ok < 4; k++) { u = await statusOf(reg); ok = pred(u) ? ok + 1 : 0; if (ok < 4) await L.sleep(500); } return {u, ok: ok >= 4}; };",
                   "const count = async () => { const r = await mgmt('GET', '/api/queues/%2F/fo.dead-letter'); return r.code === 200 ? (r.json().messages || 0) : -1; };",
                   "const before = await count();",
                   "pm.test('fo.dead-letter queue is readable (' + before + ' messages)', () => pm.expect(before).to.be.at.least(0));",
