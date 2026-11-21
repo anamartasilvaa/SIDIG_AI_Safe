@@ -48,7 +48,7 @@ Cliente ──HTTPS/REST──► Gateway (NGINX) ──► instâncias dos serv
 
 ### `GET /api/v2/unicorns` e o CQRS
 
-O "humor" dos aviões é um **read model puro**: não existe comando para o alterar. É uma vista
+O *mood status* dos aviões é um **read model puro**: não existe comando para o alterar. É uma vista
 (`aircraft_mood_view`, no Flight Operations) recalculada por um projetor sempre que chega um evento de voo
 (agendado, mudança de estado, reatribuição). O endpoint só lê essa vista. Para os testes de integração existe também
 um **Mock Server** no Postman que devolve o mesmo tipo de informação em JSON (pedido obrigatório do enunciado).

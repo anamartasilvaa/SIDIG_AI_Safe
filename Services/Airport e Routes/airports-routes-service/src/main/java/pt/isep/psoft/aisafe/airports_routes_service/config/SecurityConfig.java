@@ -50,6 +50,8 @@ public class SecurityConfig {
 
                         .requestMatchers("/h2-console/**", "/v3/api-docs/**",
                                 "/swagger-ui/**", "/swagger-ui.html").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/internal/snapshot")
+                        .hasAuthority("ROLE_PEER")
                         .requestMatchers(HttpMethod.GET, "/api/admin/replication-tasks")
                         .hasAuthority("ROLE_ADMIN")
                         .requestMatchers(HttpMethod.GET, "/api/airports/**")

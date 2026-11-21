@@ -1,37 +1,29 @@
 @startuml sd-conflict-resolution
 skinparam shadowing false
-title SD - Conflict resolution (last-writer-wins) when two instances update the same airport
+title SD - Conflito: as duas instâncias alteram o mesmo aeroporto (last-writer-wins)
 
 participant "airports-routes-1" as A1
 participant "RabbitMQ\nairports.events" as MQ
 participant "airports-routes-2" as A2
 
-== Concurrent updates of the same airport ==
-A1 -> A1 : PATCH /api/airports/OPO/status\nlastModified = T1, originNodeId = airports-routes-1
-A2 -> A2 : PATCH /api/airports/OPO/status\nlastModified = T2, originNodeId = airports-routes-2
+== Duas alterações ao mesmo tempo ==
+A1 -> A1 : PATCH OPO/status\nlastModified = T1
+A2 -> A2 : PATCH OPO/status\nlastModified = T2 (T2 > T1)
 
 A1 -> MQ : AIRPORT_STATUS_CHANGED (T1)
 A2 -> MQ : AIRPORT_STATUS_CHANGED (T2)
 
-MQ -> A1 : event from airports-routes-2 (T2)
-MQ -> A2 : event from airports-routes-1 (T1)
-note over MQ
-  The fanout also returns each instance its own
-  event: the consumer ignores events whose
-  originNodeId equals its own node id.
-end note
+MQ -> A1 : evento da instância 2 (T2)
+MQ -> A2 : evento da instância 1 (T1)
 
-== Decision on each instance: isNewer(incoming, current) ==
-A1 -> A1 : T2 > T1 ?\nyes -> apply (airports-routes-2 wins)
-A2 -> A2 : T1 > T2 ?\nno -> ignore (own state is newer)
+== Cada instância decide sozinha ==
+A1 -> A1 : T2 mais recente que T1?\nsim -> aplica
+A2 -> A2 : T1 mais recente que T2?\nnão -> ignora
 
 note over A1, A2
-  Rule: the update with the later lastModified wins.
-  On a tie, the larger originNodeId wins.
-  Both instances converge to the same state
-  (eventual consistency), whatever the arrival order.
-  Duplicates are filtered first by the inbox
-  (processed_event); last-writer-wins also makes
-  a repeated or older event harmless.
+  Regra: ganha a alteração mais recente.
+  Empate? Ganha o originNodeId maior.
+  As duas aplicam a mesma regra -> ficam iguais,
+  seja qual for a ordem de chegada.
 end note
 @enduml

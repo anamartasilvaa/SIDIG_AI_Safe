@@ -81,7 +81,7 @@ Existem três modos de execução (ver detalhes em `infrastructure/README.md`).
 correspondente para permitir a comunicação HTTPS.
 
 *(Nota: Ao correr o projeto via Docker, os caminhos para a truststore são injetados automaticamente no arranque 
-através das variáveis de ambiente no ficheiro `docker-compose.yml`).*
+através das variáveis de ambiente no ficheiro `infrastructure/docker-compose.secure.yml`).*
 
 ### 4.2. Arranque da Infraestrutura (Keycloak)
 Antes de iniciar os microsserviços, é necessário garantir que o servidor de autenticação (Keycloak) 

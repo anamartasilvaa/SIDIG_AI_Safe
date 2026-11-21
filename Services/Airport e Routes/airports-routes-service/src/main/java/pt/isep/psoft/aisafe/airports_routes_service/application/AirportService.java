@@ -214,6 +214,67 @@ public class AirportService {
         return project(airport);
     }
 
+    // --- Snapshot (instancia que arranca com a base de dados vazia) ---
+
+    /** Todos os aeroportos do modelo de escrita, com lastModified e originNodeId (GET /internal/snapshot). */
+    @Transactional(readOnly = true)
+    public List<AirportSnapshotDTO> exportSnapshot() {
+        return airportRepository.findAll().stream()
+                .map(a -> new AirportSnapshotDTO(
+                        a.getIataCode().code(), a.getName(), a.getCity(), a.getCountry(), a.getTimezone(),
+                        a.getType().name(), a.getStatus().name(),
+                        a.getCoordinates().latitude(), a.getCoordinates().longitude(),
+                        a.getRunways().stream()
+                                .map(r -> new RunwayDTO(r.getName(), r.getLength(), r.getOrientation())).toList(),
+                        a.getFacilities().stream()
+                                .map(f -> new FacilityDTO(f.getType(), f.getDescription())).toList(),
+                        a.getImageUrl(), a.getOperationalHours(), a.getContactInformation(),
+                        a.getLastModified(), a.getOriginNodeId()))
+                .toList();
+    }
+
+    /**
+     * Aplica um aeroporto recebido no snapshot de outra instancia. Nao gera eventos (a outra instancia ja os tem).
+     * Usa a mesma regra dos eventos (last-writer-wins), por isso um evento mais recente ja recebido pela fila
+     * nunca e substituido por um snapshot mais antigo.
+     * @return true se a copia local foi criada ou atualizada.
+     */
+    @Transactional
+    public boolean applySnapshot(AirportSnapshotDTO s) {
+        Optional<Airport> existing = airportRepository.findByIataCodeString(s.iataCode().toUpperCase());
+        if (existing.isPresent() && !snapshotWins(s.lastModified(), s.originNodeId(),
+                existing.get().getLastModified(), existing.get().getOriginNodeId())) {
+            return false;
+        }
+        AirportType type = AirportType.valueOf(s.type().toUpperCase());
+        Coordinates coordinates = new Coordinates(s.latitude(), s.longitude());
+        Airport airport = existing.orElseGet(() -> new Airport(new IATACode(s.iataCode()), s.name(), s.city(),
+                s.country(), s.timezone(), type, coordinates));
+        List<Runway> runways = s.runways() == null ? List.of() : s.runways().stream()
+                .map(r -> new Runway(r.name(), r.length(), r.orientation())).toList();
+        List<Facility> facilities = s.facilities() == null ? List.of() : s.facilities().stream()
+                .map(f -> new Facility(f.type(), f.description())).toList();
+        airport.applyReplicationData(s.name(), s.city(), s.country(), s.timezone(), type, coordinates,
+                AirportStatus.valueOf(s.status().toUpperCase()), runways, facilities, s.imageUrl(),
+                s.operationalHours(), s.contactInformation());
+        airport.applyReplicationMetadata(s.lastModified(), s.originNodeId());
+        project(airportRepository.save(airport));
+        return true;
+    }
+
+    /**
+     * Regra do snapshot: last-writer-wins, exceto quando a copia local veio dos dados iniciais
+     * (originNodeId "local", criada pelo AirportBootstrapper no arranque): essa e sempre substituida
+     * pelos dados reais da outra instancia.
+     */
+    static boolean snapshotWins(Instant incoming, String incomingNode, Instant current, String currentNode) {
+        if (incoming == null) return false;
+        if ("local".equals(currentNode) && !"local".equals(incomingNode)) return true;
+        if (current == null) return true;
+        int c = incoming.compareTo(current);
+        return c > 0 || (c == 0 && String.valueOf(incomingNode).compareTo(String.valueOf(currentNode)) > 0);
+    }
+
     /** CQRS: modelo de leitura atualizado pelo projetor (opcional para permitir testes unitarios). */
     @Autowired(required = false)
     private AirportProjector airportProjector;

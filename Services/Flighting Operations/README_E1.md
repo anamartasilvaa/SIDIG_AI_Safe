@@ -26,7 +26,7 @@ docker compose -f docker-compose.secure.yml up --build
 ```
 
 Quando todos os containers estiverem `healthy`, o sistema fica disponível em `https://localhost:8443` (gateway 1) e
-`https://localhost:8444` (gateway 2). Para testar, importar a coleção `tests(postman)/SIDIS-Modo-B.postman_collection.json` e o
+`https://localhost:8444` (gateway 2). Para testar, importar a coleção `tests(postman)/SIDIS – Modo B (Docker).postman_collection.json` e o
 environment `SIDIS` (secção 9.2). Outros modos de execução: secção 4.
 
 ---
@@ -445,14 +445,14 @@ Executar: botão direito em `src/test/java` → **Run 'All Tests'**, ou `mvn tes
 
 
 
-### 9.2 Postman – coleções `SIDIS-Modo-A` e `SIDIS-Modo-B`
+### 9.2 Postman – coleções `SIDIS – Modo A (IntelliJ)` e `SIDIS – Modo B (Docker)`
 
 Pasta `tests(postman)/` da raiz do repositório:
 
 | Ficheiro                               | Para                                                       |
 |----------------------------------------|------------------------------------------------------------|
-| `SIDIS-Modo-A.postman_collection.json` | Modo A (IntelliJ): inclui acesso direto às réplicas        |
-| `SIDIS-Modo-B.postman_collection.json` | Modo B (Docker seguro): só através das gateways            |
+| `SIDIS – Modo A (IntelliJ).postman_collection.json` | Modo A (IntelliJ): inclui acesso direto às réplicas        |
+| `SIDIS – Modo B (Docker).postman_collection.json` | Modo B (Docker seguro): só através das gateways            |
 
 Os tokens do Keycloak são obtidos e renovados automaticamente, e cada execução gera um `runId` e datas novas, pelo que as
 coleções podem repetir-se sem limpar as bases de dados. Pastas com testes deste serviço:

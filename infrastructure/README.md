@@ -213,11 +213,13 @@ docker compose -f infrastructure/docker-compose.services.yml down
 
 Pasta `tests(postman)/` da raiz do repositório:
 
-| Ficheiro                               | Para                                                       |
-|----------------------------------------|------------------------------------------------------------|
-| `SIDIS.postman_environment.json`       | Environment `SIDIS` (URLs, utilizadores de teste, API key) |
-| `SIDIS-Modo-A.postman_collection.json` | Modo A (acesso direto às réplicas)                         |
-| `SIDIS-Modo-B.postman_collection.json` | Modo B (só via gateway, 2 réplicas, testes de SPOF)        |
+| Ficheiro | Para |
+|---|---|
+| `SIDIS.postman_environment.json` | Environment `SIDIS` (URLs, utilizadores de teste, API key) |
+| `SIDIS – Modo A (IntelliJ).postman_collection.json` | Entrega 1, Modo A (acesso direto às réplicas) |
+| `SIDIS – Modo B (Docker).postman_collection.json` | Entrega 1, Modo B (só via gateway, 2 réplicas, testes de SPOF) |
+| `SIDIS – Entrega 2 Modo A (IntelliJ).postman_collection.json` | Entrega 2, Modo A (CQRS, AMQP, base por instância; 188 testes) |
+| `SIDIS – Entrega 2 Modo B (Docker).postman_collection.json` | Entrega 2, Modo B (125 testes; ver `docs/SIDIS/README.md`) |
 
 1. Importar o environment e a coleção do modo em uso; escolher o environment `SIDIS`.
 2. Em *Settings*, desligar **SSL certificate verification** (certificado autoassinado).
@@ -239,7 +241,7 @@ Resultado esperado nas pastas `00` a `07`, sem falhas: **Modo A: 365 testes; Mod
 
 ![Collection Runner do Modo B: 348 testes, 0 falhas](../docs/SIDIS/screenshots/02-modo-b-postman-runner.png)
 
-Com Newman: `newman run "tests(postman)/SIDIS-Modo-A.postman_collection.json" -e "tests(postman)/SIDIS.postman_environment.json" --insecure --delay-request 100`
+Com Newman: `newman run "tests(postman)/SIDIS – Modo A (IntelliJ).postman_collection.json" -e "tests(postman)/SIDIS.postman_environment.json" --insecure --delay-request 100`
 
 ## Testes manuais de tolerância a falhas (Modo B, pasta 09)
 

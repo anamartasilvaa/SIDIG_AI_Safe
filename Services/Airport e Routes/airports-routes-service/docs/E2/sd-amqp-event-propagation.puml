@@ -1,60 +1,60 @@
 @startuml sd-amqp-event-propagation
 skinparam style strictuml
 autonumber
-title SD - Create Route: CQRS command + AMQP event propagation (P2)
+title SD - Criar rota: comando CQRS + propagação do evento pelo RabbitMQ
 
 actor "Backoffice" as User
-participant "RouteController\n(instance 1)" as Ctrl
+participant "RouteController\n(instância 1)" as Ctrl
 participant "RouteService" as Svc
-participant "RouteRepository\n(write model)" as RR
+participant "RouteRepository\n(escrita)" as RR
 participant "RouteProjector" as Proj
-participant "RouteReadRepository\n(read model)" as RM
+participant "RouteReadRepository\n(leitura)" as RM
 participant "ReplicationOutbox" as Outbox
 participant "AmqpReplicationPublisher" as Pub
 participant "airports.events\n(fanout)" as Ex
-participant "ReplicationEventConsumer\n(instance 2)" as Cons2
+participant "ReplicationEventConsumer\n(instância 2)" as Cons2
 participant "IdempotencyGuard\n(inbox)" as Inbox
-participant "RouteService\n(instance 2)" as Svc2
+participant "RouteService\n(instância 2)" as Svc2
 
-User -> Ctrl : POST /api/routes (CreateRouteDTO)
+User -> Ctrl : POST /api/routes
 activate Ctrl
 Ctrl -> Svc : createRoute(dto, isReplication=false)
 activate Svc
-note right of Svc : one @Transactional unit:\nwrite model + read model + outbox
+note right of Svc : UMA transação:\nescrita + leitura + outbox
 Svc -> RR : save(route)
 Svc -> Proj : project(route)
 Proj -> RM : save(RouteReadModel)
-Svc -> Outbox : enqueue(POST /api/routes, payload)
-Outbox -> Outbox : save ReplicationTask(PENDING,\npeerUrl = "amqp://broker")
+Svc -> Outbox : enqueue(evento)
+Outbox -> Outbox : grava ReplicationTask (PENDING)
 Svc --> Ctrl : RouteViewDTO
 Ctrl --> User : 201 Created
 deactivate Svc
 deactivate Ctrl
+note right of User : O cliente não espera pelo broker.
 
-== Background publisher (every 2 s) ==
-Pub -> Pub : findTop100ByStatus(PENDING)
-Pub -> Ex : publish persistent JSON envelope\n(eventType=ROUTE_CREATED,\nmessageId=eventId (UUID))
-Ex --> Pub : publisher confirm (<= 5 s)
-Pub -> Pub : task.markDone()
-note right of Pub : no confirm -> retry with backoff\nmin(60 s, 5*2^attempts), 10 attempts -> FAILED
+== Em segundo plano (de 2 em 2 s) ==
+Pub -> Pub : lê as tarefas PENDING
+Pub -> Ex : publica ROUTE_CREATED\n(messageId = eventId, UUID)
+Ex --> Pub : confirmação do broker
+Pub -> Pub : tarefa = DONE
+note right of Pub : Sem confirmação -> tenta mais tarde.\n10 falhas -> FAILED.
 
-== Broker fans out to every bound queue ==
-Ex -> Cons2 : deliver from queue\nairports.events.airports-routes-2
+== O broker entrega uma cópia a cada fila ==
+Ex -> Cons2 : fila airports.events.airports-routes-2
 activate Cons2
-Cons2 -> Cons2 : originNodeId == own id?\nyes -> ignore (ack)
+Cons2 -> Cons2 : evento meu? -> ignora
 Cons2 -> Inbox : runOnce(eventId)
 activate Inbox
-Inbox -> Inbox : processed_event has (consumer, eventId)?\nyes -> duplicate, return (ack)
+Inbox -> Inbox : já processado? -> ignora
 Inbox -> Svc2 : createRoute(dto, isReplication=true)
 activate Svc2
-Svc2 -> Svc2 : idempotent apply\n(existing id -> return existing;\nlast-writer-wins by lastModified)
-Svc2 -> Svc2 : save write model\n+ project() read model\n+ history with the event time (UTC)
+Svc2 -> Svc2 : grava escrita + leitura\n(last-writer-wins)
 Svc2 --> Inbox : ok
 deactivate Svc2
-Inbox -> Inbox : insert processed_event\n(same transaction as the effect)
-Inbox --> Cons2 : applied -> ack
+Inbox -> Inbox : grava processed_event\n(na mesma transação)
+Inbox --> Cons2 : ack
 deactivate Inbox
 deactivate Cons2
-note right of Cons2 : failure -> listener retry (3 attempts,\n1 s * 2) -> dead-letter queue (.dlq)
-note over Ex : Flight Operations consumes the same event\nfrom its own queue (local copy of routes)
+note right of Cons2 : Erro -> 3 tentativas -> DLQ.
+note over Ex : O Flight Operations recebe o mesmo evento\nna sua própria fila.
 @enduml

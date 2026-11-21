@@ -6,7 +6,9 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.client.ResourceAccessException;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.transaction.CannotCreateTransactionException;
 
 import java.util.List;
 import java.util.Map;
@@ -43,6 +45,16 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, String>> handleDataIntegrityConflict(DataIntegrityViolationException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(Map.of("error", "Conflict", "message", "The requested resource already exists."));
+    }
+
+    /**
+     * Base de dados desta instancia indisponivel: 503 (e nao 500), para a gateway repetir o pedido
+     * na outra instancia (proxy_next_upstream http_503), como no Flight Operations.
+     */
+    @ExceptionHandler({CannotCreateTransactionException.class, DataAccessResourceFailureException.class})
+    public ResponseEntity<Map<String, String>> handleDatabaseUnavailable(RuntimeException ex) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(Map.of("error", "Service Unavailable", "message", "This instance's database is unavailable."));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

@@ -3,9 +3,9 @@ skinparam classAttributeIconSize 0
 skinparam packageStyle rectangle
 skinparam shadowing false
 hide empty members
-title Airports & Routes Service - Domain Model (write side) + CQRS read model + outbox
+title Airports & Routes - Modelo de domínio (escrita) + modelo de leitura (CQRS) + outbox/inbox
 
-package "Airport Aggregate" {
+package "Agregado Airport" {
     class Airport <<Entity>> <<Root>> {
 - pk: Long
 - version: Long
@@ -49,15 +49,20 @@ package "Airport Aggregate" {
 - description: String
     }
 
-    Airport "1" *-- "1" IATACode : identified by >
-    Airport "1" *-- "1" Coordinates : located at >
-    Airport "1" --> "1" AirportStatus : has >
-    Airport "1" --> "1" AirportType : is of type >
-    Airport "1" *-- "*" Runway : contains >
-    Airport "1" *-- "*" Facility : has >
+    Airport "1" *-- "1" IATACode : identificado por >
+    Airport "1" *-- "1" Coordinates : localizado em >
+    Airport "1" --> "1" AirportStatus : tem >
+    Airport "1" --> "1" AirportType : é do tipo >
+    Airport "1" *-- "*" Runway : contém >
+    Airport "1" *-- "*" Facility : tem >
+
+    note right of Airport
+      lastModified + originNodeId:
+      servem para o last-writer-wins.
+    end note
 }
 
-package "Route Aggregate" {
+package "Agregado Route" {
     class Route <<Entity>> <<Root>> {
 - pk: Long
 - version: Long
@@ -80,13 +85,13 @@ package "Route Aggregate" {
         ACTIVE, INACTIVE
     }
 
-    Route "1" *-- "1" RouteId : identified by >
-    Route "1" --> "1" RouteStatus : has >
-    Route "*" --> "1" Airport : origin (by ID) >
-    Route "*" --> "1" Airport : destination (by ID) >
+    Route "1" *-- "1" RouteId : identificada por >
+    Route "1" --> "1" RouteStatus : tem >
+    Route "*" --> "1" Airport : origem >
+    Route "*" --> "1" Airport : destino >
 }
 
-package "Route History" {
+package "Histórico de rotas" {
     class RouteHistory <<Entity>> {
 - pk: Long
 - routeId: String
@@ -97,15 +102,14 @@ package "Route History" {
         --
         + closeHistory(endDate)
     }
-    Route ..> RouteHistory : tracks history
+    Route ..> RouteHistory : regista >
     note bottom of RouteHistory
-      startDate / endDate use the EVENT time (lastModified, UTC),
-      identical on every instance; endDate is never before startDate
-      (protection against out-of-order events).
+      Datas = hora do evento (UTC),
+      iguais em todas as instâncias.
     end note
 }
 
-package "Messaging Infrastructure (outbox + inbox)" {
+package "Mensagens (outbox + inbox)" {
     class ReplicationTask <<Outbox>> {
 - id: Long
 - peerUrl: String
@@ -137,20 +141,18 @@ package "Messaging Infrastructure (outbox + inbox)" {
 - eventType: String
 - processedAt: Instant
     }
-    note bottom of ProcessedEvent
-      Idempotent consumer: unique (consumer, eventId),
-      eventId = UUID from the outbox task (= AMQP messageId).
-      Saved in the same transaction as the event's effect.
-    end note
     note bottom of ReplicationTask
-      Transactional outbox: saved in the SAME transaction as the aggregate.
-      AMQP mode: one task per event (peerUrl = "amqp://broker");
-      HTTP mode (Entrega 1): one task per peer.
-      Event type derived from method + path (ReplicationEventType).
+      Outbox: gravada na MESMA transação
+      do comando -> nenhum evento se perde.
+      Uma tarefa por evento.
+    end note
+    note bottom of ProcessedEvent
+      Inbox: (consumer, eventId) é único
+      -> cada evento só é aplicado uma vez.
     end note
 }
 
-package "CQRS Read Model (query side)" {
+package "Modelo de leitura (CQRS)" {
     class AirportReadModel <<Read Model>> {
 - iataCode: String  {id}
 - name: String
@@ -175,21 +177,18 @@ package "CQRS Read Model (query side)" {
 - originNodeId: String
     }
     note bottom of RouteReadModel
-      Flat, denormalised tables (airport_read_model, route_read_model)
-      written only by AirportProjector / RouteProjector, in the same
-      transaction as the command. Coordinates are copied into the route
-      row so GeoJSON, statistics and the BFS need no joins.
-      Rebuilt from the write model at startup (ReadModelRebuilder).
+      Tabelas simples, sem joins.
+      Só os projetores escrevem aqui.
+      Refeitas no arranque se for preciso.
     end note
 }
 
 note as Schema
-  All tables are created by Flyway migrations
-  (V1__airports_routes_schema.sql, V2__replication_task_event_id.sql);
-  Hibernate only maps them (ddl-auto=none).
+  Todas as tabelas são criadas pelo Flyway (V1, V2).
+  O Hibernate só as lê (ddl-auto=none).
 end note
 
-Airport ..> AirportReadModel : projected to >
-Route ..> RouteReadModel : projected to >
+Airport ..> AirportReadModel : projetado em >
+Route ..> RouteReadModel : projetada em >
 
 @enduml

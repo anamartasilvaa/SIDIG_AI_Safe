@@ -203,6 +203,65 @@ public class RouteService {
 
     // --- Métodos Privados Auxiliares ---
 
+    // --- Snapshot (instancia que arranca com a base de dados vazia) ---
+
+    /** Todas as rotas do modelo de escrita, com lastModified e originNodeId (GET /internal/snapshot). */
+    @Transactional(readOnly = true)
+    public List<RouteSnapshotDTO> exportSnapshot() {
+        return routeRepository.findAll().stream()
+                .map(rt -> new RouteSnapshotDTO(
+                        rt.getRouteId().id(),
+                        rt.getOrigin().getIataCode().code(),
+                        rt.getDestination().getIataCode().code(),
+                        rt.getEstimatedFlightTime(), rt.getMinimumRange(), rt.getMinimumCapacity(),
+                        rt.getStatus().name(), rt.getLastModified(), rt.getOriginNodeId()))
+                .toList();
+    }
+
+    /**
+     * Aplica uma rota recebida no snapshot de outra instancia (os aeroportos sao aplicados antes).
+     * Nao gera eventos. Mesma regra do AirportService.applySnapshot (last-writer-wins; os dados iniciais
+     * locais sao sempre substituidos). O historico fica so com o estado atual (CREATED e, se estiver
+     * inativa, DEACTIVATED), na hora do lastModified.
+     * @return true se a copia local foi criada ou atualizada.
+     */
+    @Transactional
+    public boolean applySnapshot(RouteSnapshotDTO s) {
+        RouteStatus status = RouteStatus.valueOf(s.status().toUpperCase());
+        Optional<Route> existing = routeRepository.findByRouteId(new RouteId(s.routeId()));
+        if (existing.isPresent()) {
+            Route route = existing.get();
+            if (!AirportService.snapshotWins(s.lastModified(), s.originNodeId(),
+                    route.getLastModified(), route.getOriginNodeId())) {
+                return false;
+            }
+            boolean deactivated = route.getStatus() == RouteStatus.ACTIVE && status == RouteStatus.INACTIVE;
+            route.applyReplicationData(s.estimatedFlightTime(), s.minimumRange(), s.minimumCapacity(), status);
+            route.applyReplicationMetadata(s.lastModified(), s.originNodeId());
+            Route saved = routeRepository.save(route);
+            closeOldHistoryAndCreateNew(saved.getRouteId().id(), deactivated ? "DEACTIVATED" : "UPDATED",
+                    saved.getLastModified());
+            project(saved);
+            return true;
+        }
+        Airport origin = airportRepository.findByIataCodeString(s.originIata())
+                .orElseThrow(() -> new NotFoundException("Origin Airport not found: " + s.originIata()));
+        Airport destination = airportRepository.findByIataCodeString(s.destinationIata())
+                .orElseThrow(() -> new NotFoundException("Destination Airport not found: " + s.destinationIata()));
+        Route route = new Route(new RouteId(s.routeId()), origin, destination,
+                s.estimatedFlightTime(), s.minimumRange(), s.minimumCapacity());
+        route.applyReplicationData(s.estimatedFlightTime(), s.minimumRange(), s.minimumCapacity(), status);
+        route.applyReplicationMetadata(s.lastModified(), s.originNodeId());
+        Route saved = routeRepository.save(route);
+        routeHistoryRepository.save(new RouteHistory(saved.getRouteId().id(), "CREATED",
+                LocalDateTime.ofInstant(saved.getLastModified(), ZoneOffset.UTC)));
+        if (status == RouteStatus.INACTIVE) {
+            closeOldHistoryAndCreateNew(saved.getRouteId().id(), "DEACTIVATED", saved.getLastModified());
+        }
+        project(saved);
+        return true;
+    }
+
     /** CQRS: modelo de leitura atualizado pelo projetor (opcional para permitir testes unitarios). */
     @Autowired(required = false)
     private RouteProjector routeProjector;

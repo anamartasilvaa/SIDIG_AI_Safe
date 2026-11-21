@@ -5,32 +5,32 @@ skinparam rectangle {
   RoundCorner 8
 }
 left to right direction
-title Airports & Routes - AMQP topology (RabbitMQ cluster, fanout pub/sub, quorum queues)
+title Airports & Routes - Topologia AMQP (cluster RabbitMQ, fanout, filas quorum)
 
-package "Publishers (Transactional Outbox)" {
-  rectangle "airports-routes-1\nAmqpReplicationPublisher\n(every 2 s, max 100 tasks)" as pub1 #DDEBFF
-  rectangle "airports-routes-2\nAmqpReplicationPublisher\n(every 2 s, max 100 tasks)" as pub2 #DDEBFF
+package "Quem publica (outbox)" {
+  rectangle "airports-routes-1\nAmqpReplicationPublisher\n(de 2 em 2 s)" as pub1 #DDEBFF
+  rectangle "airports-routes-2\nAmqpReplicationPublisher\n(de 2 em 2 s)" as pub2 #DDEBFF
 }
 
-package "RabbitMQ cluster (rabbitmq-1/2/3, AMQPS 5671)" {
-  collections "airports.events\n<<fanout exchange, durable>>" as ex #FFF4D6
+package "Cluster RabbitMQ (3 nós, AMQPS 5671)" {
+  collections "airports.events\n<<exchange fanout>>" as ex #FFF4D6
 
-  queue "airports.events.airports-routes-1\n<<quorum, durable>>\nTTL 1 h, max-length 10000" as q1
-  queue "airports.events.airports-routes-2\n<<quorum, durable>>\nTTL 1 h, max-length 10000" as q2
-  queue "airports.events.airports-routes-1.dlq\n<<quorum>> max-length 10000" as dlq1 #FFE0E0
-  queue "airports.events.airports-routes-2.dlq\n<<quorum>> max-length 10000" as dlq2 #FFE0E0
+  queue "airports.events.airports-routes-1\n<<quorum>>\nTTL 1 h, máx. 10000" as q1
+  queue "airports.events.airports-routes-2\n<<quorum>>\nTTL 1 h, máx. 10000" as q2
+  queue "airports.events.airports-routes-1.dlq" as dlq1 #FFE0E0
+  queue "airports.events.airports-routes-2.dlq" as dlq2 #FFE0E0
 
-  queue "fo.routes.flight-operations-1\n(declared by Flight Operations;\nFO inbox also uses the messageId)" as qf1 #EEEEEE
-  queue "fo.routes.flight-operations-2\n(declared by Flight Operations)" as qf2 #EEEEEE
+  queue "fo.routes.flight-operations-1\n(criada pelo FO)" as qf1 #EEEEEE
+  queue "fo.routes.flight-operations-2\n(criada pelo FO)" as qf2 #EEEEEE
 }
 
-package "Consumers" {
+package "Quem consome" {
   rectangle "airports-routes-1\nReplicationEventConsumer" as c1 #DDEBFF
   rectangle "airports-routes-2\nReplicationEventConsumer" as c2 #DDEBFF
-  rectangle "flight-operations-1 / -2\nlocal copy of routes" as cf #EEEEEE
+  rectangle "flight-operations-1 / -2\ncópia local das rotas" as cf #EEEEEE
 }
 
-pub1 --> ex : AIRPORT_CREATED / DETAILS_UPDATED / STATUS_CHANGED / IMAGE_UPDATED\nROUTE_CREATED / UPDATED / DEACTIVATED
+pub1 --> ex : AIRPORT_* / ROUTE_*
 pub2 --> ex
 
 ex --> q1
@@ -43,26 +43,19 @@ q2 --> c2
 qf1 --> cf
 qf2 --> cf
 
-q1 ..> dlq1 : rejected after 3 attempts,\nexpired (TTL) or overflow\n(dead-letter via default exchange)
+q1 ..> dlq1 : falhou 3 vezes,\nexpirou ou fila cheia
 q2 ..> dlq2
 
 note bottom of ex
-  Event envelope (JSON, persistent):
-  eventId (UUID), taskId, eventType, method, path, payload,
-  originalUser, lastModified, originNodeId.
-  messageId = eventId (UUID, never reused).
-  Publisher confirms: the outbox task is only marked DONE
-  after the broker ack (at-least-once delivery).
-  One outbox task per event (not one per peer).
+  Fanout = cópia para TODAS as filas ligadas.
+  Cada evento leva um eventId (UUID) único.
+  A outbox só marca DONE quando o broker confirma.
 end note
 
 note bottom of q1
-  One quorum queue per instance = every instance receives
-  every event (pub/sub). If an instance is down, its queue
-  buffers the events (until the 1 h TTL).
-  Consumers ignore events with their own originNodeId,
-  skip duplicates (inbox: processed_event by eventId) and
-  apply the rest with last-writer-wins (lastModified,
-  tie-break by originNodeId).
+  Uma fila por instância: todas recebem tudo.
+  Instância em baixo? A fila guarda os eventos (até 1 h).
+  Ao consumir: ignora os seus, salta repetidos (inbox),
+  aplica o resto com last-writer-wins.
 end note
 @enduml
