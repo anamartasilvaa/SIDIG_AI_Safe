@@ -69,7 +69,6 @@ class SecurityRulesTest {
         when(queries.findById(anyString())).thenReturn(Optional.of(FLIGHT));
         when(queries.findByAircraft(anyString())).thenReturn(List.of(FLIGHT));
         when(queries.routeUtilization()).thenReturn(List.of());
-        when(queries.unicorns(any())).thenReturn(List.of());
         when(queries.availability(anyString(), anyString())).thenReturn(new AvailabilityDTO(
                 "CS-TTA", "2027-03-15T10:00", true, "ACTIVE", null, List.of(), List.of()));
     }
@@ -170,17 +169,6 @@ class SecurityRulesTest {
         mvc.perform(as(BACKOFFICE, get(url))).andExpect(allowed());
         mvc.perform(as(ADMIN, get(url))).andExpect(allowed());
         mvc.perform(as(ATCC, get(url))).andExpect(status().isForbidden());
-    }
-
-    @Test
-    @DisplayName("GET /api/v2/unicorns: ATCC, BACKOFFICE and ADMIN can; technicians cannot; no token -> 401")
-    void unicornsRules() throws Exception {
-        String url = "/api/v2/unicorns";
-        mvc.perform(as(ATCC, get(url))).andExpect(status().isOk());
-        mvc.perform(as(BACKOFFICE, get(url))).andExpect(status().isOk());
-        mvc.perform(as(ADMIN, get(url))).andExpect(status().isOk());
-        mvc.perform(as(TECHNICIAN, get(url))).andExpect(status().isForbidden());
-        mvc.perform(get(url)).andExpect(status().isUnauthorized());
     }
 
     @Test

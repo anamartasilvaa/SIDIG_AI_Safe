@@ -4,7 +4,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import pt.isep.psoft.aisafe.flight_operations.application.query.MoodProjector;
 import pt.isep.psoft.aisafe.flight_operations.domain.reference.AircraftRef;
 import pt.isep.psoft.aisafe.flight_operations.repositories.AircraftRefRepository;
 
@@ -14,8 +13,7 @@ import java.util.Optional;
 /**
  * Applies the Aircraft Service events to the local copy (aircraft_ref).
  * - newer changes only (revision, then time): old, repeated or out-of-order events are ignored;
- * - row lock on the aircraft, so it is serialised with schedules and grounding on this replica;
- * - when the copy changes, the aircraft mood is recomputed (e.g. SLEEPING when not ACTIVE).
+ * - row lock on the aircraft, so it is serialised with schedules and grounding on this replica.
  */
 @Service
 public class AircraftReferenceService {
@@ -23,11 +21,9 @@ public class AircraftReferenceService {
     private static final Logger log = LoggerFactory.getLogger(AircraftReferenceService.class);
 
     private final AircraftRefRepository aircraftRefs;
-    private final MoodProjector moods;
 
-    public AircraftReferenceService(AircraftRefRepository aircraftRefs, MoodProjector moods) {
+    public AircraftReferenceService(AircraftRefRepository aircraftRefs) {
         this.aircraftRefs = aircraftRefs;
-        this.moods = moods;
     }
 
     /** @return true if the local copy changed. */
@@ -51,10 +47,6 @@ public class AircraftReferenceService {
                     change.maximumRange(), change.seatingCapacity(), change.revision(), change.changedAt()));
             log.info("Aircraft {} added to the local references (status {}).", registration, status);
             changed = true;
-        }
-
-        if (changed) {
-            moods.recompute(registration);
         }
         return changed;
     }

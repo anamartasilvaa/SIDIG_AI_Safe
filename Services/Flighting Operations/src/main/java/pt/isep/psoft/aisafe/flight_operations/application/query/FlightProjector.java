@@ -26,14 +26,12 @@ public class FlightProjector {
     private final FlightViewRepository flightViews;
     private final RouteUtilizationViewRepository routeUtilization;
     private final RouteRefRepository routeRefs;
-    private final MoodProjector moods;
 
     public FlightProjector(FlightViewRepository flightViews, RouteUtilizationViewRepository routeUtilization,
-                           RouteRefRepository routeRefs, MoodProjector moods) {
+                           RouteRefRepository routeRefs) {
         this.flightViews = flightViews;
         this.routeUtilization = routeUtilization;
         this.routeRefs = routeRefs;
-        this.moods = moods;
     }
 
     /** @return true if the views changed. */
@@ -44,7 +42,6 @@ public class FlightProjector {
         String destination = route.map(RouteRef::getDestination).orElse(null);
 
         Optional<FlightView> existing = flightViews.findById(state.flightId());
-        String previousAircraft = existing.map(FlightView::getRegistrationNumber).orElse(null);
         if (existing.isPresent()) {
             if (!existing.get().applyIfNewer(state, origin, destination)) {
                 log.debug("Projection: flight {} rev {} ignored (view already at rev {}).",
@@ -56,10 +53,6 @@ public class FlightProjector {
         }
         flightViews.flush();
         refreshRouteUtilization(state.routeId(), origin, destination);
-        moods.recompute(state.registrationNumber());
-        if (previousAircraft != null && !previousAircraft.equals(state.registrationNumber())) {
-            moods.recompute(previousAircraft);   // reassigned: the old aircraft changes mood too
-        }
         log.debug("Projection: flight {} -> rev {} ({}).", state.flightId(), state.revision(), state.status());
         return true;
     }

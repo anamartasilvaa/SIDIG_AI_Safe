@@ -85,12 +85,3 @@ CREATE TABLE fo_query.route_utilization_view (
                                                  destination  VARCHAR(10),
                                                  flight_count BIGINT NOT NULL
 );
-
-CREATE TABLE fo_query.aircraft_mood_view (
-                                             registration_number VARCHAR(20) PRIMARY KEY,
-                                             mood                VARCHAR(20) NOT NULL,
-                                             reason              VARCHAR(200),
-                                             delayed_or_canceled INTEGER     NOT NULL,
-                                             flights_next24h     INTEGER     NOT NULL,
-                                             updated_at          TIMESTAMP WITH TIME ZONE NOT NULL
-);

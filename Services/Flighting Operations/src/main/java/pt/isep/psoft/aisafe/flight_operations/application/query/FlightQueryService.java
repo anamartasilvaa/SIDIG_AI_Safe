@@ -5,11 +5,9 @@ import org.springframework.transaction.annotation.Transactional;
 import pt.isep.psoft.aisafe.flight_operations.application.DTO.AvailabilityDTO;
 import pt.isep.psoft.aisafe.flight_operations.application.DTO.RouteUtilizationDTO;
 import pt.isep.psoft.aisafe.flight_operations.application.DTO.ScheduledFlightViewDTO;
-import pt.isep.psoft.aisafe.flight_operations.application.DTO.UnicornDTO;
 import pt.isep.psoft.aisafe.flight_operations.domain.*;
 import pt.isep.psoft.aisafe.flight_operations.domain.reference.AircraftRef;
 import pt.isep.psoft.aisafe.flight_operations.repositories.AircraftRefRepository;
-import pt.isep.psoft.aisafe.flight_operations.repositories.query.AircraftMoodViewRepository;
 import pt.isep.psoft.aisafe.flight_operations.repositories.query.FlightViewRepository;
 import pt.isep.psoft.aisafe.flight_operations.repositories.query.RouteUtilizationViewRepository;
 
@@ -17,7 +15,6 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Optional;
 
 @Service
@@ -27,33 +24,15 @@ public class FlightQueryService {
     private final FlightViewRepository flightViews;
     private final RouteUtilizationViewRepository routeUtilization;
     private final AircraftRefRepository aircraftRefs;
-    private final AircraftMoodViewRepository moods;
     private final FlightSchedulingPolicy policy;
 
     public FlightQueryService(FlightViewRepository flightViews, RouteUtilizationViewRepository routeUtilization,
-                              AircraftRefRepository aircraftRefs, AircraftMoodViewRepository moods,
+                              AircraftRefRepository aircraftRefs,
                               FlightSchedulingPolicy policy) {
         this.flightViews = flightViews;
         this.routeUtilization = routeUtilization;
         this.aircraftRefs = aircraftRefs;
-        this.moods = moods;
         this.policy = policy;
-    }
-
-    public List<UnicornDTO> unicorns(String mood) {
-        List<AircraftMoodView> rows;
-        if (mood == null || mood.isBlank()) {
-            rows = moods.findAllByOrderByRegistrationNumberAsc();
-        } else {
-            AircraftMood wanted;
-            try {
-                wanted = AircraftMood.valueOf(mood.trim().toUpperCase(Locale.ROOT));
-            } catch (IllegalArgumentException e) {
-                throw new IllegalArgumentException("Unknown mood '" + mood + "'. Use HAPPY, BUSY, GRUMPY or SLEEPING.");
-            }
-            rows = moods.findByMoodOrderByRegistrationNumberAsc(wanted);
-        }
-        return rows.stream().map(UnicornDTO::from).toList();
     }
 
     public Optional<ScheduledFlightViewDTO> findById(String id) {

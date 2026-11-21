@@ -7,7 +7,6 @@ import pt.isep.psoft.aisafe.flight_operations.application.events.FlightState;
 import pt.isep.psoft.aisafe.flight_operations.domain.FlightSchedulingPolicy;
 import pt.isep.psoft.aisafe.flight_operations.domain.reference.AircraftRef;
 import pt.isep.psoft.aisafe.flight_operations.repositories.AircraftRefRepository;
-import pt.isep.psoft.aisafe.flight_operations.repositories.query.AircraftMoodViewRepository;
 import pt.isep.psoft.aisafe.flight_operations.repositories.query.FlightViewRepository;
 import pt.isep.psoft.aisafe.flight_operations.repositories.query.RouteUtilizationViewRepository;
 
@@ -33,7 +32,7 @@ class FlightQueryServiceTest {
         flightViews = mock(FlightViewRepository.class);
         aircraftRefs = mock(AircraftRefRepository.class);
         service = new FlightQueryService(flightViews, mock(RouteUtilizationViewRepository.class), aircraftRefs,
-                mock(AircraftMoodViewRepository.class), new FlightSchedulingPolicy(Duration.ofHours(2)));
+                new FlightSchedulingPolicy(Duration.ofHours(2)));
     }
 
     private static FlightView view(String status) {
@@ -73,11 +72,6 @@ class FlightQueryServiceTest {
         when(aircraftRefs.findById("CS-TTA")).thenReturn(Optional.of(AircraftRef.create("CS-TTA", null, "ACTIVE", null, null, 1, T)));
         when(flightViews.findByRegistrationNumberOrderByScheduledDateTimeAsc("CS-TTA")).thenReturn(List.of(view("CANCELED")));
         assertTrue(service.availability("CS-TTA", "2027-03-15T10:30:00").available());
-    }
-
-    @Test
-    void unknownMoodFilterIs400() {
-        assertThrows(IllegalArgumentException.class, () -> service.unicorns("sad"));
     }
 
     @Test

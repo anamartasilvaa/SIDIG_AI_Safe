@@ -15,12 +15,7 @@ import pt.isep.psoft.aisafe.flight_operations.application.reference.AircraftRefe
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 
-/**
- * Consumes the Aircraft Service events from this replica's own queue fo.aircraft.&lt;instance&gt;
- * and keeps aircraft_ref (and the aircraft mood) up to date.
- * Ack only after the commit; malformed -> dead-letter queue; temporary failure -> requeue
- * (max 5 deliveries, then dead-letter queue).
- */
+
 @Component
 public class AircraftEventListener {
 

@@ -1,7 +1,6 @@
 package pt.isep.psoft.aisafe.flight_operations.repositories.query;
 
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Query;
 import pt.isep.psoft.aisafe.flight_operations.application.query.FlightView;
 
 import java.util.List;
@@ -12,7 +11,4 @@ public interface FlightViewRepository extends JpaRepository<FlightView, String> 
 
     /** Flights that count for US229 (cancelled flights are not flown). */
     long countByRouteIdAndStatusNot(String routeId, String status);
-
-    @Query("SELECT DISTINCT v.registrationNumber FROM FlightView v")
-    List<String> findDistinctRegistrationNumbers();
 }

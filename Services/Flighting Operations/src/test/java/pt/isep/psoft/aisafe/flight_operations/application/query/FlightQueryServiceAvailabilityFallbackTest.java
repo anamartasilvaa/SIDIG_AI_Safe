@@ -7,7 +7,6 @@ import pt.isep.psoft.aisafe.flight_operations.domain.FlightSchedulingPolicy;
 import pt.isep.psoft.aisafe.flight_operations.domain.RegistrationNumber;
 import pt.isep.psoft.aisafe.flight_operations.domain.reference.AircraftRef;
 import pt.isep.psoft.aisafe.flight_operations.repositories.AircraftRefRepository;
-import pt.isep.psoft.aisafe.flight_operations.repositories.query.AircraftMoodViewRepository;
 import pt.isep.psoft.aisafe.flight_operations.repositories.query.FlightViewRepository;
 import pt.isep.psoft.aisafe.flight_operations.repositories.query.RouteUtilizationViewRepository;
 
@@ -34,7 +33,8 @@ class FlightQueryServiceAvailabilityFallbackTest {
         AircraftRefRepository aircraftRefs = mock(AircraftRefRepository.class);
         ReferenceDataService references = mock(ReferenceDataService.class);
         FlightQueryService service = new FlightQueryService(flightViews, mock(RouteUtilizationViewRepository.class),
-                aircraftRefs, mock(AircraftMoodViewRepository.class), new FlightSchedulingPolicy(Duration.ofHours(2)));
+                aircraftRefs,
+                new FlightSchedulingPolicy(Duration.ofHours(2)));
         service.setReferenceData(references);
 
         when(aircraftRefs.findById("CS-TTA"))
@@ -54,7 +54,8 @@ class FlightQueryServiceAvailabilityFallbackTest {
         AircraftRefRepository aircraftRefs = mock(AircraftRefRepository.class);
         ReferenceDataService references = mock(ReferenceDataService.class);
         FlightQueryService service = new FlightQueryService(flightViews, mock(RouteUtilizationViewRepository.class),
-                aircraftRefs, mock(AircraftMoodViewRepository.class), new FlightSchedulingPolicy(Duration.ofHours(2)));
+                aircraftRefs,
+                new FlightSchedulingPolicy(Duration.ofHours(2)));
         service.setReferenceData(references);
 
         when(aircraftRefs.findById("CS-TTA")).thenReturn(Optional.empty());
