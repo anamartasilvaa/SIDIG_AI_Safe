@@ -273,10 +273,10 @@ Os endpoints REST (URLs, perfis, códigos) não mudaram. Mudou **como** a replic
       das rotas, tenta outra vez até a outra instância responder, não gera eventos, substitui os dados iniciais e nunca
       estraga um evento mais recente.
 - **Postman (Entrega 2)**, pasta `tests(postman)/` na raiz do repositório (coleções do sistema completo):
-    - `SIDIS – Entrega 2 Modo B (Docker)` — **125 testes a passar** (`ar-07-postman-e2-modo-b.png`): escreve por uma gateway
+    - `SIDIS – Entrega 2 Modo B (Docker)` — **100 testes a passar** (`ar-07-postman-e2-modo-b.png`): escreve por uma gateway
       e lê pela outra até convergir; as leituras do Airports levam `X-P2P-Hops: 1`, por isso um 200 prova que o evento chegou
       pelo RabbitMQ. Inclui Flight Operations, eventos entre serviços, eventos de Aircraft e DLQ.
-    - `SIDIS – Entrega 2 Modo A (IntelliJ)` — **188 testes a passar** (`ar-08-postman-e2-modo-a.png`): o mesmo sobre 3
+    - `SIDIS – Entrega 2 Modo A (IntelliJ)` — **170 testes a passar** (`ar-08-postman-e2-modo-a.png`): o mesmo sobre 3
       instâncias de cada serviço com acesso direto, incluindo `ROUTE_UPDATED`, `AIRPORT_DETAILS_UPDATED` e *last-writer-wins*.
     - Pastas MANUAL: parar uma instância, escrever noutra e ver a fila dela guardar o evento até voltar.
     - Os testes que publicam diretamente no RabbitMQ precisam, no environment, de `rabbitUser`, `rabbitPassword`
@@ -338,7 +338,7 @@ Pasta [`docs/`](docs/) (PlantUML), organizada por entrega: [`docs/E2/`](docs/E2/
 
 ![Modelo de leitura reconstruído](docs/screenshots/ar-06-modelo-leitura.png)
 
-**Testes Postman da Entrega 2, Modo B** (125 testes):
+**Testes Postman da Entrega 2, Modo B** (100 testes):
 
 ![Postman Modo B](docs/screenshots/ar-07-postman-e2-modo-b.png)
 
