@@ -342,7 +342,7 @@ Pasta [`docs/`](docs/) (PlantUML), organizada por entrega: [`docs/E2/`](docs/E2/
 
 ![Postman Modo B](docs/screenshots/ar-07-postman-e2-modo-b.png)
 
-**Testes Postman da Entrega 2, Modo A** (188 testes):
+**Testes Postman da Entrega 2, Modo A** (170 testes):
 
 ![Postman Modo A](docs/screenshots/ar-08-postman-e2-modo-a.png)
 

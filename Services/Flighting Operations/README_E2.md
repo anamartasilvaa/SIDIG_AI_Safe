@@ -2,7 +2,7 @@
 
 Serviço do sistema distribuído **AISafe Flight Management System** responsável pelo agendamento de voos, pela
 atribuição de aviões a rotas (alcance e capacidade), pela consulta de disponibilidade, pelo ciclo de vida dos voos, pela
-**reatribuição de voos quando um avião é imobilizado (grounding)**, e pelo relatório de utilização de rotas.
+**reatribuição de voos quando um avião é imobilizado (grounding)** e pelo relatório de utilização de rotas.
 
 A documentação da Entrega 1 está no `README.md`. Este documento descreve a Entrega 2: CQRS, mensagens AMQP,
 base de dados por réplica e infraestrutura sem pontos únicos de falha.
@@ -73,7 +73,7 @@ scheduled_flight outbox_event    (read-your-writes)       flight_view
   locais. Quem escreve numa réplica lê logo o seu próprio resultado nessa réplica.
 - **Lado das consultas.** O `FlightQueryService` só lê as vistas de `fo_query` e os dados de referência locais.
   Nunca chama outras réplicas nem outros serviços.
-- **Projeções.** O `FlightProjector` atualiza `flight_view` (só se a versão recebida for mais recente), recalcula a
+- **Projeções.** O `FlightProjector` atualiza `flight_view` (só se a versão recebida for mais recente) e recalcula a
   utilização da rota (sem voos `CANCELED`).
 
 | Componente                                                                                        | Responsabilidade                                                                                               |
@@ -263,7 +263,7 @@ mesmas migrações Flyway). Além dos testes da P1, cobrem:
   `AircraftReferenceServiceTest`, `AircraftGroundingHandlerTest`);
 - snapshot no arranque (`SnapshotBootstrapperTest`), cópia de um voo em falta (`MissingFlightRecoveryTest`),
   reconciliação do grounding (`GroundingReconcilerTest`) e limpeza da idempotência (`ProcessedEventCleanupTest`);
-- regras RBAC do novo endpoint (`SecurityRulesTest`);
+- regras RBAC dos endpoints (`SecurityRulesTest`);
 - concorrência nas referências locais (`ReferenceDataServiceConcurrencyTest`), disponibilidade numa réplica que ainda
   não conhece o avião (`FlightQueryServiceAvailabilityFallbackTest`), `503` com a BD em baixo
   (`GlobalExceptionHandlerDatabaseTest`) e sincronização entre réplicas (`ReplicaSyncReconcilerTest`).
@@ -273,7 +273,7 @@ environment `SIDIS`, verificação SSL desligada). As coleções da Entrega 1 ma
 
 | Pasta | Tipo       | O que cobre                                                                                                                                                                                                                                                                                                                                                 |
 |-------|------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 00–06 | Automática | Runner com 100 ms de atraso: **125 testes, 0 falhas**                                                                                                                                                                                                                                                                                                       |
+| 00–06 | Automática | Runner com 100 ms de atraso: **100 testes, 0 falhas**                                                                                                                                                                                                                                                                                                       |
 | 02    |            | Comandos e consultas do FO, convergência das duas réplicas, ETag = revisão, 8 reservas simultâneas do mesmo slot (fica um voo), evento fora de ordem ignorado, sequência rápida de comandos entre réplicas, disponibilidade                                                                                                                                 |
 | 03    |            | Eventos do Airports & Routes: rota nova e rota desativada chegam ao FO                                                                                                                                                                                                                                                                                      |
 | 04    |            | Eventos do Aircraft publicados pela API de gestão do RabbitMQ (grounding → voos movidos e avião `UNDER_MAINTENANCE`, duplicado, ordem por revisão, *dead-letter*)                                                                                                                                                                                           |
@@ -284,7 +284,7 @@ Os testes do FO chamam diretamente as 3 réplicas (`fo1`, `fo2`, `fo3`), à vez.
 
 | Pasta | Tipo       | O que cobre                                                                                                                                                                                                                                               |
 |-------|------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 00–07 | Automática | Runner com 100 ms de atraso: **188 testes, 0 falhas** — login, saúde das 9 instâncias, eventos do Airports (incluindo detalhes e parâmetros de rotas), CQRS e convergência das 3 réplicas do FO, concorrência, evento fora de ordem e eventos do Aircraft |
+| 00–07 | Automática | Runner com 100 ms de atraso: **170 testes, 0 falhas** — login, saúde das 9 instâncias, eventos do Airports (incluindo detalhes e parâmetros de rotas), CQRS e convergência das 3 réplicas do FO, concorrência, evento fora de ordem e eventos do Aircraft |
 | 08–09 | Manual     | Réplica do FO / do Airports parada: a sua fila guarda os eventos e ela recupera-os ao voltar — **passaram**                                                                                                                                               |
 | 10    | Manual     | Replicação da imagem de um aeroporto (opcional)                                                                                                                                                                                                           |
 

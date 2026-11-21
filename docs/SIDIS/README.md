@@ -157,15 +157,10 @@ Parar: `.\start-infra.ps1 -Stop` (Keycloak: Ctrl+C na janela dele), `docker comp
 
 ## Testes
 
-### Postman (pasta `tests(postman)/`)
-
 | Coleção                                                                                                                     | Modo  | Conteúdo                                                                                                                                                                                                                |
 |-----------------------------------------------------------------------------------------------------------------------------|-------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `SIDIS – Entrega 2 Modo B (Docker).postman_collection.json` / `SIDIS – Entrega 2 Modo A (IntelliJ).postman_collection.json` | B / A | Coleções completas da Entrega 2 (todos os serviços). Modo B: 125 testes automáticos (pastas 00–06) e 18 manuais de falhas (pasta 07). Modo A: 188 testes automáticos (00–07) e 3 pastas manuais (08–10). Todos a passar |
-| `SIDIS – Entrega 2 (Modo B).postman_collection.json`                                                                        | B     | Login, Airports & Routes (comandos, eventos, consistência eventual), Flight Operations (CQRS e replicação), eventos entre serviços, eventos do Aircraft, smoke de Aircraft/Maintenance, 2 testes manuais de falhas |
-| `SIDIS – Entrega 2 (Modo A).postman_collection.json`                                                                        | A     | O mesmo sobre 3 instâncias de cada serviço, com acesso direto às instâncias, *last-writer-wins* e testes manuais de recuperação de filas                                                                                |
+| `SIDIS – Entrega 2 Modo B (Docker).postman_collection.json` / `SIDIS – Entrega 2 Modo A (IntelliJ).postman_collection.json` | B / A | Coleções completas da Entrega 2 (todos os serviços). Modo B: 100 testes automáticos (pastas 00–06) e 18 manuais de falhas (pasta 07). Modo A: 170 testes automáticos (00–07) e 3 pastas manuais (08–10). Todos a passar |
 | `SIDIS – Modo A (IntelliJ)` / `SIDIS – Modo B (Docker)`                                                                     | A / B | Coleções da Entrega 1                                                                                                                                                                                                   |
-
 Como correr:
 1. Importar a coleção e o environment `SIDIS.postman_environment.json`; selecionar o environment **SIDIS**.
 2. Desligar *SSL certificate verification* nas definições do Postman.
@@ -177,11 +172,11 @@ Como correr:
 
 Resultado do Modo B (pastas 00–06, Collection Runner):
 
-![Modo B: 125 testes, 0 falhas](screenshots/e2-postman-modo-b.png)
+![Modo B: 100 testes, 0 falhas](screenshots/e2-postman-modo-b.png)
 
 Resultado do Modo A (pastas 00–07, 3 instâncias de cada serviço):
 
-![Modo A: 188 testes, 0 falhas](screenshots/e2-postman-modo-a.png)
+![Modo A: 170 testes, 0 falhas](screenshots/e2-postman-modo-a.png)
 
 Os testes de convergência escrevem numa instância e leem noutra até os dados aparecerem. Nas leituras do Airports
 é enviado `X-P2P-Hops: 1`, que desliga o reencaminhamento entre instâncias: um 200 prova que o evento chegou pelo RabbitMQ.

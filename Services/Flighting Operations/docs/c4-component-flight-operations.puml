@@ -36,7 +36,7 @@ Container_Boundary(fo, "Flight Operations Service (one replica)") {
     Boundary(qry, "Query side (read model)") {
         Component(qryCtrl, "ScheduledFlightController (read endpoints)", "@RestController /api/scheduled-flights", "GET /{id}, /aircraft/{reg} (US213), /availability (US205), /route-utilization (US229).")
         Component(qrySvc, "FlightQueryService", "@Service, read-only", "Reads only the denormalised views; no business rules. Availability of an aircraft never seen by this replica: one lookup through ReferenceDataService.")
-        Component(proj, "Projectors", "FlightProjector", "Update the views (only newer revisions are applied).")
+        Component(proj, "FlightProjector", "@Component", "Updates the views (only newer revisions are applied).")
     }
 
     Component(refData, "ReferenceDataService + ReferenceWriter", "@Service / @Component", "Local copies route_ref, aircraft_ref. Missing reference: one REST lookup, inserted in its own transaction (safe under concurrency).")
@@ -68,7 +68,7 @@ Rel(broker, grounding, "fo.grounding", "AMQPS")
 Rel(flightL, idem, "Checks eventId")
 Rel(refL, idem, "Checks eventId")
 Rel(flightL, proj, "Applies")
-Rel(refL, proj, "Applies")
+Rel(refL, refData, "Updates route_ref / aircraft_ref")
 Rel(flightL, conflict, "Possible conflict")
 Rel(proj, db, "Updates views + replicas", "JDBC")
 
