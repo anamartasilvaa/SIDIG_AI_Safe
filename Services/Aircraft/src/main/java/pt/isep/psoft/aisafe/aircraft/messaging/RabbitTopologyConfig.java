@@ -43,9 +43,13 @@ public class RabbitTopologyConfig {
         return BindingBuilder.bind(aircraftDeadLetterQueue()).to(aircraftDeadLetterExchange());
     }
 
+    /**
+     * Shared by the Aircraft replicas (competing consumers): each maintenance event is applied by one
+     * replica, which replicates the new status to its peers and publishes a single aircraft event.
+     */
     @Bean
-    public Queue aircraftMaintenanceQueue(@Value("${app.instance-id}") String instanceId) {
-        return replicaQueue("aircraft.maintenance." + instanceId);
+    public Queue aircraftMaintenanceQueue() {
+        return replicaQueue("aircraft.maintenance");
     }
 
     @Bean

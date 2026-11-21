@@ -1,11 +1,11 @@
 {
   "info": {
-    "_postman_id": "02ce9f57-368c-42ef-b01e-6ba8f8488fe7",
+    "_postman_id": "a77f9b9b-0c9a-452f-aec2-d05803d2a497",
     "name": "SIDIS – Entrega 2 Modo A (IntelliJ)",
     "description": "AISafe Entrega 2, Mode A (IntelliJ): Airports & Routes (8091-8093) and Flight Operations (8081-8083), plus Aircraft (8071-8073) for the aircraft lookups + local Keycloak and NGINX gateway (8443) for login, as in the Entrega 1 Mode A collection.\nExtra requirement: RabbitMQ on localhost:5672: docker compose -f infrastructure/docker-compose.services.yml up -d rabbitmq (user aisafe / password aisafe-mq). In the 3 'Airports - Instância N' Run Configurations add SPRING_RABBITMQ_USERNAME=aisafe and SPRING_RABBITMQ_PASSWORD=aisafe-mq.\nFlight Operations: one PostgreSQL per instance on localhost:5441/5442/5443 (db/user/password flightops); in each 'FlightOperationsApplication - Instance N' Run Configuration set DB_URL=jdbc:postgresql://localhost:544N/flightops.\nUse with the SIDIS environment (ar1, ar2, ar3, gateway, realm, clientId, pwd*). Turn off SSL verification.\nReads between instances carry X-P2P-Hops: 1 (no forwarding), so a 200 proves the event arrived through RabbitMQ.\nFolders 00 to 07: automatic (Runner, 100 ms delay). Folders 08, 09 and 10: manual. RabbitMQ management API: collection variables mqMgmt, mqUser, mqPassword (Mode A development credentials). FO checks call fo1, fo2 and fo3 directly, in turn, so each one covers the 3 replicas.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
     "_exporter_id": "51362888",
-    "_collection_link": "https://go.postman.co/collection/51362888-02ce9f57-368c-42ef-b01e-6ba8f8488fe7?source=collection_link"
+    "_collection_link": "https://go.postman.co/collection/51362888-a77f9b9b-0c9a-452f-aec2-d05803d2a497?source=collection_link"
   },
   "item": [
     {
@@ -2266,6 +2266,70 @@
               ]
             },
             "description": "Publishes in RabbitMQ through the management API (collection variables mqMgmt, mqUser, mqPassword)."
+          },
+          "response": []
+        },
+        {
+          "name": "07.06 [Maintenance -> Aircraft -> Flight Operations] Maintenance grounds the aircraft by events; completion reactivates it {NONE}",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const L = eval(pm.collectionVariables.get('lib'));",
+                  "// Maintenance -> Aircraft -> Flight Operations, only through events (maintenance.events, aircraft.events).",
+                  "const reg = 'CS-M' + (1000 + Math.floor(Math.random() * 9000));",
+                  "const at = h => new Date(Date.now() + h * 3600000).toISOString().slice(0, 19);",
+                  "const body = r => { try { const j = r.json(); return j.content || j; } catch (e) { return {}; } };",
+                  "const foStatus = async () => { const r = await L.call('GET', '/api/scheduled-flights/availability?registrationNumber=' + reg + '&dateTime=' + at(24 * 30), null, 'ATCC'); return r.code === 200 ? r.json().aircraftStatus : 'HTTP ' + r.code; };",
+                  "const stableFo = async want => { let ok = 0, s; for (let k = 0; k < 40 && ok < 4; k++) { s = await foStatus(); ok = s === want ? ok + 1 : 0; if (ok < 4) await L.sleep(1000); } return {ok: ok >= 4, s}; };",
+                  "const acStatus = async want => { let s; for (let k = 0; k < 20; k++) { const r = await L.call('GET', '/api/aircraft/' + reg, null, 'ATCC'); s = r.code === 200 ? body(r).status : 'HTTP ' + r.code; if (s === want) break; await L.sleep(1000); } return s; };",
+                  "",
+                  "const a = await L.call('POST', '/api/aircraft-models/instances', {registrationNumber: reg, modelName: 'A320', manufacturingDate: '2020-01-01', seatingCapacity: 180, features: 'e2e'}, 'ATCC');",
+                  "pm.test('[Aircraft] ' + reg + ' registered (201)', () => pm.expect(a.code).to.eql(201));",
+                  "const ids = [];",
+                  "for (const h of [3, 6]) { let r; for (let k = 0; k < 10; k++) { r = await L.call('POST', '/api/scheduled-flights', {routeId: 'RT-OPOLIS', registrationNumber: reg, scheduledDateTime: at(h)}, 'ATCC'); if (r.code === 201) break; await L.sleep(1000); } if (r.code === 201) ids.push(r.json().id); }",
+                  "pm.test('[FO] 2 future flights scheduled on ' + reg, () => pm.expect(ids.length).to.eql(2));",
+                  "",
+                  "const t = await L.call('POST', '/api/maintenance/templates', {templateName: 'TPL-E2E-' + Date.now(), templateType: 'PREVENTIVE', flightHoursInterval: 500, calendarDaysInterval: 90, checklistTitle: 'A-Check', checklistVersion: '1.0', checklistItems: [{taskDescription: 'Visual inspection', isMandatory: true}], applicableModelNames: ['A320']}, 'SUPERVISOR');",
+                  "pm.test('[Maintenance] template created (201)', () => pm.expect(t.code).to.eql(201));",
+                  "const m = await L.call('POST', '/api/maintenance/records', {registrationNumber: reg, modelName: 'A320', description: 'E2E event chain', expectedDuration: 4, componentCategory: 'ENGINE', startDate: at(0), cost: 1000.0, templateGlobalId: body(t).globalId}, 'TECH');",
+                  "pm.test('[Maintenance] maintenance registered (201)', () => pm.expect(m.code).to.eql(201));",
+                  "const recordId = body(m).globalId;",
+                  "",
+                  "const s1 = await acStatus('UNDER_MAINTENANCE');",
+                  "pm.test('MaintenanceStarted -> Aircraft: ' + reg + ' is UNDER_MAINTENANCE (' + s1 + ')', () => pm.expect(s1).to.eql('UNDER_MAINTENANCE'));",
+                  "const f1 = await stableFo('UNDER_MAINTENANCE');",
+                  "pm.test('AircraftStatusChanged -> Flight Operations: aircraft_ref is UNDER_MAINTENANCE on every replica (' + f1.s + ')', () => pm.expect(f1.ok).to.be.true);",
+                  "let moved = [];",
+                  "for (let k = 0; k < 40; k++) { moved = []; for (const id of ids) { const r = await L.call('GET', '/api/scheduled-flights/' + id, null, 'ATCC'); const j = r.code === 200 ? r.json() : {}; if (j.registrationNumber && (j.registrationNumber !== reg || j.statusReason === 'NO_REPLACEMENT_AIRCRAFT')) moved.push(j.registrationNumber + '/' + j.status); } if (moved.length === ids.length) break; await L.sleep(1000); }",
+                  "pm.test('Grounding (fo.grounding): both flights reassigned or DELAYED with NO_REPLACEMENT_AIRCRAFT (' + moved.join(', ') + ')', () => pm.expect(moved.length).to.eql(ids.length));",
+                  "",
+                  "const c = await L.call('PATCH', '/api/maintenance/records/' + recordId + '/complete', {completionNotes: 'E2E ok'}, 'SUPERVISOR');",
+                  "pm.test('[Maintenance] maintenance completed (200)', () => pm.expect(c.code).to.eql(200));",
+                  "const s2 = await acStatus('ACTIVE');",
+                  "pm.test('MaintenanceCompleted -> Aircraft: ' + reg + ' is ACTIVE again (' + s2 + ')', () => pm.expect(s2).to.eql('ACTIVE'));",
+                  "const f2 = await stableFo('ACTIVE');",
+                  "pm.test('AircraftStatusChanged -> Flight Operations: aircraft_ref is ACTIVE again (' + f2.s + ')', () => pm.expect(f2.ok).to.be.true);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway}}/realms/{{realm}}",
+              "host": [
+                "{{gateway}}"
+              ],
+              "path": [
+                "realms",
+                "{{realm}}"
+              ]
+            },
+            "description": "Registers a test aircraft with 2 future flights, registers a maintenance on it and completes it. Every step between services goes through RabbitMQ: maintenance.events -> Aircraft (shared queue aircraft.maintenance) -> aircraft.events (aircraft.status-changed) -> Flight Operations (fo.aircraft.<replica> and fo.grounding)."
           },
           "response": []
         }

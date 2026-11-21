@@ -72,6 +72,11 @@ public class AircraftService {
         if (aircraft.getStatus() != target) {
             aircraft.updateStatus(target);
             aircraftRepository.save(aircraft);
+            // Only one replica consumes each maintenance event (shared queue), so it pushes the
+            // change to the peer replicas, like the REST writes, and publishes the event once.
+            replicator.replicate(mapToViewDTO(aircraft));
+            // Flight Operations reassigns the future flights from this event (queue fo.grounding).
+            if (events != null) events.aircraftStatusChanged(aircraft);
         }
     }
 
@@ -127,7 +132,7 @@ public class AircraftService {
         );
         Aircraft saved = aircraftRepository.save(aircraft);
         replicator.replicate(mapToViewDTO(saved));   // push the new aircraft to the peer replicas
-        if (events != null) events.aircraftChanged(saved);
+        if (events != null) events.aircraftRegistered(saved);
     }
 
     public AircraftViewDTO getAircraftByRegistrationNumber(String regNum, boolean isPeerRequest) {
@@ -208,7 +213,8 @@ public class AircraftService {
         aircraft.updateStatus(newStatus);
         aircraftRepository.save(aircraft);
         replicator.replicate(mapToViewDTO(aircraft));   // push the new status to the peer replicas
-        if (events != null) events.aircraftChanged(aircraft);
+        // The grounding of this path is requested below by REST, so the event is a plain update.
+        if (events != null) events.aircraftUpdated(aircraft);
 
         List<String> swapLogs = new ArrayList<>();
         if (newStatus == AircraftStatus.UNDER_MAINTENANCE || newStatus == AircraftStatus.INACTIVE) {

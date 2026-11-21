@@ -151,7 +151,7 @@ Flight Operations (secção E2.13).
 Os mesmos cenários (e mais alguns: partição com compensação, réplica do Airports em baixo, recuperação total) estão
 na pasta **07** (18 pedidos, 07.01–07.18) da coleção do Postman `SIDIS – Entrega 2 Modo B (Docker)`
 (`tests(postman)/SIDIS – Entrega 2 Modo B (Docker).postman_collection.json`): corre-se o comando que está entre `[ ]` no nome de cada
-pedido e depois envia-se o pedido (**Send**, um a um). As pastas 00–06 correm no Runner (100 testes). Environment
+pedido e depois envia-se o pedido (**Send**, um a um). As pastas 00–06 correm no Runner (111 testes). Environment
 `SIDIS` com `rabbitMgmt`, `rabbitUser` e `rabbitPassword` (o valor do `.env`).
 
 ---
@@ -207,7 +207,7 @@ mesmas portas que o Modo B: **parar sempre um modo antes de arrancar o outro**.
 4. Variáveis nas Run Configurations (separadas por `;`):
 
    | Run Configuration                          | Variáveis acrescentadas                                              |
-         |--------------------------------------------|----------------------------------------------------------------------|
+            |--------------------------------------------|----------------------------------------------------------------------|
    | `FlightOperationsApplication - Instance N` | `DB_URL=jdbc:postgresql://localhost:544N/flightops` (N = 1, 2, 3)    |
    | `Airports - Instância 1, 2, 3`             | `SPRING_RABBITMQ_USERNAME=aisafe;SPRING_RABBITMQ_PASSWORD=aisafe-mq` |
 
@@ -215,7 +215,7 @@ mesmas portas que o Modo B: **parar sempre um modo antes de arrancar o outro**.
    repositório): `Remove-Item data\airports_db_*.mv.db, data\airports_db_*.trace.db -ErrorAction SilentlyContinue`.
 6. Arrancar por esta ordem: Aircraft 1–3, Airports 1–3, Flight Operations 1–3.
 7. Testes: coleção `SIDIS – Entrega 2 Modo A (IntelliJ)` (`tests(postman)/SIDIS – Entrega 2 Modo A (IntelliJ).postman_collection.json`):
-   pastas 00–07 no Runner (170 testes), 08–10 manuais.
+   pastas 00–07 no Runner (181 testes), 08–10 manuais.
 
 Para voltar ao Modo B: parar os serviços no IntelliJ, fechar a janela do Keycloak, `.\start-infra.ps1 -Stop` (pára o
 NGINX do Modo A), `docker stop fo-db-a1 fo-db-a2 fo-db-a3` e `docker compose -f docker-compose.services.yml stop rabbitmq`.
