@@ -13,6 +13,7 @@ Container_Ext(peer, "Outra instância do Airports", "Spring Boot", "Só usada no
 ContainerDb(db, "airports-db-N", "PostgreSQL 16 (Modo B) / H2 em ficheiro (Modo A)", "Uma BD por instância: modelo de escrita, modelo de leitura, outbox e inbox")
 
 Container_Boundary(ar, "Airports & Routes (uma instância)") {
+    Component(sec, "SecurityConfig / JwtAuthenticationFilter", "Spring Security", "Valida o JWT do Keycloak e as permissões de cada perfil (401 / 403).")
     Component(ctrl, "AirportController / RouteController", "@RestController", "POST/PATCH vão para os comandos; GET vai para as consultas.")
     Component(admin, "AdminReplicationController", "@RestController (ADMIN)", "Mostra o estado da outbox (PENDING / DONE / FAILED).")
     Component(errors, "GlobalExceptionHandler", "@RestControllerAdvice", "BD em baixo -> 503, para a gateway repetir na outra instância.")
@@ -36,7 +37,8 @@ Container_Boundary(ar, "Airports & Routes (uma instância)") {
 }
 
 Rel(client, gateway, "Pedido com JWT", "HTTPS")
-Rel(gateway, ctrl, "Encaminha", "HTTPS")
+Rel(gateway, sec, "Encaminha", "HTTPS")
+Rel(sec, ctrl, "Pedido autorizado")
 Rel(gateway, admin, "Só ADMIN", "HTTPS")
 
 Rel(ctrl, cmdSvc, "Comandos")

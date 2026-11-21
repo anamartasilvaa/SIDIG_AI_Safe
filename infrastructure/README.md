@@ -218,8 +218,8 @@ Pasta `tests(postman)/` da raiz do repositório:
 | `SIDIS.postman_environment.json` | Environment `SIDIS` (URLs, utilizadores de teste, API key) |
 | `SIDIS – Modo A (IntelliJ).postman_collection.json` | Entrega 1, Modo A (acesso direto às réplicas) |
 | `SIDIS – Modo B (Docker).postman_collection.json` | Entrega 1, Modo B (só via gateway, 2 réplicas, testes de SPOF) |
-| `SIDIS – Entrega 2 Modo A (IntelliJ).postman_collection.json` | Entrega 2, Modo A (CQRS, AMQP, base por instância; 188 testes) |
-| `SIDIS – Entrega 2 Modo B (Docker).postman_collection.json` | Entrega 2, Modo B (125 testes; ver `docs/SIDIS/README.md`) |
+| `SIDIS Entrega 2 Modo A (IntelliJ).postman_collection.json` | Entrega 2, Modo A (CQRS, AMQP, base por instância; 170 testes) |
+| `SIDIS Entrega 2 Modo B (Docker).postman_collection.json` | Entrega 2, Modo B (100 testes; ver `docs/SIDIS/README.md`) |
 
 1. Importar o environment e a coleção do modo em uso; escolher o environment `SIDIS`.
 2. Em *Settings*, desligar **SSL certificate verification** (certificado autoassinado).

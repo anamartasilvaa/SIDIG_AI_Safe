@@ -17,7 +17,7 @@ end note
 == Consulta ==
 User -> Ctrl : GET /api/routes/{id}
 activate Ctrl
-Ctrl -> Query : getRoute(id)
+Ctrl -> Query : getRoute(id, hops)
 activate Query
 Query -> RM : findById(id)
 alt existe nesta instância
