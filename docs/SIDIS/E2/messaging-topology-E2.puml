@@ -7,13 +7,15 @@ left to right direction
 package "Publishers" {
   rectangle "Flight Operations\n(outbox relay, both replicas)" as foPub #DDEBFF
   rectangle "Airports & Routes\n(outbox, both replicas)" as arPub #E8F5E9
-  rectangle "Aircraft\n(planned)" as acPub #EEEEEE
+  rectangle "Aircraft\n(both replicas)" as acPub #EEEEEE
+  rectangle "Maintenance\n(both replicas)" as mtPub #F3E5F5
 }
 
 package "RabbitMQ cluster (rabbitmq-1, rabbitmq-2, rabbitmq-3)" {
   collections "flights.events\n<<topic>>" as exF #FFF4D6
   collections "airports.events\n<<fanout>>" as exR #FFF4D6
   collections "aircraft.events\n<<topic>>" as exA #FFF4D6
+  collections "maintenance.events\n<<fanout>>" as exM #FFF4D6
   collections "fo.dlx\n<<fanout>>" as exD #FCE4E4
 
   queue "fo.flights.flight-operations-1/2\n<<quorum>>" as qF
@@ -21,6 +23,9 @@ package "RabbitMQ cluster (rabbitmq-1, rabbitmq-2, rabbitmq-3)" {
   queue "fo.aircraft.flight-operations-1/2\n<<quorum>>" as qA
   queue "fo.grounding\n<<quorum, shared>>" as qG
   queue "airports.events.<nodeId>\n(+ .dlq)" as qAR
+  queue "aircraft.maintenance.<replica>\n<<quorum>>" as qAM
+  queue "aircraft.flights.<replica>\n<<quorum>>" as qAF
+  queue "maintenance.aircraft.<replica>\n<<quorum>>" as qMA
   queue "fo.dead-letter\n<<quorum>>" as qD
 }
 
@@ -28,11 +33,13 @@ package "Consumers" {
   rectangle "Flight Operations\n(each replica)" as foC #DDEBFF
   rectangle "Flight Operations\n(ONE replica per message)" as foG #DDEBFF
   rectangle "Airports & Routes\n(each replica)" as arC #E8F5E9
+  rectangle "Aircraft\n(each replica)" as acC #EEEEEE
+  rectangle "Maintenance\n(each replica)" as mtC #F3E5F5
 }
 
 foPub --> exF : flight.scheduled\nflight.status-changed\nflight.reassigned
 arPub --> exR : ROUTE_* / AIRPORT_*
-acPub ..> exA : aircraft.registered\naircraft.status-changed\naircraft.updated
+acPub --> exA : aircraft.changed\naircraft.status-changed
 
 exF --> qF : flight.#
 exF --> qG : fo.grounding.requested
@@ -40,12 +47,19 @@ exR --> qR
 exR --> qAR
 exA --> qA : aircraft.#
 exA --> qG : aircraft.status-changed
+exA --> qAF : aircraft.#
+exA --> qMA : aircraft.#
+exM --> qAM
+mtPub --> exM : maintenance.started\nmaintenance.completed
 
 qF --> foC
 qR --> foC
 qA --> foC
 qG --> foG
 qAR --> arC
+qAM --> acC
+qAF --> acC
+qMA --> mtC
 
 qF ..> exD : 5 failed deliveries
 qR ..> exD
@@ -57,6 +71,7 @@ note bottom
   Publish/subscribe: one queue per replica, so every replica receives every event.
   Work queue: fo.grounding is shared, so each grounding is executed once.
   Delivery is at-least-once; consumers are idempotent (processed_event / last-writer-wins).
-  All FO queues and bindings are declared in infrastructure/rabbitmq/definitions.json.
+  Aircraft consumes maintenance and flight events; Maintenance consumes aircraft reference events.
+  Legacy HTTP fallback paths remain in the two services and are not the primary AMQP workflows.
 end note
 @enduml

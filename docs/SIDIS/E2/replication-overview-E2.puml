@@ -18,12 +18,12 @@ rectangle "Airports & Routes (2 replicas)" as AR {
   component "replica B\n+ PostgreSQL" as RB
 }
 rectangle "Aircraft (2 replicas)" as AC {
-  component "replica A" as CA
-  component "replica B" as CB
+  component "replica A\n+ PostgreSQL" as CA
+  component "replica B\n+ PostgreSQL" as CB
 }
 rectangle "Maintenance (2 replicas)" as MT {
-  component "replica A" as MA
-  component "replica B" as MB
+  component "replica A\n+ PostgreSQL" as MA
+  component "replica B\n+ PostgreSQL" as MB
 }
 
 FA --> MQ : flights.events
@@ -31,8 +31,12 @@ MQ --> FB : fo.flights.<replica>
 RA --> MQ : airports.events
 MQ --> RB : airports.events.<replica>
 MQ --> FA : routes (ACL)
-CA <--> CB : HTTPS (first delivery)
-MA <--> MB : HTTPS (first delivery)
+CA --> MQ : aircraft.changed
+MQ --> CB : aircraft.maintenance / aircraft.flights
+MQ --> CA : aircraft.maintenance / aircraft.flights
+MA --> MQ : maintenance lifecycle
+MQ --> MB : maintenance.aircraft
+MQ --> MA : maintenance.aircraft
 
 note right of FB
   Flight Operations: CQRS. Aggregate + outbox in one local transaction;
@@ -47,6 +51,10 @@ note right of RB
   dead-letter queue; reads only from the local read model.
 end note
 note right of CB
-  Aircraft and Maintenance: replication as in the first delivery (HTTPS).
+  Aircraft: local JPA state and processed-event idempotency;
+  consumes maintenance and flight events and maintains local projections.
+  Maintenance: local JPA state, aircraft-reference projection and
+  processed-event idempotency; publishes maintenance lifecycle events.
+  One database per replica. Legacy HTTP peer/fallback calls remain.
 end note
 @enduml

@@ -14,6 +14,10 @@ participant "Keycloak" as K
 database "keycloak-db\nprimary" as KP
 database "keycloak-db\nstandby" as KS
 database "fo-db-2" as D2
+participant "aircraft-1 / -2" as AC
+participant "maintenance-1 / -2" as MT
+database "aircraft DB per replica" as ACD
+database "maintenance DB per replica" as MTD
 
 == 1. One broker node fails ==
 R1 -[#red]-> R1 : node down
@@ -69,4 +73,21 @@ note over D2 : when it returns, flight-operations-2 consumes\nthe events kept in
 == 6. One gateway or one Keycloak node fails ==
 C -> G : the client uses the other gateway (:8443 <-> :8444)
 G -> K : /realms/... goes to the other Keycloak node;\nservices keep validating tokens (JWKS of the running node)
+
+== 7. Maintenance lifecycle event reaches Aircraft replicas ==
+C -> G : POST maintenance start
+G -> MT : proxy
+MT -> MTD : persist maintenance state
+MT -> R23 : publish maintenance lifecycle event (fanout)
+R23 -> AC : maintenance event to aircraft.maintenance.<replica>
+AC -> ACD : idempotent status update (processed_event)
+AC --> C : HTTP write response may precede broker consumption
+
+== 8. Broker is unavailable during a Maintenance or Aircraft update ==
+C -> G : POST maintenance or aircraft update
+G -> MT : proxy to Maintenance or Aircraft replica
+MT -> MTD : local database write
+MT -> R23 : broker publication attempt
+R23 --> MT : unavailable
+note over MT : direct publisher fallback/HTTP compatibility paths may preserve\npartial behavior; transactional outbox is not yet implemented
 @enduml

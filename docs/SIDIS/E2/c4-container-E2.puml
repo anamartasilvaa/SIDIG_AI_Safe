@@ -19,10 +19,10 @@ System_Boundary(aisafe, "AISafe Flight Management System") {
     Container(ar, "Airports & Routes Service (x2)", "Java 17, Spring Boot 4, CQRS", "Airports, routes and history. Write model + flat read model; transactional outbox to airports.events.")
     ContainerDb(ardb, "Airports & Routes DB (one per replica)", "PostgreSQL 16, Flyway", "Write model, read model, outbox and inbox")
 
-    Container(ac, "Aircraft Service (x2)", "Java 17, Spring Boot 4", "Aircraft models and instances, operational status. Integration as in the first delivery (REST).")
-    ContainerDb(acdb, "Aircraft DB (one per replica)", "H2", "Aircraft")
-    Container(mt, "Maintenance Service (x2)", "Java 17, Spring Boot 4", "Maintenance templates and records. Integration as in the first delivery (REST).")
-    ContainerDb(mtdb, "Maintenance DB (one per replica)", "H2", "Maintenance")
+    Container(ac, "Aircraft Service (x2)", "Java 17, Spring Boot 4, CQRS", "Aircraft models and instances, operational status, flight-hour and assignment projections. REST command/query endpoints and AMQP event integration.")
+    ContainerDb(acdb, "Aircraft DB (one per replica)", "PostgreSQL 16, Flyway", "Aircraft state, processed events, maintenance reference and replica-specific read projections")
+    Container(mt, "Maintenance Service (x2)", "Java 17, Spring Boot 4, CQRS", "Maintenance templates, records and lifecycle events. REST command/query endpoints and AMQP event integration.")
+    ContainerDb(mtdb, "Maintenance DB (one per replica)", "PostgreSQL 16, Flyway", "Maintenance state, aircraft reference projection, processed events and replica-specific read projections")
 }
 
 Rel(user, gw, "Login and requests (Bearer JWT); if one gateway fails, uses the other", "HTTPS")
@@ -35,12 +35,13 @@ Rel(gw, mt, "/api/maintenance/...", "HTTPS, round-robin")
 
 Rel(fo, mq, "Publishes flight.* (flights.events); consumes fo.flights.<replica>, fo.routes.<replica>, fo.aircraft.<replica>, fo.grounding", "AMQPS")
 Rel(ar, mq, "Publishes ROUTE_* / AIRPORT_* (airports.events); consumes airports.events.<replica>", "AMQPS")
-Rel_U(ac, mq, "Planned: publishes aircraft.* (aircraft.events)", "AMQPS")
+Rel_U(ac, mq, "Publishes aircraft.* (aircraft.events); consumes aircraft.flights.<replica>, aircraft.maintenance.<replica>", "AMQPS")
+Rel_U(mt, mq, "Publishes maintenance lifecycle events (maintenance.events); consumes maintenance.aircraft.<replica>", "AMQPS")
 
 Rel(fo, ac, "Fallback only: aircraft unknown locally", "HTTPS GET /api/aircraft/{reg}")
 Rel(fo, ar, "Fallback only: route unknown locally", "HTTPS GET /api/routes/{id}")
-Rel(ac, fo, "Aircraft grounded: reassignment of future flights (until aircraft events exist)", "HTTPS POST /internal/.../grounding, X-API-Key")
-Rel(mt, ac, "Updates operational status", "HTTPS /internal/..., X-API-Key")
+Rel(ac, fo, "Compatibility fallback: grounding/reassignment lookup", "HTTPS POST /internal/.../grounding, X-API-Key")
+Rel(mt, ac, "Compatibility fallback: aircraft status/lookup", "HTTPS /internal/..., X-API-Key")
 Rel(ac, ar, "Route data for the compatible-routes query", "HTTPS GET /api/routes")
 Rel(fo, kc, "Public key to validate the JWT (cached; every service does the same)", "JWKS")
 
