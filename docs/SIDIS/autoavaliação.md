@@ -43,7 +43,7 @@
 
 | Nº      | Nome              | Nota (0–20) |
 |---------|-------------------|:-----------:|
-| 1231239 | Mariana Santos    |             |
+| 1231239 | Mariana Santos    |     18      |
 | 1230859 | Ana Silva         |     18      |
 | 1210665 | Bernardo Oliveira |             |
 
@@ -53,8 +53,8 @@
 
 | Colega            | Nota (0–20) |
 |-------------------|:-----------:|
-| Ana Silva         |             |
-| Bernardo Oliveira |             |
+| Ana Silva         |     18      |
+| Bernardo Oliveira |     16      |
 
 #### Ana Silva avalia
 
