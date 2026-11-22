@@ -72,7 +72,7 @@ Escolher **um** modo. O Modo A e o Modo B **não podem correr ao mesmo tempo** (
 | Modo A → Modo B | Parar os serviços no IntelliJ e fechar a janela do Keycloak; `.\start-infra.ps1 -Stop`; `docker stop aisafe-rabbitmq-1 fo-db-a1 fo-db-a2 fo-db-a3` |
 | Modo B → Modo A | `docker compose -f docker-compose.secure.yml stop`                                                                                                 |
 
-### Modo B – Docker (recomendado para a demonstração)
+### Modo B – Docker 
 
 Tudo em containers: 2 gateways, 2 Keycloak (+ BD com failover), cluster RabbitMQ de 3 nós, 2 instâncias de cada serviço,
 cada uma com a sua PostgreSQL.
