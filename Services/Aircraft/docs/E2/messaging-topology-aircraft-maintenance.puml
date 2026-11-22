@@ -7,7 +7,7 @@ skinparam rectangle {
 left to right direction
 title Aircraft e Maintenance - Topologia AMQP (cluster RabbitMQ, filas quorum)
 
-package "Quem publica (logo após gravar)" {
+package "Quem publica (após o commit)" {
   rectangle "aircraft-1 / aircraft-2\nAircraftEventPublisher" as pa #DDEBFF
   rectangle "maintenance-1 / maintenance-2\nMaintenanceEventPublisher" as pm #E6F7E6
   rectangle "flight-operations-1 / -2\n(outbox do FO)" as pf #EEEEEE
@@ -18,7 +18,7 @@ package "Cluster RabbitMQ (3 nós, AMQPS 5671)" {
   collections "maintenance.events\n<<exchange fanout>>" as exM #FFF4D6
   collections "flights.events\n<<exchange topic>>" as exF #FFF4D6
 
-  queue "aircraft.maintenance.<inst>\n<<quorum>>\nmáx. 5 entregas" as qam
+  queue "aircraft.maintenance\n<<quorum, partilhada>>\nmáx. 5 entregas" as qam
   queue "aircraft.flights.<inst>\n<<quorum>>\nmáx. 5 entregas" as qaf
   queue "maintenance.aircraft.<inst>\n<<quorum>>\nmáx. 5 entregas" as qma
   queue "fo.aircraft.<inst>\n(criada pelo FO)" as qfa #EEEEEE
@@ -34,7 +34,7 @@ rectangle "Maintenance\nAircraftEventListener\n(aircraft_reference)" as cma #E6F
 rectangle "Flight Operations\ncópia aircraft_ref" as cfa #EEEEEE
 rectangle "Aircraft\nMaintenanceEventListener" as cam #DDEBFF
 
-pa --> exA : AircraftChanged\n(aircraft.changed)
+pa --> exA : AircraftRegistered\nAircraftStatusChanged\nAircraftUpdated
 pm --> exM : MaintenanceStarted /\nMaintenanceCompleted
 pf --> exF : Flight*\n(flight.*)
 
@@ -55,7 +55,7 @@ qma ..> dlxM
 dlxM --> dlqM
 
 legend bottom
-  Uma fila por instância (<inst> = aircraft-1, maintenance-2, ...): cada instância recebe todos os eventos e atualiza a sua própria BD.
+  As filas maintenance.aircraft.N e aircraft.flights.N são por instância. A fila aircraft.maintenance é partilhada pelas duas réplicas.
   As filas são declaradas pelo próprio serviço no arranque (as fo.* são criadas pelo FO).
   Ao consumir: salta repetidos (processed_event), aplica o resto na mesma transação e só depois confirma a mensagem.
   Qualquer erro ao processar -> a mensagem vai para a dead-letter do serviço (sem nova tentativa).

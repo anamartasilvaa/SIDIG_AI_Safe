@@ -38,8 +38,8 @@ else autorizado
     Svc -> DB : updateStatus() -> revision + 1, grava
     Svc -> Rep : replicate(cópia do avião)
     Rep -> Rep : guarda a revisão mais recente por instância
-    Svc -> Pub : aircraftChanged(avião)
-    Pub -> Ex : AircraftChanged (aircraft.changed)\nmessageId = eventId
+    Svc -> Pub : aircraftUpdated(avião) ou aircraftStatusChanged(avião)
+    Pub -> Ex : após o commit: AircraftUpdated /\nAircraftStatusChanged\nmessageId = eventId
     note right of Pub : sem outbox: se o broker\nfalhar, só fica um aviso no log
     opt novo estado = UNDER_MAINTENANCE ou INACTIVE
       Svc -> Svc : candidatos ACTIVE do mesmo modelo

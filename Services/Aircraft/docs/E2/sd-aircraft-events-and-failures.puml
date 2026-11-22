@@ -28,7 +28,7 @@ else primeira vez
     L -> Svc : applyMaintenanceStatus(reg, UNDER_MAINTENANCE)
   else MaintenanceCompleted
     L -> Svc : applyMaintenanceStatus(reg, ACTIVE)
-  else FlightScheduled / Reassigned / StatusChanged
+  else FlightScheduled / Reassigned
     L -> Svc : applyFlightAssignment(reg)
   else voo COMPLETED com horas
     L -> Svc : applyFlightCompletion(reg, horas)

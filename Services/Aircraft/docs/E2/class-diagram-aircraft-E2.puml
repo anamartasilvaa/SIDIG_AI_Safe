@@ -70,9 +70,10 @@ package "Idempotência (inbox)" #F4FFF4 {
 }
 
 package "Eventos de integração" #FFF8E6 {
-    class AircraftChanged <<publicado>> {
+    class "AircraftRegistered /\nAircraftStatusChanged /\nAircraftUpdated" as AircraftChanged <<publicado>> {
         exchange aircraft.events, topic
-        routing key aircraft.changed
+        routing keys aircraft.registered,
+        aircraft.status-changed, aircraft.updated
         payload: registrationNumber,
         modelName, status
     }

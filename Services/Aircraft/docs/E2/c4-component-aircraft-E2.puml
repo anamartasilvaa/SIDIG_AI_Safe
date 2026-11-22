@@ -30,8 +30,8 @@ Container_Boundary(ac, "Aircraft (uma instância)") {
     Component(repo, "AircraftRepository / AircraftModelRepository", "Spring Data JPA", "Aviões e modelos.")
 
     Boundary(msg, "Mensagens (AMQP)") {
-        Component(pub, "AircraftEventPublisher", "RabbitTemplate", "Publica AircraftChanged (aircraft.changed) logo após gravar. Sem outbox.")
-        Component(lm, "MaintenanceEventListener", "@RabbitListener", "aircraft.maintenance.<inst>: muda o estado para UNDER_MAINTENANCE ou ACTIVE.")
+        Component(pub, "AircraftEventPublisher", "RabbitTemplate", "Publica AircraftRegistered, AircraftStatusChanged ou AircraftUpdated após o commit. Sem outbox.")
+        Component(lm, "MaintenanceEventListener", "@RabbitListener", "aircraft.maintenance (partilhada): muda o estado para UNDER_MAINTENANCE ou ACTIVE.")
         Component(lf, "FlightEventListener", "@RabbitListener", "aircraft.flights.<inst>: soma atribuições e horas de voo.")
         Component(inbox, "IdempotencyGuard", "tabela processed_event", "Cada eventId só é aplicado uma vez.")
     }
@@ -59,8 +59,8 @@ Rel(contract, svc, "Usa")
 Rel(internal, svc, "Métodos locais e applyReplica")
 Rel(svc, repo, "Usa")
 Rel(repo, db, "Lê / escreve", "JDBC")
-Rel(svc, pub, "Depois de gravar")
-Rel(pub, broker, "AircraftChanged", "AMQPS")
+Rel(svc, pub, "Após o commit")
+Rel(pub, broker, "AircraftRegistered / StatusChanged / Updated", "AMQPS")
 Rel(broker, lm, "MaintenanceStarted / Completed")
 Rel(broker, lf, "FlightScheduled / StatusChanged / Reassigned")
 Rel(lm, inbox, "Já processado?")

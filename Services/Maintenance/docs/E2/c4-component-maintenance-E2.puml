@@ -28,7 +28,7 @@ Container_Boundary(mt, "Maintenance (uma instância)") {
     Component(repo, "Repositórios JPA", "Spring Data JPA", "MaintenanceRecord, MaintenanceTemplate, MaintenancePart.")
 
     Boundary(msg, "Mensagens (AMQP)") {
-        Component(pub, "MaintenanceEventPublisher", "RabbitTemplate", "Publica MaintenanceStarted / MaintenanceCompleted logo após gravar. Sem outbox.")
+        Component(pub, "MaintenanceEventPublisher", "RabbitTemplate", "Publica MaintenanceStarted / MaintenanceCompleted após o commit da transação. Sem outbox.")
         Component(cons, "AircraftEventListener", "@RabbitListener", "maintenance.aircraft.<inst>: atualiza a cópia local do avião.")
         Component(inbox, "IdempotencyGuard", "tabela processed_event", "Cada eventId só é aplicado uma vez.")
         Component(ref, "AircraftReference", "tabela aircraft_reference", "Cópia local: matrícula, modelo, estado.")

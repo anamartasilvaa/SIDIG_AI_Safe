@@ -42,13 +42,14 @@ else autorizado
     Svc --> User : 400
   else válido
     Svc -> DB : grava o registo (SCHEDULED, revision 0)
-    Svc -> Pub : maintenanceStarted(registo)
-    Pub -> Ex : MaintenanceStarted\nstatus = UNDER_MAINTENANCE
     Svc -> Rep : replicateAcknowledged(registo)
     Rep -> Int2 : PUT /internal/maintenance/records/{globalId}/replica\nX-API-Key
     Int2 -> DB2 : cria, ou aplica só se revision maior
     Int2 --> Rep : 204
     Rep --> Svc : confirmado (ou fica na fila em memória)
+    Svc --> DB : commit da transação
+    DB --> Pub : afterCommit
+    Pub -> Ex : MaintenanceStarted\nstatus = UNDER_MAINTENANCE
     Svc --> Ctrl : registo
     Ctrl --> User : 201 Created
   end
